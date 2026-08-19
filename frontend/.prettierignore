@@ -1,0 +1,28 @@
+
+# Dependencies
+node_modules
+# Build outputs
+.next
+out
+build
+dist
+coverage
+# Package manager
+bun.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+# Auto-generated
+*.min.js
+*.min.css
+.vercel
+.turbo
+# Environment
+.env
+.env.*
+# IDE
+.vscode
+.idea
+# OS
+.DS_Store
+Thumbs.db
