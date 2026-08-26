@@ -6,9 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "monaco-editor": "^0.56.0",
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
