@@ -1,0 +1,42 @@
+{
+  "name": "sync-server",
+  "version": "0.1.0",
+  "description": "Eunoia real-time sync server — WebSocket CRDT server with Yjs, Redis cursor telemetry, and PostgreSQL persistence",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "prisma:generate": "prisma generate",
+    "prisma:studio": "prisma studio",
+    "prisma:migrate": "prisma migrate dev",
+    "db:dev": "docker compose up -d postgres redis"
+  },
+  "dependencies": {
+    "@elysiajs/node": "^1.4.5",
+    "@prisma/client": "^5.20.0",
+    "elysia": "^1.4.30",
+    "fflate": "^0.8.2",
+    "ioredis": "^5.4.1",
+    "lib0": "^0.2.111",
+    "pino": "^9.4.0",
+    "ws": "^8.18.0",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.27",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "@types/ws": "^8.5.12",
+    "@biomejs/biome": "^2.0.6",
+    "prisma": "^5.20.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.2"
+  }
+}

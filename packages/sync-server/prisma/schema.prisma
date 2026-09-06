@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Tier {
+  COMMUNITY
+  PRO
+  ENTERPRISE
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  tier      Tier     @default(COMMUNITY)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Room {
+  id          String     @id
+  name        String
+  ownerId     String
+  tier        Tier       @default(COMMUNITY)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  snapshots   Snapshot[]
+  imageAssets ImageAsset[]
+
+  @@index([ownerId])
+}
+
+model Snapshot {
+  id         String   @id @default(cuid())
+  roomId     String
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  docVersion String
+  data       Bytes
+  createdAt  DateTime @default(now())
+
+  @@index([roomId, createdAt])
+}
+
+model ImageAsset {
+  id        String   @id @default(cuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  url       String
+  createdAt DateTime @default(now())
+
+  @@index([roomId])
+}
