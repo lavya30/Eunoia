@@ -20,7 +20,12 @@
   min-width: 320px;
   background: var(--paper);
   color: var(--ink);
-  font-family: 'Nunito Sans', 'Avenir Next', system-ui, -apple-system, sans-serif;
+  font-family:
+    'Nunito Sans',
+    'Avenir Next',
+    system-ui,
+    -apple-system,
+    sans-serif;
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -142,7 +147,9 @@
   letter-spacing: 0.15px;
   white-space: nowrap;
   box-shadow: 0 3px 6px rgba(74, 67, 166, 0.2);
-  transition: transform 0.18s cubic-bezier(0.23, 1, 0.32, 1), background 0.18s ease;
+  transition:
+    transform 0.18s cubic-bezier(0.23, 1, 0.32, 1),
+    background 0.18s ease;
   cursor: pointer;
 }
 
@@ -249,7 +256,7 @@
 .eunoia-hero h1 em:before,
 .eunoia-intro h2 em:before,
 .eunoia-whiteboard-callout h2 em:before {
-  content: "";
+  content: '';
   position: absolute;
   z-index: -1;
   inset: 6px 0 0;
@@ -437,13 +444,17 @@
 }
 
 .eunoia-feature-step:before {
-  content: "";
+  content: '';
   position: absolute;
   left: 1px;
   top: 60px;
   bottom: 0;
   width: 2px;
-  background: repeating-linear-gradient(to bottom, #b9b7ca 0 6px, transparent 6px 11px);
+  background: repeating-linear-gradient(
+    to bottom,
+    #b9b7ca 0 6px,
+    transparent 6px 11px
+  );
 }
 
 .eunoia-feature-step--last:before {
@@ -565,7 +576,11 @@
   aspect-ratio: 1;
   left: -5%;
   top: -11%;
-  background: radial-gradient(circle, rgba(135, 226, 205, 0.28), rgba(135, 226, 205, 0) 67%);
+  background: radial-gradient(
+    circle,
+    rgba(135, 226, 205, 0.28),
+    rgba(135, 226, 205, 0) 67%
+  );
   pointer-events: none;
 }
 
@@ -609,7 +624,9 @@
   flex-direction: column;
   color: inherit;
   text-decoration: none;
-  transition: background 0.18s ease, transform 0.18s ease;
+  transition:
+    background 0.18s ease,
+    transform 0.18s ease;
 }
 
 .eunoia-feature-card--link:hover {
@@ -838,7 +855,7 @@
     justify-content: flex-start;
     padding-left: 24px;
   }
-  .eunoia-company-track span:nth-last-child(-n+3) {
+  .eunoia-company-track span:nth-last-child(-n + 3) {
     display: none;
   }
 }
@@ -909,7 +926,7 @@
   .eunoia-company-track span {
     font-size: 17px;
   }
-  .eunoia-company-track span:nth-last-child(-n+6) {
+  .eunoia-company-track span:nth-last-child(-n + 6) {
     display: none;
   }
   .eunoia-intro {

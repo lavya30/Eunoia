@@ -1,6 +1,7 @@
 'use client';
-
+import { ShimmerButton } from "@/components/ui/shimmer-button"
 import React, { useState, type ReactNode } from 'react';
+import { DiaTextReveal } from "@/components/ui/dia-text-reveal"
 import './landing.css';
 
 /* ─── SVG Icons (Self-Contained & Optimized) ─── */
@@ -150,13 +151,7 @@ function Button({
   );
 }
 
-function BrowserFrame({
-  poster,
-  label,
-}: {
-  poster?: string;
-  label: string;
-}) {
+function BrowserFrame({ poster, label }: { poster?: string; label: string }) {
   return (
     <div className="eunoia-browser-stage">
       <div className="eunoia-browser-frame">
@@ -294,7 +289,7 @@ export function LandingPage() {
               strokeLinecap="round"
             />
           </svg>
-          <span>Eunoia</span>
+          <DiaTextReveal text="Eunoia" />
         </a>
 
         <nav
@@ -323,7 +318,7 @@ export function LandingPage() {
           <a className="eunoia-sign-in" href="#teams">
             Sign in
           </a>
-          <Button href="#resources">Open workspace</Button>
+          <ShimmerButton href="#resources">Open workspace</ShimmerButton>
           <button className="eunoia-language" type="button">
             <Globe2 size={16} /> EN <ChevronDown size={15} />
           </button>
@@ -344,7 +339,11 @@ export function LandingPage() {
         <DoodleSection className="eunoia-hero">
           <div className="eunoia-hero__copy">
             <h1>
-              Architecture <em><strong>Whiteboard</strong></em> made simple
+              Architecture{' '}
+              <em>
+                <strong>Whiteboard</strong>
+              </em>{' '}
+              made simple
             </h1>
             <p>Sketch, Diagram, Decide. Simply with Eunoia.</p>
             <a className="eunoia-github-pill" href="#resources">
@@ -382,10 +381,15 @@ export function LandingPage() {
         <DoodleSection className="eunoia-intro">
           <div className="eunoia-intro__copy">
             <h2>
-              Say hi to <em><strong>Eunoia</strong></em>
+              Say hi to{' '}
+              <em>
+                <strong>Eunoia</strong>
+              </em>
             </h2>
             <h4>
-              <em><strong>Open core + D2 native</strong></em>
+              <em>
+                <strong>Open core + D2 native</strong>
+              </em>
             </h4>
             <h6>Start with a room. Keep the system in view.</h6>
             <div className="eunoia-intro-buttons">
@@ -399,6 +403,7 @@ export function LandingPage() {
             </span>
           </div>
         </DoodleSection>
+
 
         {/* Feature List */}
         <section className="eunoia-feature-list" id="resources">
@@ -511,7 +516,10 @@ export function LandingPage() {
           <div className="eunoia-whiteboard-callout__content">
             <img className="callout-icon" src={assets.logoIcon} alt="" />
             <h2>
-              Architecture <em><strong>whiteboard</strong></em>
+              Architecture{' '}
+              <em>
+                <strong>whiteboard</strong>
+              </em>
             </h2>
             <p>Something complex on your mind? Start mapping it.</p>
             <div className="eunoia-whiteboard-callout__buttons">
