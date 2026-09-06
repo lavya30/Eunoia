@@ -240,6 +240,39 @@
   line-height: 1.12;
 }
 
+.eunoia-hero-title {
+  max-width: 880px;
+  margin: 0 auto;
+  color: #15154c;
+  font-weight: 700;
+  letter-spacing: -0.9px;
+  font-size: clamp(46px, 4.35vw, 67px);
+  line-height: 1.12;
+  text-align: center;
+}
+
+.eunoia-intro-sub {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 500;
+  color: #202052;
+  text-align: center;
+}
+
+.eunoia-section-title {
+  margin: 0;
+  color: #15154c;
+  font-weight: 700;
+  letter-spacing: -0.9px;
+  font-size: clamp(41px, 4vw, 60px);
+  line-height: 0.98;
+  text-align: center;
+}
+
+.font-hand {
+  font-family: 'Excalifont', 'Virgil', 'Caveat', cursive;
+}
+
 .eunoia-hero h1 em,
 .eunoia-intro h2 em,
 .eunoia-whiteboard-callout h2 em {
@@ -300,6 +333,26 @@
   left: 50%;
   bottom: 2px;
   transform: translateX(-50%);
+}
+
+/* Static dot-grid backdrop: pure CSS (one paint, zero JS) — replaces the
+   animated SVG dot pattern which spawned thousands of nodes and janked. */
+.eunoia-dot-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(
+    circle,
+    rgba(105, 101, 219, 0.28) 1.2px,
+    transparent 1.3px
+  );
+  background-size: 22px 22px;
+  mask-image: radial-gradient(620px circle at 50% 40%, black, transparent);
+  -webkit-mask-image: radial-gradient(
+    620px circle at 50% 40%,
+    black,
+    transparent
+  );
 }
 
 .eunoia-company-strip {
