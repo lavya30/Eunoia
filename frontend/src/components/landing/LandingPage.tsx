@@ -1,7 +1,7 @@
 'use client';
-import { ShimmerButton } from "@/components/ui/shimmer-button"
+import { ShimmerButton } from '@/components/ui/shimmer-button';
 import React, { useState, type ReactNode } from 'react';
-import { DiaTextReveal } from "@/components/ui/dia-text-reveal"
+import { DiaTextReveal } from '@/components/ui/dia-text-reveal';
 import './landing.css';
 
 /* ─── SVG Icons (Self-Contained & Optimized) ─── */
@@ -318,7 +318,16 @@ export function LandingPage() {
           <a className="eunoia-sign-in" href="#teams">
             Sign in
           </a>
-          <ShimmerButton href="#resources">Open workspace</ShimmerButton>
+          <ShimmerButton
+            type="button"
+            onClick={() =>
+              document
+                .getElementById('resources')
+                ?.scrollIntoView({ behavior: 'smooth' })
+            }
+          >
+            Open workspace
+          </ShimmerButton>
           <button className="eunoia-language" type="button">
             <Globe2 size={16} /> EN <ChevronDown size={15} />
           </button>
@@ -403,7 +412,6 @@ export function LandingPage() {
             </span>
           </div>
         </DoodleSection>
-
 
         {/* Feature List */}
         <section className="eunoia-feature-list" id="resources">
