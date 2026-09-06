@@ -48,12 +48,13 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - `DELETE /api/rooms/:roomId`
 - `POST /api/compile` (optional `roomId` resolves the tier server-side; `elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes — violations return 403 `TIER_UPGRADE_REQUIRED`)
 - Room images: `POST /api/rooms/:roomId/images/request-upload`, `POST /api/rooms/:roomId/images/confirm`, `GET /api/rooms/:roomId/images`, `GET /api/rooms/:roomId/images/:imageId/url`, `DELETE /api/rooms/:roomId/images/:imageId` (require R2 — 503 `R2_NOT_CONFIGURED` otherwise)
+- Snapshot history: `GET /api/rooms/:roomId/snapshots` (`limit`, `before`; metadata only), `POST /api/rooms/:roomId/snapshots/:snapshotId/restore` (force-flushes pre-restore state, drops peers with close code 4100 so they reload)
 
 The WebSocket endpoint can also be addressed as `/api/rooms/:roomId/sync`.
 
 ### Configuration
 
-Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `SNAPSHOT_DEBOUNCE_MS`, and `ROOM_IDLE_TIMEOUT_MS`.
+Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `SNAPSHOT_MAX_PER_ROOM`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_DEBOUNCE_MS`, and `ROOM_IDLE_TIMEOUT_MS`.
 
 Production requires `DATABASE_URL`. Redis and the external D2 compiler are optional in development; the server remains usable without them.
 

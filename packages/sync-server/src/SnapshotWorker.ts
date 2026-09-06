@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { compressSync } from 'fflate';
 import * as Y from 'yjs';
 import type { SnapshotStore } from './RoomLoader.js';
@@ -31,6 +32,7 @@ export class SnapshotWorker {
     const compressed = compressSync(state);
     this.flushPromise = this.store
       .saveSnapshot({
+        id: randomUUID(),
         roomId: this.roomId,
         docVersion: version,
         data: compressed,
@@ -46,6 +48,15 @@ export class SnapshotWorker {
   async dispose(doc: Y.Doc): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+    await this.flush(doc);
+  }
+
+  /**
+   * Persist unconditionally, even with no pending changes. Used by snapshot
+   * restore so the pre-restore state is always recoverable from history.
+   */
+  async forceFlush(doc: Y.Doc): Promise<void> {
+    this.dirty = true;
     await this.flush(doc);
   }
 }

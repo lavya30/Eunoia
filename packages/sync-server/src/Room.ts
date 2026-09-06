@@ -1,55 +1,110 @@
+import { decompressSync } from 'fflate';
 import * as decoding from 'lib0/decoding';
 import * as encoding from 'lib0/encoding';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as syncProtocol from 'y-protocols/sync';
 import type * as Y from 'yjs';
+import * as Yjs from 'yjs';
+import type { StoredSnapshot } from './RoomLoader.js';
 import type { RedisTelemetry } from './redis.js';
 import type { SnapshotWorker } from './SnapshotWorker.js';
 import type { CursorTelemetry, RoomClient } from './types.js';
 import { WS_MESSAGE_AWARENESS, WS_MESSAGE_SYNC } from './types.js';
 
+/**
+ * Close code sent to peers when their room is restored from a snapshot.
+ * Clients hold newer state that would otherwise resurrect undone changes,
+ * so they must reload and resync from the restored snapshot.
+ */
+export const RESTORE_CLOSE_CODE = 4100;
+export const RESTORE_CLOSE_REASON = 'Snapshot restored; reload to resync';
+
 export class Room {
-  readonly awareness: awarenessProtocol.Awareness;
+  awareness: awarenessProtocol.Awareness;
+  private _doc: Y.Doc;
   private readonly clients = new Map<string, RoomClient>();
   private readonly unsubscribeRedis: Promise<() => Promise<void>>;
 
   constructor(
     readonly id: string,
-    readonly doc: Y.Doc,
+    doc: Y.Doc,
     private readonly snapshotWorker: SnapshotWorker,
     private readonly telemetry?: RedisTelemetry,
   ) {
+    this._doc = doc;
     this.awareness = new awarenessProtocol.Awareness(doc);
-    doc.on('update', (update: Uint8Array, origin: unknown) => {
-      this.snapshotWorker.schedule(doc);
-      if (origin && this.isClient(origin))
-        this.broadcastSyncUpdate(update, origin as RoomClient);
-    });
-    this.awareness.on(
-      'update',
-      (
-        {
-          added,
-          updated,
-          removed,
-        }: { added: number[]; updated: number[]; removed: number[] },
-        origin: unknown,
-      ) => {
-        const changed = added.concat(updated, removed);
-        if (!changed.length || origin === 'redis') return;
-        const update = awarenessProtocol.encodeAwarenessUpdate(
-          this.awareness,
-          changed,
-        );
-        this.broadcastAwareness(
-          update,
-          origin instanceof Object ? (origin as RoomClient) : undefined,
-        );
-      },
-    );
+    this.attach();
     this.unsubscribeRedis = this.telemetry
-      ? this.telemetry.subscribe(id, (cursor) => this.broadcastCursor(cursor))
+      ? this.telemetry.subscribe(id, this.handleRedisCursor)
       : Promise.resolve(async () => undefined);
+  }
+
+  get doc(): Y.Doc {
+    return this._doc;
+  }
+
+  private attach(): void {
+    this._doc.on('update', this.handleDocUpdate);
+    this.awareness.on('update', this.handleAwarenessUpdate);
+  }
+
+  private readonly handleDocUpdate = (
+    update: Uint8Array,
+    origin: unknown,
+  ): void => {
+    this.snapshotWorker.schedule(this._doc);
+    if (origin && this.isClient(origin))
+      this.broadcastSyncUpdate(update, origin as RoomClient);
+  };
+
+  private readonly handleAwarenessUpdate = (
+    {
+      added,
+      updated,
+      removed,
+    }: { added: number[]; updated: number[]; removed: number[] },
+    origin: unknown,
+  ): void => {
+    const changed = added.concat(updated, removed);
+    if (!changed.length || origin === 'redis') return;
+    const update = awarenessProtocol.encodeAwarenessUpdate(
+      this.awareness,
+      changed,
+    );
+    this.broadcastAwareness(
+      update,
+      origin instanceof Object ? (origin as RoomClient) : undefined,
+    );
+  };
+
+  private readonly handleRedisCursor = (cursor: CursorTelemetry): void => {
+    this.broadcastCursor(cursor);
+  };
+
+  /**
+   * Roll the live document back to a historical snapshot. The pre-restore
+   * state is flushed first so it stays recoverable from history, then
+   * connected peers are dropped — they hold newer updates that CRDT merge
+   * would otherwise resurrect. Peers reconnect and resync from scratch.
+   */
+  async restoreSnapshot(snapshot: StoredSnapshot): Promise<void> {
+    await this.snapshotWorker.forceFlush(this._doc);
+    const oldDoc = this._doc;
+    oldDoc.off('update', this.handleDocUpdate);
+    this.awareness.off('update', this.handleAwarenessUpdate);
+    this.awareness.destroy();
+
+    const doc = new Yjs.Doc();
+    Yjs.applyUpdate(doc, decompressSync(snapshot.data), 'snapshot-restore');
+    this._doc = doc;
+    this.awareness = new awarenessProtocol.Awareness(doc);
+    this.attach();
+    oldDoc.destroy();
+    this.snapshotWorker.schedule(doc);
+
+    for (const client of this.clients.values())
+      client.socket.close(RESTORE_CLOSE_CODE, RESTORE_CLOSE_REASON);
+    this.clients.clear();
   }
 
   get size(): number {

@@ -340,5 +340,52 @@ export function createApiApp(
       await images.imageStore.deleteImage(image.id);
       set.status = 204;
       return;
-    });
+    })
+    .get('/api/rooms/:roomId/snapshots', async ({ params, query, set }) => {
+      const room = await manager.getRoomMetadata(params.roomId);
+      if (!room) {
+        set.status = 404;
+        return { error: 'Room not found' };
+      }
+      const input = query as { limit?: unknown; before?: unknown };
+      let limit = 20;
+      if (input.limit !== undefined) {
+        const parsed = Number(input.limit);
+        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+          set.status = 400;
+          return { error: 'limit must be an integer between 1 and 100' };
+        }
+        limit = parsed;
+      }
+      let before: Date | undefined;
+      if (input.before !== undefined) {
+        const parsed = new Date(String(input.before));
+        if (Number.isNaN(parsed.getTime())) {
+          set.status = 400;
+          return { error: 'before must be a valid date' };
+        }
+        before = parsed;
+      }
+      const snapshots = await manager.listRoomSnapshots(room.id, {
+        limit,
+        before,
+      });
+      return snapshots.map(({ id, docVersion, createdAt }) => ({
+        id,
+        docVersion,
+        createdAt,
+      }));
+    })
+    .post(
+      '/api/rooms/:roomId/snapshots/:snapshotId/restore',
+      async ({ params, set }) => {
+        if (await manager.restoreRoomSnapshot(params.roomId, params.snapshotId))
+          return {
+            restored: params.snapshotId,
+            restoredAt: new Date().toISOString(),
+          };
+        set.status = 404;
+        return { error: 'Snapshot not found' };
+      },
+    );
 }

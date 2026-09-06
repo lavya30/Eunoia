@@ -38,7 +38,15 @@ export function createSyncServer(
     : undefined;
   const persistence =
     store ??
-    (prisma ? new PrismaSnapshotStore(prisma) : new MemorySnapshotStore());
+    (prisma
+      ? new PrismaSnapshotStore(prisma, {
+          maxPerRoom: config.snapshotMaxPerRoom,
+          retentionDays: config.snapshotRetentionDays,
+        })
+      : new MemorySnapshotStore({
+          maxPerRoom: config.snapshotMaxPerRoom,
+          retentionDays: config.snapshotRetentionDays,
+        }));
   const r2Config = resolveR2Config(config);
   const images: ImageDeps = {
     imageStore:

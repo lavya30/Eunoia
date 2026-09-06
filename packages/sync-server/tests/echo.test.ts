@@ -20,6 +20,8 @@ describe('WebSocket Yjs sync', () => {
         snapshotDebounceMs: 10,
         roomIdleTimeoutMs: 10,
         d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },

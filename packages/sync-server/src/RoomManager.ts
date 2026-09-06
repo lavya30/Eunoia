@@ -4,7 +4,9 @@ import { Room } from './Room.js';
 import {
   loadRoomDoc,
   type RoomMetadata,
+  type SnapshotListOptions,
   type SnapshotStore,
+  type StoredSnapshot,
 } from './RoomLoader.js';
 import { RedisTelemetry } from './redis.js';
 import { SnapshotWorker } from './SnapshotWorker.js';
@@ -53,6 +55,30 @@ export class RoomManager {
 
   async getRoomMetadata(roomId: string): Promise<RoomMetadata | null> {
     return this.store.getRoom(roomId);
+  }
+
+  async listRoomSnapshots(
+    roomId: string,
+    options?: SnapshotListOptions,
+  ): Promise<StoredSnapshot[]> {
+    return this.store.listSnapshots(roomId, options);
+  }
+
+  /**
+   * Roll a room back to one of its snapshots. Returns false when the room
+   * or snapshot does not exist (or the snapshot belongs to another room).
+   */
+  async restoreRoomSnapshot(
+    roomId: string,
+    snapshotId: string,
+  ): Promise<boolean> {
+    const metadata = await this.store.getRoom(roomId);
+    if (!metadata) return false;
+    const snapshot = await this.store.getSnapshot(snapshotId);
+    if (!snapshot || snapshot.roomId !== roomId) return false;
+    const room = await this.getOrCreate(roomId);
+    await room.restoreSnapshot(snapshot);
+    return true;
   }
 
   release(roomId: string): void {

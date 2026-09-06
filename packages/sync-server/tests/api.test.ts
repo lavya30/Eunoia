@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import * as encoding from 'lib0/encoding';
+import WebSocket from 'ws';
+import * as syncProtocol from 'y-protocols/sync';
+import * as Y from 'yjs';
 import {
   assertEngineAllowed,
   assertNodeCountAllowed,
@@ -6,7 +10,14 @@ import {
 } from '../src/d2-compiler.js';
 import { MemoryImageStore, MemoryR2Client } from '../src/images.js';
 import { createSyncServer, type SyncServer } from '../src/index.js';
-import { MemorySnapshotStore } from '../src/RoomLoader.js';
+import { Room } from '../src/Room.js';
+import {
+  applyRetention,
+  MemorySnapshotStore,
+  type StoredSnapshot,
+} from '../src/RoomLoader.js';
+import { SnapshotWorker } from '../src/SnapshotWorker.js';
+import type { RoomClient } from '../src/types.js';
 
 describe('HTTP API', () => {
   let app: SyncServer;
@@ -21,6 +32,8 @@ describe('HTTP API', () => {
         snapshotDebounceMs: 10,
         roomIdleTimeoutMs: 10,
         d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -172,6 +185,8 @@ describe('Room images', () => {
         snapshotDebounceMs: 10,
         roomIdleTimeoutMs: 10,
         d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -322,6 +337,8 @@ describe('Room images', () => {
         snapshotDebounceMs: 10,
         roomIdleTimeoutMs: 10,
         d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -356,5 +373,253 @@ describe('Room images', () => {
     } finally {
       await bare.close();
     }
+  });
+});
+
+describe('Snapshot history', () => {
+  let app: SyncServer;
+  let baseUrl: string;
+  let wsUrl: string;
+  let roomId: string;
+  const sockets: WebSocket[] = [];
+
+  beforeEach(async () => {
+    app = createSyncServer(
+      {
+        port: 0,
+        host: '127.0.0.1',
+        nodeEnv: 'test',
+        snapshotDebounceMs: 10,
+        roomIdleTimeoutMs: 10,
+        d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
+        r2MaxUploadBytes: 10_000_000,
+        r2UrlExpiresInSec: 900,
+      },
+      new MemorySnapshotStore(),
+    );
+    await new Promise<void>((resolve) =>
+      app.server.listen(0, '127.0.0.1', resolve),
+    );
+    const address = app.server.address();
+    if (!address || typeof address === 'string')
+      throw new Error('Server did not bind');
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    const roomResponse = await fetch(`${baseUrl}/api/rooms`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'History' }),
+    });
+    expect(roomResponse.status).toBe(201);
+    roomId = ((await roomResponse.json()) as { id: string }).id;
+    wsUrl = `ws://127.0.0.1:${address.port}/sync/${roomId}`;
+  });
+
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    await app.close();
+  });
+
+  /** Push a canvas mutation through the sync protocol and await its flush. */
+  async function pushUpdate(value: unknown): Promise<WebSocket> {
+    const socket = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', () => resolve());
+      socket.once('error', reject);
+    });
+    sockets.push(socket);
+    const doc = new Y.Doc();
+    doc.getMap('canvas').set('a', value);
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, 0);
+    syncProtocol.writeUpdate(encoder, Y.encodeStateAsUpdate(doc));
+    socket.send(encoding.toUint8Array(encoder));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    return socket;
+  }
+
+  async function list(query = '') {
+    const response = await fetch(
+      `${baseUrl}/api/rooms/${roomId}/snapshots${query}`,
+    );
+    return {
+      status: response.status,
+      items: (await response.json()) as {
+        id: string;
+        docVersion: string;
+        createdAt: string;
+        data?: unknown;
+      }[],
+    };
+  }
+
+  test('lists snapshots newest-first without document bytes', async () => {
+    expect((await list()).items).toEqual([]);
+    await pushUpdate(1);
+    const { status, items } = await list();
+    expect(status).toBe(200);
+    expect(items.length).toBe(1);
+    expect(items[0].id).toBeString();
+    expect(items[0].docVersion).toBeString();
+    expect(items[0].createdAt).toBeString();
+    expect(items[0].data).toBeUndefined();
+  });
+
+  test('paginates with limit and before', async () => {
+    await pushUpdate(1);
+    await pushUpdate(2);
+    await pushUpdate(3);
+    const full = (await list()).items;
+    expect(full.length).toBe(3);
+
+    const limited = await list('?limit=2');
+    expect(limited.items.length).toBe(2);
+    expect(limited.items.map((item) => item.id)).toEqual(
+      full.slice(0, 2).map((item) => item.id),
+    );
+
+    const older = await list(
+      `?before=${encodeURIComponent(full[0].createdAt)}`,
+    );
+    expect(older.items.map((item) => item.id)).toEqual(
+      full.slice(1).map((item) => item.id),
+    );
+
+    const badLimit = await fetch(
+      `${baseUrl}/api/rooms/${roomId}/snapshots?limit=500`,
+    );
+    expect(badLimit.status).toBe(400);
+    const badBefore = await fetch(
+      `${baseUrl}/api/rooms/${roomId}/snapshots?before=not-a-date`,
+    );
+    expect(badBefore.status).toBe(400);
+    const missing = await fetch(`${baseUrl}/api/rooms/no-such-room/snapshots`);
+    expect(missing.status).toBe(404);
+  });
+
+  test('restores a snapshot, keeps a safety copy, and drops peers', async () => {
+    await pushUpdate(1);
+    const peer = await pushUpdate(2);
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      peer.once('close', (code: number, reason: Buffer) =>
+        resolve({ code, reason: reason.toString() }),
+      );
+    });
+
+    const before = (await list()).items;
+    expect(before.length).toBe(2);
+
+    const restore = await fetch(
+      `${baseUrl}/api/rooms/${roomId}/snapshots/${before[1].id}/restore`,
+      { method: 'POST' },
+    );
+    expect(restore.status).toBe(200);
+    const receipt = (await restore.json()) as {
+      restored: string;
+      restoredAt: string;
+    };
+    expect(receipt.restored).toBe(before[1].id);
+
+    // Safety flush of the pre-restore state plus the restored state.
+    const after = (await list()).items;
+    expect(after.length).toBeGreaterThanOrEqual(3);
+
+    // Peers holding newer state are dropped so they resync from scratch.
+    const { code } = await Promise.race([
+      closed,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('peer was not dropped')), 1000),
+      ),
+    ]);
+    expect(code).toBe(4100);
+
+    const unknown = await fetch(
+      `${baseUrl}/api/rooms/${roomId}/snapshots/no-such-id/restore`,
+      { method: 'POST' },
+    );
+    expect(unknown.status).toBe(404);
+  });
+
+  test('room content actually rolls back', async () => {
+    const store = new MemorySnapshotStore();
+    const doc = new Y.Doc();
+    doc.getMap('canvas').set('a', 1);
+    const worker = new SnapshotWorker('rollback-room', store, 0);
+    worker.schedule(doc);
+    await worker.flush(doc);
+
+    const room = new Room('rollback-room', doc, worker);
+    const [first] = await store.listSnapshots('rollback-room');
+    doc.getMap('canvas').set('a', 2);
+    worker.schedule(doc);
+    await worker.flush(doc);
+
+    const closed: { code: number; reason: string }[] = [];
+    const fakeSocket = {
+      close: (code: number, reason: string) => closed.push({ code, reason }),
+    };
+    const client: RoomClient = {
+      id: 'peer',
+      socket: fakeSocket as unknown as RoomClient['socket'],
+      send: () => undefined,
+    };
+    room.addClient(client);
+    await room.restoreSnapshot(first);
+    expect(room.doc.getMap('canvas').get('a')).toBe(1);
+    expect(closed.length).toBe(1);
+    expect(closed[0].code).toBe(4100);
+    await room.dispose();
+  });
+});
+
+describe('Snapshot retention', () => {
+  const now = Date.now();
+  const snap = (id: string, ageMs: number): StoredSnapshot => ({
+    id,
+    roomId: 'retention-room',
+    docVersion: 'v',
+    data: new Uint8Array(),
+    createdAt: new Date(now - ageMs),
+  });
+
+  test('keeps the newest, the newest-K, and the retention window', () => {
+    const day = 86_400_000;
+    const snapshots = [
+      snap('ancient', 40 * day),
+      snap('old', 20 * day),
+      snap('mid', 10 * day),
+      snap('fresh', day),
+      snap('newest', 0),
+    ];
+    const kept = applyRetention(snapshots, now, {
+      maxPerRoom: 2,
+      retentionDays: 30,
+    }).map((s) => s.id);
+    // newest + newest-2 + everything inside 30 days (ancient drops).
+    expect(kept.sort()).toEqual(['fresh', 'mid', 'newest', 'old']);
+  });
+
+  test('never drops the only snapshot', () => {
+    const snapshots = [snap('lonely', 400 * 86_400_000)];
+    expect(
+      applyRetention(snapshots, now, { maxPerRoom: 1, retentionDays: 1 }),
+    ).toEqual(snapshots);
+    expect(
+      applyRetention([], now, { maxPerRoom: 1, retentionDays: 1 }),
+    ).toEqual([]);
+  });
+
+  test('memory store prunes on save', async () => {
+    const day = 86_400_000;
+    const store = new MemorySnapshotStore({ maxPerRoom: 3, retentionDays: 30 });
+    const ages = [40 * day, 39 * day, 38 * day, day, 0];
+    for (let i = 0; i < ages.length; i++)
+      await store.saveSnapshot(snap(`s${i}`, ages[i]));
+    const listed = await store.listSnapshots('retention-room');
+    expect(listed.map((s) => s.id)).toEqual(['s4', 's3', 's2']);
+    expect(await store.getLatestSnapshot('retention-room')).toMatchObject({
+      id: 's4',
+    });
   });
 });

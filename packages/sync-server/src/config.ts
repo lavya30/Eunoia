@@ -16,6 +16,8 @@ const envSchema = z.object({
   R2_PUBLIC_BASE_URL: z.string().url().optional(),
   R2_MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10_000_000),
   R2_URL_EXPIRES_IN_SEC: z.coerce.number().int().positive().default(900),
+  SNAPSHOT_MAX_PER_ROOM: z.coerce.number().int().positive().default(100),
+  SNAPSHOT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
     .default('development'),
@@ -37,6 +39,8 @@ export type Config = {
   r2PublicBaseUrl?: string;
   r2MaxUploadBytes: number;
   r2UrlExpiresInSec: number;
+  snapshotMaxPerRoom: number;
+  snapshotRetentionDays: number;
   nodeEnv: 'development' | 'test' | 'production';
 };
 
@@ -62,6 +66,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     r2PublicBaseUrl: parsed.R2_PUBLIC_BASE_URL,
     r2MaxUploadBytes: parsed.R2_MAX_UPLOAD_BYTES,
     r2UrlExpiresInSec: parsed.R2_URL_EXPIRES_IN_SEC,
+    snapshotMaxPerRoom: parsed.SNAPSHOT_MAX_PER_ROOM,
+    snapshotRetentionDays: parsed.SNAPSHOT_RETENTION_DAYS,
     nodeEnv: parsed.NODE_ENV,
   };
 }
