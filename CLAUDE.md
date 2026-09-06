@@ -46,13 +46,13 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - `POST /api/rooms`
 - `GET /api/rooms/:roomId`
 - `DELETE /api/rooms/:roomId`
-- `POST /api/compile`
+- `POST /api/compile` (optional `roomId` resolves the tier server-side; `elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes — violations return 403 `TIER_UPGRADE_REQUIRED`)
 
 The WebSocket endpoint can also be addressed as `/api/rooms/:roomId/sync`.
 
 ### Configuration
 
-Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `SNAPSHOT_DEBOUNCE_MS`, and `ROOM_IDLE_TIMEOUT_MS`.
+Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `SNAPSHOT_DEBOUNCE_MS`, and `ROOM_IDLE_TIMEOUT_MS`.
 
 Production requires `DATABASE_URL`. Redis and the external D2 compiler are optional in development; the server remains usable without them.
 

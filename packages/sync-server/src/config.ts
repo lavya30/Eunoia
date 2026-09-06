@@ -8,6 +8,7 @@ const envSchema = z.object({
   D2_COMPILER_URL: z.string().url().optional(),
   SNAPSHOT_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2000),
   ROOM_IDLE_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(300000),
+  D2_COMMUNITY_NODE_LIMIT: z.coerce.number().int().positive().default(30),
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
     .default('development'),
@@ -21,6 +22,7 @@ export type Config = {
   d2CompilerUrl?: string;
   snapshotDebounceMs: number;
   roomIdleTimeoutMs: number;
+  d2CommunityNodeLimit: number;
   nodeEnv: 'development' | 'test' | 'production';
 };
 
@@ -38,6 +40,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     d2CompilerUrl: parsed.D2_COMPILER_URL,
     snapshotDebounceMs: parsed.SNAPSHOT_DEBOUNCE_MS,
     roomIdleTimeoutMs: parsed.ROOM_IDLE_TIMEOUT_MS,
+    d2CommunityNodeLimit: parsed.D2_COMMUNITY_NODE_LIMIT,
     nodeEnv: parsed.NODE_ENV,
   };
 }

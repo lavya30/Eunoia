@@ -12,6 +12,7 @@ describe('room lifecycle', () => {
         nodeEnv: 'test',
         snapshotDebounceMs: 1,
         roomIdleTimeoutMs: 5,
+        d2CommunityNodeLimit: 30,
       },
       store,
     );

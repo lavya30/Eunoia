@@ -1,7 +1,14 @@
 import { node } from '@elysiajs/node';
 import { Elysia } from 'elysia';
 import type { Config } from '../config.js';
-import { type CompileRequest, compileD2 } from '../d2-compiler.js';
+import {
+  type CompileRequest,
+  CompileRequestError,
+  compileD2,
+  type LayoutEngine,
+  parseEngine,
+  type Tier,
+} from '../d2-compiler.js';
 import type { RoomManager } from '../RoomManager.js';
 
 export function createApiApp(manager: RoomManager, config: Config) {
@@ -50,13 +57,47 @@ export function createApiApp(manager: RoomManager, config: Config) {
         set.status = 400;
         return { error: 'source is required' };
       }
+      let engine: LayoutEngine;
+      try {
+        engine = parseEngine(input.engine);
+      } catch (error) {
+        set.status = 400;
+        return {
+          error: error instanceof Error ? error.message : 'Invalid engine',
+          code: 'INVALID_ENGINE',
+        };
+      }
+      // Tier is resolved server-side: the room's stored tier wins when a
+      // roomId is given, otherwise COMMUNITY. A client-asserted tier in the
+      // body is never trusted.
+      let tier: Tier = 'COMMUNITY';
+      if (typeof input.roomId === 'string' && input.roomId) {
+        const room = await manager.getRoomMetadata(input.roomId);
+        if (!room) {
+          set.status = 404;
+          return { error: 'Room not found' };
+        }
+        tier = room.tier;
+      }
       try {
         return await compileD2(
-          input as CompileRequest,
-          config.d2CompilerUrl,
-          config.nodeEnv !== 'production',
+          { source: input.source, engine },
+          {
+            compilerUrl: config.d2CompilerUrl,
+            isDevelopment: config.nodeEnv !== 'production',
+            tier,
+            nodeLimit: config.d2CommunityNodeLimit,
+          },
         );
       } catch (error) {
+        if (error instanceof CompileRequestError) {
+          set.status = error.status;
+          return {
+            error: error.message,
+            code: error.code,
+            details: error.details,
+          };
+        }
         set.status = 502;
         return {
           error: error instanceof Error ? error.message : 'D2 compiler failed',

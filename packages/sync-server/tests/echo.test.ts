@@ -19,6 +19,7 @@ describe('WebSocket Yjs sync', () => {
         nodeEnv: 'test',
         snapshotDebounceMs: 10,
         roomIdleTimeoutMs: 10,
+        d2CommunityNodeLimit: 30,
       },
       new MemorySnapshotStore(),
     );
