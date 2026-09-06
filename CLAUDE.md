@@ -28,14 +28,17 @@ bun run prisma:generate
 
 ## Sync server
 
-The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, Elysia, Prisma, PostgreSQL, Redis, and `fflate`.
+The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, Elysia, Prisma, PostgreSQL, Redis, `fflate`, and the AWS SDK (R2 object storage).
 
 ### Responsibilities
 
 - WebSocket Yjs synchronization at `/sync/:roomId`.
 - Yjs awareness/presence updates and JSON cursor telemetry.
 - Room creation, loading, idle eviction, and graceful shutdown.
-- Debounced, compressed Yjs snapshots.
+- Debounced, compressed Yjs snapshots with retention pruning (newest + newest-K + 30-day window).
+- Snapshot history listing and rollback restore (drops peers with close code 4100).
+- Optional room passwords (scrypt hash) with HMAC ticket unlock gating HTTP room endpoints and the sync socket.
+- Room image uploads via R2 presigned URLs plus metadata-only PostgreSQL records.
 - PostgreSQL persistence through Prisma, with an in-memory store for local development and tests.
 - Optional Redis Pub/Sub for cursor telemetry across server instances.
 - D2 compiler proxy at `POST /api/compile`, with a development placeholder when no compiler service is configured.
@@ -47,7 +50,7 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - `POST /api/rooms/:roomId/unlock` (exchanges the password for an HMAC ticket; locked rooms require it as `Authorization: Bearer` or `?ticket=` on room endpoints and `/sync/:roomId`, which 401s otherwise)
 - `GET /api/rooms/:roomId`
 - `DELETE /api/rooms/:roomId`
-- `POST /api/compile` (optional `roomId` resolves the tier server-side; `elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes — violations return 403 `TIER_UPGRADE_REQUIRED`)
+- `POST /api/compile` (optional `roomId` resolves the tier server-side and requires a ticket on locked rooms; `elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes — violations return 403 `TIER_UPGRADE_REQUIRED`)
 - Room images: `POST /api/rooms/:roomId/images/request-upload`, `POST /api/rooms/:roomId/images/confirm`, `GET /api/rooms/:roomId/images`, `GET /api/rooms/:roomId/images/:imageId/url`, `DELETE /api/rooms/:roomId/images/:imageId` (require R2 — 503 `R2_NOT_CONFIGURED` otherwise)
 - Snapshot history: `GET /api/rooms/:roomId/snapshots` (`limit`, `before`; metadata only), `POST /api/rooms/:roomId/snapshots/:snapshotId/restore` (force-flushes pre-restore state, drops peers with close code 4100 so they reload)
 
@@ -55,9 +58,9 @@ The WebSocket endpoint can also be addressed as `/api/rooms/:roomId/sync`.
 
 ### Configuration
 
-Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `SNAPSHOT_MAX_PER_ROOM`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_DEBOUNCE_MS`, `ROOM_IDLE_TIMEOUT_MS`, `ROOM_TICKET_SECRET`, and `ROOM_TICKET_TTL_SEC`.
+Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `R2_URL_EXPIRES_IN_SEC`, `SNAPSHOT_MAX_PER_ROOM`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_DEBOUNCE_MS`, `ROOM_IDLE_TIMEOUT_MS`, `ROOM_TICKET_SECRET`, and `ROOM_TICKET_TTL_SEC`.
 
-Production requires `DATABASE_URL`. Redis and the external D2 compiler are optional in development; the server remains usable without them.
+Production requires `DATABASE_URL`. Redis, R2, and the external D2 compiler are optional in development; the server remains usable without them (image endpoints 503 without R2). Without `ROOM_TICKET_SECRET` the server generates an ephemeral secret and warns; tickets then invalidate on restart.
 
 After changing `packages/sync-server/prisma/schema.prisma`, regenerate the client with:
 
