@@ -16,6 +16,13 @@ import {
   MemorySnapshotStore,
   type StoredSnapshot,
 } from '../src/RoomLoader.js';
+import {
+  hashPassword,
+  issueTicket,
+  isValidPassword,
+  verifyPassword,
+  verifyTicket,
+} from '../src/room-auth.js';
 import { SnapshotWorker } from '../src/SnapshotWorker.js';
 import type { RoomClient } from '../src/types.js';
 
@@ -34,6 +41,7 @@ describe('HTTP API', () => {
         d2CommunityNodeLimit: 30,
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
+        roomTicketTtlSec: 86400,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -187,6 +195,7 @@ describe('Room images', () => {
         d2CommunityNodeLimit: 30,
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
+        roomTicketTtlSec: 86400,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -339,6 +348,7 @@ describe('Room images', () => {
         d2CommunityNodeLimit: 30,
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
+        roomTicketTtlSec: 86400,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -394,6 +404,7 @@ describe('Snapshot history', () => {
         d2CommunityNodeLimit: 30,
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
+        roomTicketTtlSec: 86400,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -621,5 +632,193 @@ describe('Snapshot retention', () => {
     expect(await store.getLatestSnapshot('retention-room')).toMatchObject({
       id: 's4',
     });
+  });
+});
+
+describe('Room passwords', () => {
+  let app: SyncServer;
+  let baseUrl: string;
+  let wsBase: string;
+  let lockedId: string;
+  let openId: string;
+  let ticket: string;
+
+  const post = (path: string, payload: unknown, auth?: string) =>
+    fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(auth ? { authorization: `Bearer ${auth}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+  const get = (path: string, auth?: string) =>
+    fetch(`${baseUrl}${path}`, {
+      headers: auth ? { authorization: `Bearer ${auth}` } : {},
+    });
+
+  function wsConnect(room: string, withTicket?: string): Promise<string> {
+    return new Promise((resolve) => {
+      const socket = new WebSocket(
+        `${wsBase}/sync/${room}${withTicket ? `?ticket=${withTicket}` : ''}`,
+      );
+      socket.once('open', () => {
+        socket.close();
+        resolve('open');
+      });
+      // A non-101 upgrade response emits this instead of 'error'.
+      socket.once(
+        'unexpected-response',
+        (_request: unknown, response: { statusCode: number }) => {
+          socket.close();
+          resolve(`rejected:${response.statusCode}`);
+        },
+      );
+      socket.once('error', () => resolve('error'));
+      socket.once('close', () => resolve('close'));
+    });
+  }
+
+  beforeEach(async () => {
+    app = createSyncServer(
+      {
+        port: 0,
+        host: '127.0.0.1',
+        nodeEnv: 'test',
+        snapshotDebounceMs: 10,
+        roomIdleTimeoutMs: 10,
+        d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
+        r2MaxUploadBytes: 10_000_000,
+        r2UrlExpiresInSec: 900,
+        roomTicketTtlSec: 86400,
+      },
+      new MemorySnapshotStore(),
+    );
+    await new Promise<void>((resolve) =>
+      app.server.listen(0, '127.0.0.1', resolve),
+    );
+    const address = app.server.address();
+    if (!address || typeof address === 'string')
+      throw new Error('Server did not bind');
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    wsBase = `ws://127.0.0.1:${address.port}`;
+
+    const locked = await post('/api/rooms', {
+      name: 'Locked',
+      password: 's3cret-pass',
+    });
+    expect(locked.status).toBe(201);
+    const lockedBody = (await locked.json()) as Record<string, unknown>;
+    expect(lockedBody.hasPassword).toBe(true);
+    expect(lockedBody.passwordHash).toBeUndefined();
+    lockedId = lockedBody.id as string;
+
+    const open = await post('/api/rooms', { name: 'Open' });
+    openId = ((await open.json()) as { id: string }).id;
+
+    const unlock = await post(`/api/rooms/${lockedId}/unlock`, {
+      password: 's3cret-pass',
+    });
+    expect(unlock.status).toBe(200);
+    ticket = ((await unlock.json()) as { ticket: string }).ticket;
+  });
+
+  afterEach(async () => app.close());
+
+  test('rejects short passwords at creation', async () => {
+    const response = await post('/api/rooms', {
+      name: 'Weak',
+      password: 'short',
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as Record<string, unknown>).code).toBe(
+      'INVALID_PASSWORD',
+    );
+  });
+
+  test('gates room metadata behind a ticket', async () => {
+    expect((await get(`/api/rooms/${lockedId}`)).status).toBe(401);
+    const denied = (await (
+      await get(`/api/rooms/${lockedId}`)
+    ).json()) as Record<string, unknown>;
+    expect(denied.code).toBe('ROOM_LOCKED');
+
+    expect((await get(`/api/rooms/${lockedId}`, ticket)).status).toBe(200);
+    expect((await get(`/api/rooms/${lockedId}?ticket=${ticket}`)).status).toBe(
+      200,
+    );
+    expect((await get(`/api/rooms/${openId}`)).status).toBe(200);
+  });
+
+  test('unlock rejects wrong passwords', async () => {
+    const response = await post(`/api/rooms/${lockedId}/unlock`, {
+      password: 'wrong-pass',
+    });
+    expect(response.status).toBe(403);
+    const missing = await post('/api/rooms/no-such-room/unlock', {
+      password: 's3cret-pass',
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  test('gates compile, images, and snapshots for locked rooms', async () => {
+    const compile = await post('/api/compile', {
+      source: 'a -> b',
+      roomId: lockedId,
+    });
+    expect(compile.status).toBe(401);
+
+    const authedCompile = await post(
+      '/api/compile',
+      { source: 'a -> b', roomId: lockedId },
+      ticket,
+    );
+    expect(authedCompile.status).toBe(200);
+
+    const images = await post(`/api/rooms/${lockedId}/images/request-upload`, {
+      contentType: 'image/png',
+    });
+    expect(images.status).toBe(401);
+
+    const snapshots = await get(`/api/rooms/${lockedId}/snapshots`);
+    expect(snapshots.status).toBe(401);
+    const authedSnapshots = await get(
+      `/api/rooms/${lockedId}/snapshots`,
+      ticket,
+    );
+    expect(authedSnapshots.status).toBe(200);
+  });
+
+  test('gates the sync socket behind a ticket', async () => {
+    expect(await wsConnect(lockedId)).toBe('rejected:401');
+    expect(await wsConnect(lockedId, ticket)).toBe('open');
+    expect(await wsConnect(openId)).toBe('open');
+    expect(await wsConnect(lockedId, 'forged.ticket.here')).toBe(
+      'rejected:401',
+    );
+  });
+
+  test('tickets are room-bound, expiring, and tamper-evident', async () => {
+    const secret = 'test-secret';
+    const { ticket: issued } = issueTicket(secret, 'room-a', 60, 1_000);
+    expect(verifyTicket(secret, issued, 'room-a', 1_030)).toBe(true);
+    expect(verifyTicket(secret, issued, 'room-b', 1_030)).toBe(false);
+    expect(verifyTicket(secret, issued, 'room-a', 1_061)).toBe(false);
+    expect(verifyTicket(secret, `${issued}x`, 'room-a', 1_030)).toBe(false);
+    expect(verifyTicket('other-secret', issued, 'room-a', 1_030)).toBe(false);
+  });
+
+  test('passwords hash with unique salts and reject malformed hashes', async () => {
+    expect(isValidPassword('short')).toBe(false);
+    expect(isValidPassword('long-enough')).toBe(true);
+    const a = hashPassword('s3cret-pass');
+    const b = hashPassword('s3cret-pass');
+    expect(a).not.toBe(b);
+    expect(verifyPassword('s3cret-pass', a)).toBe(true);
+    expect(verifyPassword('wrong-pass', a)).toBe(false);
+    expect(verifyPassword('s3cret-pass', 'garbage')).toBe(false);
   });
 });

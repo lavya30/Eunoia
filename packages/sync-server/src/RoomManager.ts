@@ -9,6 +9,7 @@ import {
   type StoredSnapshot,
 } from './RoomLoader.js';
 import { RedisTelemetry } from './redis.js';
+import { hashPassword, verifyPassword } from './room-auth.js';
 import { SnapshotWorker } from './SnapshotWorker.js';
 
 export class RoomManager {
@@ -42,19 +43,31 @@ export class RoomManager {
     }
   }
 
-  async createRoom(input?: Partial<RoomMetadata>): Promise<RoomMetadata> {
+  async createRoom(
+    input?: Partial<RoomMetadata>,
+    password?: string,
+  ): Promise<RoomMetadata> {
+    const passwordHash = password ? hashPassword(password) : undefined;
     const metadata: RoomMetadata = {
       id: input?.id ?? randomUUID(),
       name: input?.name ?? 'Untitled room',
       ownerId: input?.ownerId ?? 'anonymous',
       tier: input?.tier ?? 'COMMUNITY',
+      hasPassword: passwordHash !== undefined,
     };
-    await this.store.ensureRoom(metadata);
+    await this.store.ensureRoom(metadata, passwordHash);
     return metadata;
   }
 
   async getRoomMetadata(roomId: string): Promise<RoomMetadata | null> {
     return this.store.getRoom(roomId);
+  }
+
+  /** True for open rooms; compares the scrypt hash for locked rooms. */
+  async verifyRoomPassword(roomId: string, password: string): Promise<boolean> {
+    const hash = await this.store.getPasswordHash(roomId);
+    if (!hash) return false;
+    return verifyPassword(password, hash);
   }
 
   async listRoomSnapshots(
@@ -129,6 +142,7 @@ export class RoomManager {
       name: 'Untitled room',
       ownerId: 'anonymous',
       tier: 'COMMUNITY',
+      hasPassword: false,
     });
     const doc = await loadRoomDoc(roomId, this.store);
     const room = new Room(

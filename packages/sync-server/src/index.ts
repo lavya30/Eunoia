@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { PrismaClient } from '@prisma/client';
 import pino from 'pino';
@@ -18,6 +19,7 @@ import {
   type SnapshotStore,
 } from './RoomLoader.js';
 import { RoomManager } from './RoomManager.js';
+import { authorizeRoom } from './room-auth.js';
 import { WebSocketHandler } from './WebSocketHandler.js';
 
 const logger = pino({ name: 'eunoia-sync-server' });
@@ -62,16 +64,27 @@ export function createSyncServer(
   const manager = new RoomManager(config, persistence);
   const handler = new WebSocketHandler(manager);
   const wsServer = new WebSocketServer({ noServer: true });
+  let resolvedSecret = config.roomTicketSecret;
+  if (!resolvedSecret) {
+    resolvedSecret = randomBytes(32).toString('hex');
+    logger.warn(
+      'ROOM_TICKET_SECRET is unset; using an ephemeral secret. Room tickets invalidate on restart.',
+    );
+  }
+  const ticketSecret: string = resolvedSecret;
+  const apiConfig: Config = { ...config, roomTicketSecret: ticketSecret };
   const server = createServer((req, res) => {
-    void handleApiRequest(req, res, manager, config, images).catch((error) => {
-      res.statusCode = 400;
-      res.setHeader('content-type', 'application/json');
-      res.end(
-        JSON.stringify({
-          error: error instanceof Error ? error.message : 'Bad request',
-        }),
-      );
-    });
+    void handleApiRequest(req, res, manager, apiConfig, images).catch(
+      (error) => {
+        res.statusCode = 400;
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            error: error instanceof Error ? error.message : 'Bad request',
+          }),
+        );
+      },
+    );
   });
 
   server.on('upgrade', (req, socket, head) => {
@@ -81,11 +94,25 @@ export function createSyncServer(
       socket.destroy();
       return;
     }
-    wsServer.handleUpgrade(req, socket, head, (ws) => {
-      void handler
-        .handle(ws, roomId)
-        .catch(() => ws.close(1011, 'Unable to load room'));
-    });
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const ticket = url.searchParams.get('ticket') ?? undefined;
+    void authorizeRoom(manager, roomId, ticket, ticketSecret)
+      .then((access) => {
+        if (access.status === 'locked') {
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        wsServer.handleUpgrade(req, socket, head, (ws) => {
+          void handler
+            .handle(ws, roomId)
+            .catch(() => ws.close(1011, 'Unable to load room'));
+        });
+      })
+      .catch(() => {
+        socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+        socket.destroy();
+      });
   });
 
   const close = async () => {

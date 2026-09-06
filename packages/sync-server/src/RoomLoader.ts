@@ -56,6 +56,7 @@ export type RoomMetadata = {
   name: string;
   ownerId: string;
   tier: 'COMMUNITY' | 'PRO' | 'ENTERPRISE';
+  hasPassword: boolean;
 };
 
 export interface SnapshotStore {
@@ -66,14 +67,16 @@ export interface SnapshotStore {
     options?: SnapshotListOptions,
   ): Promise<StoredSnapshot[]>;
   saveSnapshot(snapshot: StoredSnapshot): Promise<void>;
-  ensureRoom(metadata: RoomMetadata): Promise<void>;
+  ensureRoom(metadata: RoomMetadata, passwordHash?: string): Promise<void>;
   getRoom(roomId: string): Promise<RoomMetadata | null>;
+  getPasswordHash(roomId: string): Promise<string | null>;
   deleteRoom?(roomId: string): Promise<void>;
   close?(): Promise<void>;
 }
 
 export class MemorySnapshotStore implements SnapshotStore {
   readonly rooms = new Map<string, RoomMetadata>();
+  private readonly passwordHashes = new Map<string, string>();
   private readonly history = new Map<string, StoredSnapshot[]>();
 
   constructor(
@@ -123,12 +126,22 @@ export class MemorySnapshotStore implements SnapshotStore {
     );
   }
 
-  async ensureRoom(metadata: RoomMetadata): Promise<void> {
-    if (!this.rooms.has(metadata.id)) this.rooms.set(metadata.id, metadata);
+  async ensureRoom(
+    metadata: RoomMetadata,
+    passwordHash?: string,
+  ): Promise<void> {
+    if (!this.rooms.has(metadata.id)) {
+      this.rooms.set(metadata.id, metadata);
+      if (passwordHash) this.passwordHashes.set(metadata.id, passwordHash);
+    }
   }
 
   async getRoom(roomId: string): Promise<RoomMetadata | null> {
     return this.rooms.get(roomId) ?? null;
+  }
+
+  async getPasswordHash(roomId: string): Promise<string | null> {
+    return this.passwordHashes.get(roomId) ?? null;
   }
 
   async deleteRoom(roomId: string): Promise<void> {
@@ -217,10 +230,20 @@ export class PrismaSnapshotStore implements SnapshotStore {
     });
   }
 
-  async ensureRoom(metadata: RoomMetadata): Promise<void> {
+  async ensureRoom(
+    metadata: RoomMetadata,
+    passwordHash?: string,
+  ): Promise<void> {
+    // Never clobber an existing password on re-ensure.
     await this.prisma.room.upsert({
       where: { id: metadata.id },
-      create: metadata,
+      create: {
+        id: metadata.id,
+        name: metadata.name,
+        ownerId: metadata.ownerId,
+        tier: metadata.tier,
+        passwordHash,
+      },
       update: {
         name: metadata.name,
         ownerId: metadata.ownerId,
@@ -230,10 +253,33 @@ export class PrismaSnapshotStore implements SnapshotStore {
   }
 
   async getRoom(roomId: string): Promise<RoomMetadata | null> {
-    return this.prisma.room.findUnique({
+    const room = await this.prisma.room.findUnique({
       where: { id: roomId },
-      select: { id: true, name: true, ownerId: true, tier: true },
+      select: {
+        id: true,
+        name: true,
+        ownerId: true,
+        tier: true,
+        passwordHash: true,
+      },
     });
+    return room
+      ? {
+          id: room.id,
+          name: room.name,
+          ownerId: room.ownerId,
+          tier: room.tier,
+          hasPassword: room.passwordHash !== null,
+        }
+      : null;
+  }
+
+  async getPasswordHash(roomId: string): Promise<string | null> {
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: { passwordHash: true },
+    });
+    return room?.passwordHash ?? null;
   }
 
   async deleteRoom(roomId: string): Promise<void> {

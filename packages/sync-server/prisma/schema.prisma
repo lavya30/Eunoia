@@ -23,14 +23,15 @@ model User {
 }
 
 model Room {
-  id          String     @id
-  name        String
-  ownerId     String
-  tier        Tier       @default(COMMUNITY)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  snapshots   Snapshot[]
-  imageAssets ImageAsset[]
+  id           String       @id
+  name         String
+  ownerId      String
+  tier         Tier         @default(COMMUNITY)
+  passwordHash String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  snapshots    Snapshot[]
+  imageAssets  ImageAsset[]
 
   @@index([ownerId])
 }

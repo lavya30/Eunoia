@@ -43,7 +43,8 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 ### HTTP API
 
 - `GET /health`
-- `POST /api/rooms`
+- `POST /api/rooms` (optional `password`, min 8 chars, stored as scrypt hash)
+- `POST /api/rooms/:roomId/unlock` (exchanges the password for an HMAC ticket; locked rooms require it as `Authorization: Bearer` or `?ticket=` on room endpoints and `/sync/:roomId`, which 401s otherwise)
 - `GET /api/rooms/:roomId`
 - `DELETE /api/rooms/:roomId`
 - `POST /api/compile` (optional `roomId` resolves the tier server-side; `elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes — violations return 403 `TIER_UPGRADE_REQUIRED`)
@@ -54,7 +55,7 @@ The WebSocket endpoint can also be addressed as `/api/rooms/:roomId/sync`.
 
 ### Configuration
 
-Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `SNAPSHOT_MAX_PER_ROOM`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_DEBOUNCE_MS`, and `ROOM_IDLE_TIMEOUT_MS`.
+Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `SNAPSHOT_MAX_PER_ROOM`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_DEBOUNCE_MS`, `ROOM_IDLE_TIMEOUT_MS`, `ROOM_TICKET_SECRET`, and `ROOM_TICKET_TTL_SEC`.
 
 Production requires `DATABASE_URL`. Redis and the external D2 compiler are optional in development; the server remains usable without them.
 
@@ -64,7 +65,7 @@ After changing `packages/sync-server/prisma/schema.prisma`, regenerate the clien
 bun run prisma:generate
 ```
 
-Do not assume the `User` model provides authentication or authorization; those flows are not implemented yet.
+Do not assume the `User` model provides authentication or authorization; user-level auth flows are not implemented yet (only room passwords exist).
 
 ### Image storage
 

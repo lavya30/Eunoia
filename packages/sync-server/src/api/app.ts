@@ -19,9 +19,45 @@ import {
   keyBelongsToRoom,
   type ObjectHead,
 } from '../images.js';
+import type { RoomMetadata } from '../RoomLoader.js';
 import type { RoomManager } from '../RoomManager.js';
+import {
+  authorizeRoom,
+  extractTicket,
+  issueTicket,
+  isValidPassword,
+} from '../room-auth.js';
 
 export type { ImageDeps };
+
+type AccessResult =
+  | { room: RoomMetadata }
+  | { status: 401 | 404; body: { error: string; code: string } };
+
+async function requestAccess(
+  manager: RoomManager,
+  roomId: string,
+  headers: Record<string, string | undefined>,
+  query: Record<string, unknown>,
+  secret: string,
+): Promise<AccessResult> {
+  const access = await authorizeRoom(
+    manager,
+    roomId,
+    extractTicket(headers, query),
+    secret,
+  );
+  if (access.status === 'ok') return { room: access.room };
+  return access.status === 'missing'
+    ? { status: 404, body: { error: 'Room not found', code: 'ROOM_NOT_FOUND' } }
+    : {
+        status: 401,
+        body: {
+          error: 'Room requires a valid access ticket',
+          code: 'ROOM_LOCKED',
+        },
+      };
+}
 
 function r2Error(set: { status?: unknown }, error: unknown) {
   set.status = 502;
@@ -36,6 +72,8 @@ export function createApiApp(
   config: Config,
   images: ImageDeps,
 ) {
+  const ticketSecret = config.roomTicketSecret;
+  if (!ticketSecret) throw new Error('roomTicketSecret is required');
   return new Elysia({ adapter: node() })
     .onRequest(({ set }) => {
       set.headers['access-control-allow-origin'] = '*';
@@ -47,35 +85,82 @@ export function createApiApp(
     }))
     .post('/api/rooms', async ({ body, set }) => {
       const input = body as Record<string, unknown>;
-      const room = await manager.createRoom({
-        name: typeof input.name === 'string' ? input.name : undefined,
-        ownerId: typeof input.ownerId === 'string' ? input.ownerId : undefined,
-        tier:
-          input.tier === 'PRO' || input.tier === 'ENTERPRISE'
-            ? input.tier
-            : undefined,
-      });
+      if (input.password !== undefined && !isValidPassword(input.password)) {
+        set.status = 400;
+        return {
+          error: 'Password must be at least 8 characters',
+          code: 'INVALID_PASSWORD',
+        };
+      }
+      const room = await manager.createRoom(
+        {
+          name: typeof input.name === 'string' ? input.name : undefined,
+          ownerId:
+            typeof input.ownerId === 'string' ? input.ownerId : undefined,
+          tier:
+            input.tier === 'PRO' || input.tier === 'ENTERPRISE'
+              ? input.tier
+              : undefined,
+        },
+        typeof input.password === 'string' ? input.password : undefined,
+      );
       set.status = 201;
       return room;
     })
-    .get('/api/rooms/:roomId', ({ params, set }) =>
-      manager.getRoomMetadata(params.roomId).then((room) => {
-        if (!room) {
-          set.status = 404;
-          return { error: 'Room not found' };
-        }
-        return room;
-      }),
-    )
-    .delete('/api/rooms/:roomId', async ({ params, set }) => {
-      if (await manager.deleteRoom(params.roomId)) {
-        set.status = 204;
-        return;
+    .get('/api/rooms/:roomId', async ({ params, headers, query, set }) => {
+      const access = await requestAccess(
+        manager,
+        params.roomId,
+        headers as Record<string, string | undefined>,
+        query as Record<string, unknown>,
+        ticketSecret,
+      );
+      if ('body' in access) {
+        set.status = access.status;
+        return access.body;
       }
-      set.status = 404;
-      return { error: 'Room not found' };
+      return access.room;
     })
-    .post('/api/compile', async ({ body, set }) => {
+    .post('/api/rooms/:roomId/unlock', async ({ params, body, set }) => {
+      const room = await manager.getRoomMetadata(params.roomId);
+      if (!room) {
+        set.status = 404;
+        return { error: 'Room not found' };
+      }
+      const input = body as { password?: unknown };
+      if (room.hasPassword) {
+        if (
+          typeof input.password !== 'string' ||
+          !(await manager.verifyRoomPassword(room.id, input.password))
+        ) {
+          set.status = 403;
+          return { error: 'Invalid password', code: 'INVALID_PASSWORD' };
+        }
+      }
+      const { ticket, expiresIn } = issueTicket(
+        ticketSecret,
+        room.id,
+        config.roomTicketTtlSec,
+      );
+      return { ticket, expiresIn, roomId: room.id };
+    })
+    .delete('/api/rooms/:roomId', async ({ params, headers, query, set }) => {
+      const access = await requestAccess(
+        manager,
+        params.roomId,
+        headers as Record<string, string | undefined>,
+        query as Record<string, unknown>,
+        ticketSecret,
+      );
+      if ('body' in access) {
+        set.status = access.status;
+        return access.body;
+      }
+      await manager.deleteRoom(access.room.id);
+      set.status = 204;
+      return;
+    })
+    .post('/api/compile', async ({ body, headers, query, set }) => {
       const input = body as Partial<CompileRequest>;
       if (typeof input.source !== 'string') {
         set.status = 400;
@@ -93,15 +178,21 @@ export function createApiApp(
       }
       // Tier is resolved server-side: the room's stored tier wins when a
       // roomId is given, otherwise COMMUNITY. A client-asserted tier in the
-      // body is never trusted.
+      // body is never trusted. Locked rooms additionally require a ticket.
       let tier: Tier = 'COMMUNITY';
       if (typeof input.roomId === 'string' && input.roomId) {
-        const room = await manager.getRoomMetadata(input.roomId);
-        if (!room) {
-          set.status = 404;
-          return { error: 'Room not found' };
+        const access = await requestAccess(
+          manager,
+          input.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ('body' in access) {
+          set.status = access.status;
+          return access.body;
         }
-        tier = room.tier;
+        tier = access.room.tier;
       }
       try {
         return await compileD2(
@@ -130,12 +221,19 @@ export function createApiApp(
     })
     .post(
       '/api/rooms/:roomId/images/request-upload',
-      async ({ params, body, set }) => {
-        const room = await manager.getRoomMetadata(params.roomId);
-        if (!room) {
-          set.status = 404;
-          return { error: 'Room not found' };
+      async ({ params, body, headers, query, set }) => {
+        const access = await requestAccess(
+          manager,
+          params.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ('body' in access) {
+          set.status = access.status;
+          return access.body;
         }
+        const room = access.room;
         const r2 = images.r2;
         if (!r2) {
           set.status = 503;
@@ -180,12 +278,19 @@ export function createApiApp(
     )
     .post(
       '/api/rooms/:roomId/images/confirm',
-      async ({ params, body, set }) => {
-        const room = await manager.getRoomMetadata(params.roomId);
-        if (!room) {
-          set.status = 404;
-          return { error: 'Room not found' };
+      async ({ params, body, headers, query, set }) => {
+        const access = await requestAccess(
+          manager,
+          params.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ('body' in access) {
+          set.status = access.status;
+          return access.body;
         }
+        const room = access.room;
         const r2 = images.r2;
         if (!r2) {
           set.status = 503;
@@ -280,105 +385,164 @@ export function createApiApp(
         }
       },
     )
-    .get('/api/rooms/:roomId/images', async ({ params, query, set }) => {
-      const room = await manager.getRoomMetadata(params.roomId);
-      if (!room) {
-        set.status = 404;
-        return { error: 'Room not found' };
-      }
-      const kind = (query as { kind?: unknown }).kind;
-      if (kind !== undefined && !isImageKind(kind)) {
-        set.status = 400;
-        return { error: 'Invalid kind', code: 'INVALID_KIND' };
-      }
-      return images.imageStore.listImages(
-        room.id,
-        kind === undefined ? undefined : (kind as ImageKind),
-      );
-    })
-    .get('/api/rooms/:roomId/images/:imageId/url', async ({ params, set }) => {
-      const image = await images.imageStore.getImage(params.imageId);
-      if (!image || image.roomId !== params.roomId) {
-        set.status = 404;
-        return { error: 'Image not found' };
-      }
-      const r2 = images.r2;
-      if (!r2) {
-        set.status = 503;
-        return {
-          error: 'Image storage is not configured',
-          code: 'R2_NOT_CONFIGURED',
-        };
-      }
-      try {
-        const publicUrl = r2.publicUrl(image.key);
-        if (publicUrl) return { url: publicUrl, expiresIn: null };
-        return await r2.presignDownload(image.key, config.r2UrlExpiresInSec);
-      } catch (error) {
-        return r2Error(set, error);
-      }
-    })
-    .delete('/api/rooms/:roomId/images/:imageId', async ({ params, set }) => {
-      const image = await images.imageStore.getImage(params.imageId);
-      if (!image || image.roomId !== params.roomId) {
-        set.status = 404;
-        return { error: 'Image not found' };
-      }
-      const r2 = images.r2;
-      if (!r2) {
-        set.status = 503;
-        return {
-          error: 'Image storage is not configured',
-          code: 'R2_NOT_CONFIGURED',
-        };
-      }
-      try {
-        await r2.delete(image.key);
-      } catch (error) {
-        return r2Error(set, error);
-      }
-      await images.imageStore.deleteImage(image.id);
-      set.status = 204;
-      return;
-    })
-    .get('/api/rooms/:roomId/snapshots', async ({ params, query, set }) => {
-      const room = await manager.getRoomMetadata(params.roomId);
-      if (!room) {
-        set.status = 404;
-        return { error: 'Room not found' };
-      }
-      const input = query as { limit?: unknown; before?: unknown };
-      let limit = 20;
-      if (input.limit !== undefined) {
-        const parsed = Number(input.limit);
-        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-          set.status = 400;
-          return { error: 'limit must be an integer between 1 and 100' };
+    .get(
+      '/api/rooms/:roomId/images',
+      async ({ params, headers, query, set }) => {
+        const access = await requestAccess(
+          manager,
+          params.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ('body' in access) {
+          set.status = access.status;
+          return access.body;
         }
-        limit = parsed;
-      }
-      let before: Date | undefined;
-      if (input.before !== undefined) {
-        const parsed = new Date(String(input.before));
-        if (Number.isNaN(parsed.getTime())) {
+        const room = access.room;
+        const kind = (query as { kind?: unknown }).kind;
+        if (kind !== undefined && !isImageKind(kind)) {
           set.status = 400;
-          return { error: 'before must be a valid date' };
+          return { error: 'Invalid kind', code: 'INVALID_KIND' };
         }
-        before = parsed;
-      }
-      const snapshots = await manager.listRoomSnapshots(room.id, {
-        limit,
-        before,
-      });
-      return snapshots.map(({ id, docVersion, createdAt }) => ({
-        id,
-        docVersion,
-        createdAt,
-      }));
-    })
+        return images.imageStore.listImages(
+          room.id,
+          kind === undefined ? undefined : (kind as ImageKind),
+        );
+      },
+    )
+    .get(
+      '/api/rooms/:roomId/images/:imageId/url',
+      async ({ params, headers, query, set }) => {
+        const access = await requestAccess(
+          manager,
+          params.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ('body' in access) {
+          set.status = access.status;
+          return access.body;
+        }
+        const image = await images.imageStore.getImage(params.imageId);
+        if (!image || image.roomId !== params.roomId) {
+          set.status = 404;
+          return { error: 'Image not found' };
+        }
+        const r2 = images.r2;
+        if (!r2) {
+          set.status = 503;
+          return {
+            error: 'Image storage is not configured',
+            code: 'R2_NOT_CONFIGURED',
+          };
+        }
+        try {
+          const publicUrl = r2.publicUrl(image.key);
+          if (publicUrl) return { url: publicUrl, expiresIn: null };
+          return await r2.presignDownload(image.key, config.r2UrlExpiresInSec);
+        } catch (error) {
+          return r2Error(set, error);
+        }
+      },
+    )
+    .delete(
+      '/api/rooms/:roomId/images/:imageId',
+      async ({ params, headers, query, set }) => {
+        const access = await requestAccess(
+          manager,
+          params.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ('body' in access) {
+          set.status = access.status;
+          return access.body;
+        }
+        const image = await images.imageStore.getImage(params.imageId);
+        if (!image || image.roomId !== params.roomId) {
+          set.status = 404;
+          return { error: 'Image not found' };
+        }
+        const r2 = images.r2;
+        if (!r2) {
+          set.status = 503;
+          return {
+            error: 'Image storage is not configured',
+            code: 'R2_NOT_CONFIGURED',
+          };
+        }
+        try {
+          await r2.delete(image.key);
+        } catch (error) {
+          return r2Error(set, error);
+        }
+        await images.imageStore.deleteImage(image.id);
+        set.status = 204;
+        return;
+      },
+    )
+    .get(
+      '/api/rooms/:roomId/snapshots',
+      async ({ params, headers, query, set }) => {
+        const access = await requestAccess(
+          manager,
+          params.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ('body' in access) {
+          set.status = access.status;
+          return access.body;
+        }
+        const room = access.room;
+        const input = query as { limit?: unknown; before?: unknown };
+        let limit = 20;
+        if (input.limit !== undefined) {
+          const parsed = Number(input.limit);
+          if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+            set.status = 400;
+            return { error: 'limit must be an integer between 1 and 100' };
+          }
+          limit = parsed;
+        }
+        let before: Date | undefined;
+        if (input.before !== undefined) {
+          const parsed = new Date(String(input.before));
+          if (Number.isNaN(parsed.getTime())) {
+            set.status = 400;
+            return { error: 'before must be a valid date' };
+          }
+          before = parsed;
+        }
+        const snapshots = await manager.listRoomSnapshots(room.id, {
+          limit,
+          before,
+        });
+        return snapshots.map(({ id, docVersion, createdAt }) => ({
+          id,
+          docVersion,
+          createdAt,
+        }));
+      },
+    )
     .post(
       '/api/rooms/:roomId/snapshots/:snapshotId/restore',
-      async ({ params, set }) => {
+      async ({ params, headers, query, set }) => {
+        const access = await requestAccess(
+          manager,
+          params.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ('body' in access) {
+          set.status = access.status;
+          return access.body;
+        }
         if (await manager.restoreRoomSnapshot(params.roomId, params.snapshotId))
           return {
             restored: params.snapshotId,

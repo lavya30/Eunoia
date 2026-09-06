@@ -15,6 +15,7 @@ describe('room lifecycle', () => {
         d2CommunityNodeLimit: 30,
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
+        roomTicketTtlSec: 86400,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
