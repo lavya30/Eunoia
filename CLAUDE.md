@@ -47,12 +47,13 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - `GET /api/rooms/:roomId`
 - `DELETE /api/rooms/:roomId`
 - `POST /api/compile` (optional `roomId` resolves the tier server-side; `elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes — violations return 403 `TIER_UPGRADE_REQUIRED`)
+- Room images: `POST /api/rooms/:roomId/images/request-upload`, `POST /api/rooms/:roomId/images/confirm`, `GET /api/rooms/:roomId/images`, `GET /api/rooms/:roomId/images/:imageId/url`, `DELETE /api/rooms/:roomId/images/:imageId` (require R2 — 503 `R2_NOT_CONFIGURED` otherwise)
 
 The WebSocket endpoint can also be addressed as `/api/rooms/:roomId/sync`.
 
 ### Configuration
 
-Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `SNAPSHOT_DEBOUNCE_MS`, and `ROOM_IDLE_TIMEOUT_MS`.
+Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `SNAPSHOT_DEBOUNCE_MS`, and `ROOM_IDLE_TIMEOUT_MS`.
 
 Production requires `DATABASE_URL`. Redis and the external D2 compiler are optional in development; the server remains usable without them.
 
@@ -66,9 +67,7 @@ Do not assume the `User` model provides authentication or authorization; those f
 
 ### Image storage
 
-Image bytes should be stored in a Cloudflare R2 bucket, not PostgreSQL. PostgreSQL should retain only image metadata such as the room association, object key, public or signed URL, content type, and timestamps. The existing `ImageAsset` model currently stores URL metadata only; R2 upload, signed-URL generation, deletion, and retrieval endpoints are not implemented yet.
-
-When adding R2 support, use environment-based S3-compatible credentials and keep bucket access server-side. Do not add binary image data or base64 blobs to Prisma models.
+Image bytes should be stored in a Cloudflare R2 bucket, not PostgreSQL. PostgreSQL should retain only image metadata such as the room association, object key, public or signed URL, content type, and timestamps. Uploads use presigned-URL + confirm flow (`src/images.ts`, `S3R2Client`); clients PUT bytes directly to R2 and the server verifies via HEAD before recording metadata. Do not add binary image data or base64 blobs to Prisma models.
 
 ## Verification
 

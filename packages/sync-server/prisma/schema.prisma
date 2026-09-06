@@ -47,11 +47,17 @@ model Snapshot {
 }
 
 model ImageAsset {
-  id        String   @id @default(cuid())
-  roomId    String
-  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  url       String
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  roomId      String
+  room        Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  key         String   @unique
+  url         String
+  contentType String
+  size        Int?
+  kind        String   @default("image")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([roomId])
+  @@index([roomId, kind])
 }

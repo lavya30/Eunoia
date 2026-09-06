@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config } from '../config.js';
+import type { ImageDeps } from '../images.js';
 import type { RoomManager } from '../RoomManager.js';
 import { createApiApp } from './app.js';
 
@@ -11,6 +12,7 @@ export async function handleApiRequest(
   res: ServerResponse,
   manager: RoomManager,
   config: Config,
+  images: ImageDeps,
 ): Promise<void> {
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -39,7 +41,7 @@ export async function handleApiRequest(
     `http://${req.headers.host ?? 'localhost'}${req.url ?? '/'}`,
     { method: req.method, headers, body },
   );
-  const response = await createApiApp(manager, config).handle(request);
+  const response = await createApiApp(manager, config, images).handle(request);
   res.statusCode = response.status;
   response.headers.forEach((value, key) => {
     res.setHeader(key, value);

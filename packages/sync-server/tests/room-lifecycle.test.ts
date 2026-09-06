@@ -13,6 +13,8 @@ describe('room lifecycle', () => {
         snapshotDebounceMs: 1,
         roomIdleTimeoutMs: 5,
         d2CommunityNodeLimit: 30,
+        r2MaxUploadBytes: 10_000_000,
+        r2UrlExpiresInSec: 900,
       },
       store,
     );

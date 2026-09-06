@@ -6,6 +6,13 @@ import { handleApiRequest } from './api/routes.js';
 import type { Config } from './config.js';
 import { loadConfig } from './config.js';
 import {
+  type ImageDeps,
+  MemoryImageStore,
+  PrismaImageStore,
+  resolveR2Config,
+  S3R2Client,
+} from './images.js';
+import {
   MemorySnapshotStore,
   PrismaSnapshotStore,
   type SnapshotStore,
@@ -24,6 +31,7 @@ export type SyncServer = {
 export function createSyncServer(
   config: Config = loadConfig(),
   store?: SnapshotStore,
+  imageDeps?: Partial<ImageDeps>,
 ): SyncServer {
   const prisma = config.databaseUrl?.startsWith('postgres')
     ? new PrismaClient({ datasources: { db: { url: config.databaseUrl } } })
@@ -31,11 +39,23 @@ export function createSyncServer(
   const persistence =
     store ??
     (prisma ? new PrismaSnapshotStore(prisma) : new MemorySnapshotStore());
+  const r2Config = resolveR2Config(config);
+  const images: ImageDeps = {
+    imageStore:
+      imageDeps?.imageStore ??
+      (prisma ? new PrismaImageStore(prisma) : new MemoryImageStore()),
+    r2:
+      imageDeps?.r2 !== undefined
+        ? imageDeps.r2
+        : r2Config
+          ? new S3R2Client(r2Config)
+          : null,
+  };
   const manager = new RoomManager(config, persistence);
   const handler = new WebSocketHandler(manager);
   const wsServer = new WebSocketServer({ noServer: true });
   const server = createServer((req, res) => {
-    void handleApiRequest(req, res, manager, config).catch((error) => {
+    void handleApiRequest(req, res, manager, config, images).catch((error) => {
       res.statusCode = 400;
       res.setHeader('content-type', 'application/json');
       res.end(

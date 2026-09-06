@@ -9,6 +9,13 @@ const envSchema = z.object({
   SNAPSHOT_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2000),
   ROOM_IDLE_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(300000),
   D2_COMMUNITY_NODE_LIMIT: z.coerce.number().int().positive().default(30),
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_PUBLIC_BASE_URL: z.string().url().optional(),
+  R2_MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10_000_000),
+  R2_URL_EXPIRES_IN_SEC: z.coerce.number().int().positive().default(900),
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
     .default('development'),
@@ -23,6 +30,13 @@ export type Config = {
   snapshotDebounceMs: number;
   roomIdleTimeoutMs: number;
   d2CommunityNodeLimit: number;
+  r2AccountId?: string;
+  r2AccessKeyId?: string;
+  r2SecretAccessKey?: string;
+  r2Bucket?: string;
+  r2PublicBaseUrl?: string;
+  r2MaxUploadBytes: number;
+  r2UrlExpiresInSec: number;
   nodeEnv: 'development' | 'test' | 'production';
 };
 
@@ -41,6 +55,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     snapshotDebounceMs: parsed.SNAPSHOT_DEBOUNCE_MS,
     roomIdleTimeoutMs: parsed.ROOM_IDLE_TIMEOUT_MS,
     d2CommunityNodeLimit: parsed.D2_COMMUNITY_NODE_LIMIT,
+    r2AccountId: parsed.R2_ACCOUNT_ID,
+    r2AccessKeyId: parsed.R2_ACCESS_KEY_ID,
+    r2SecretAccessKey: parsed.R2_SECRET_ACCESS_KEY,
+    r2Bucket: parsed.R2_BUCKET,
+    r2PublicBaseUrl: parsed.R2_PUBLIC_BASE_URL,
+    r2MaxUploadBytes: parsed.R2_MAX_UPLOAD_BYTES,
+    r2UrlExpiresInSec: parsed.R2_URL_EXPIRES_IN_SEC,
     nodeEnv: parsed.NODE_ENV,
   };
 }
