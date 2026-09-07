@@ -42,6 +42,7 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - PostgreSQL persistence through Prisma, with an in-memory store for local development and tests.
 - Optional Redis Pub/Sub for cursor telemetry across server instances.
 - D2 compiler proxy at `POST /api/compile`, with a development placeholder when no compiler service is configured.
+- Runtime input/output validation with Zod at HTTP, WebSocket, and D2 compiler boundaries.
 
 ### HTTP API
 
@@ -55,6 +56,22 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - Snapshot history: `GET /api/rooms/:roomId/snapshots` (`limit`, `before`; metadata only), `POST /api/rooms/:roomId/snapshots/:snapshotId/restore` (force-flushes pre-restore state, drops peers with close code 4100 so they reload)
 
 The WebSocket endpoint can also be addressed as `/api/rooms/:roomId/sync`.
+
+### Validation
+
+Request schemas live in `packages/sync-server/src/api/schemas.ts`. Use these schemas with `safeParse` at every external boundary instead of trusting TypeScript casts. The schemas currently cover room creation and unlock requests, D2 compile requests, image upload/confirm/list requests, snapshot query parameters, and cursor telemetry.
+
+Malformed HTTP requests return status 400 with this shape:
+
+```json
+{
+  "error": "Invalid request",
+  "code": "VALIDATION_ERROR",
+  "issues": [{ "path": "source", "message": "...", "code": "..." }]
+}
+```
+
+Preserve established domain error codes such as `INVALID_PASSWORD` and `INVALID_ENGINE` when changing validation behavior. Cursor telemetry is validated before entering a room; malformed text messages close the socket with code `1008`. Responses received from the external D2 compiler must also be validated before use. In development, an invalid or unavailable compiler response falls back to the placeholder layout; production surfaces the compiler failure to the API.
 
 ### Configuration
 
@@ -84,5 +101,7 @@ bun run --filter ./packages/sync-server typecheck
 bun run --filter ./packages/sync-server build
 bun run --filter ./packages/sync-server test
 ```
+
+Validation-specific coverage is in `packages/sync-server/tests/validation.test.ts`; API validation coverage is in `packages/sync-server/tests/api.test.ts`.
 
 The API and WebSocket tests bind local TCP ports. If the execution environment blocks local listeners, rerun those tests with the required permission rather than treating the sandbox error as a backend failure.
