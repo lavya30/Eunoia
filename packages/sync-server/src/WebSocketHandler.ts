@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { RawData } from 'ws';
+import { CursorTelemetrySchema } from './api/schemas.js';
 import type { RoomManager } from './RoomManager.js';
-import type { CursorTelemetry, RoomClient } from './types.js';
+import type { RoomClient } from './types.js';
 
 export class WebSocketHandler {
   constructor(private readonly manager: RoomManager) {}
@@ -18,7 +19,7 @@ export class WebSocketHandler {
     room.addClient(client);
 
     socket.on('message', (raw: RawData, isBinary: boolean) => {
-      if (isBinary || typeof raw !== 'string') {
+      if (isBinary) {
         const bytes =
           raw instanceof ArrayBuffer
             ? new Uint8Array(raw)
@@ -31,11 +32,29 @@ export class WebSocketHandler {
         return;
       }
       try {
-        const message = JSON.parse(raw) as CursorTelemetry;
-        if (message.type === 'cursor')
-          room.handleCursor({ ...message, clientId: client.id }, client);
+        const text =
+          typeof raw === 'string'
+            ? raw
+            : raw instanceof ArrayBuffer
+              ? Buffer.from(raw).toString('utf8')
+              : Buffer.concat(
+                  Array.isArray(raw) ? raw : [raw as Buffer],
+                ).toString('utf8');
+        const parsed = CursorTelemetrySchema.safeParse(JSON.parse(text));
+        if (!parsed.success) {
+          socket.close(1008, 'Invalid cursor message');
+          return;
+        }
+        room.handleCursor(
+          {
+            ...parsed.data,
+            clientId: client.id,
+            timestamp: parsed.data.timestamp ?? Date.now(),
+          },
+          client,
+        );
       } catch {
-        // Ignore malformed telemetry messages.
+        socket.close(1008, 'Invalid cursor message');
       }
     });
 

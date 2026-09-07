@@ -1,32 +1,27 @@
 import { node } from '@elysiajs/node';
 import { Elysia } from 'elysia';
 import type { Config } from '../config.js';
-import {
-  type CompileRequest,
-  CompileRequestError,
-  compileD2,
-  type LayoutEngine,
-  parseEngine,
-  type Tier,
-} from '../d2-compiler.js';
+import { CompileRequestError, compileD2, type Tier } from '../d2-compiler.js';
 import {
   buildImageKey,
-  IMAGE_CONTENT_TYPES,
   type ImageDeps,
-  type ImageKind,
-  isImageContentType,
-  isImageKind,
   keyBelongsToRoom,
   type ObjectHead,
 } from '../images.js';
 import type { RoomMetadata } from '../RoomLoader.js';
 import type { RoomManager } from '../RoomManager.js';
+import { authorizeRoom, extractTicket, issueTicket } from '../room-auth.js';
 import {
-  authorizeRoom,
-  extractTicket,
-  issueTicket,
-  isValidPassword,
-} from '../room-auth.js';
+  CompileRequestSchema,
+  CreateRoomSchema,
+  ImageConfirmSchema,
+  ImageContentTypeSchema,
+  ImageListQuerySchema,
+  ImageRequestUploadSchema,
+  SnapshotQuerySchema,
+  UnlockRoomSchema,
+  validationError,
+} from './schemas.js';
 
 export type { ImageDeps };
 
@@ -84,25 +79,24 @@ export function createApiApp(
       activeRooms: manager.activeRoomCount,
     }))
     .post('/api/rooms', async ({ body, set }) => {
-      const input = body as Record<string, unknown>;
-      if (input.password !== undefined && !isValidPassword(input.password)) {
+      const parsed = CreateRoomSchema.safeParse(body);
+      if (!parsed.success) {
         set.status = 400;
-        return {
-          error: 'Password must be at least 8 characters',
-          code: 'INVALID_PASSWORD',
-        };
+        if (parsed.error.issues.some((issue) => issue.path[0] === 'password'))
+          return {
+            error: 'Password must be at least 8 characters',
+            code: 'INVALID_PASSWORD',
+          };
+        return validationError(parsed.error);
       }
+      const input = parsed.data;
       const room = await manager.createRoom(
         {
-          name: typeof input.name === 'string' ? input.name : undefined,
-          ownerId:
-            typeof input.ownerId === 'string' ? input.ownerId : undefined,
-          tier:
-            input.tier === 'PRO' || input.tier === 'ENTERPRISE'
-              ? input.tier
-              : undefined,
+          name: input.name,
+          ownerId: input.ownerId,
+          tier: input.tier,
         },
-        typeof input.password === 'string' ? input.password : undefined,
+        input.password,
       );
       set.status = 201;
       return room;
@@ -127,10 +121,15 @@ export function createApiApp(
         set.status = 404;
         return { error: 'Room not found' };
       }
-      const input = body as { password?: unknown };
+      const parsed = UnlockRoomSchema.safeParse(body);
+      if (!parsed.success) {
+        set.status = 400;
+        return validationError(parsed.error);
+      }
+      const input = parsed.data;
       if (room.hasPassword) {
         if (
-          typeof input.password !== 'string' ||
+          input.password === undefined ||
           !(await manager.verifyRoomPassword(room.id, input.password))
         ) {
           set.status = 403;
@@ -161,26 +160,32 @@ export function createApiApp(
       return;
     })
     .post('/api/compile', async ({ body, headers, query, set }) => {
-      const input = body as Partial<CompileRequest>;
-      if (typeof input.source !== 'string') {
+      const parsed = CompileRequestSchema.safeParse(body);
+      if (!parsed.success) {
         set.status = 400;
-        return { error: 'source is required' };
+        const engineIssue = parsed.error.issues.find(
+          (issue) => issue.path[0] === 'engine',
+        );
+        if (engineIssue) {
+          const engine =
+            typeof body === 'object' && body !== null
+              ? (body as Record<string, unknown>).engine
+              : undefined;
+          return {
+            error: `Unknown layout engine: ${JSON.stringify(engine)}`,
+            code: 'INVALID_ENGINE',
+            details: { engine },
+          };
+        }
+        return validationError(parsed.error);
       }
-      let engine: LayoutEngine;
-      try {
-        engine = parseEngine(input.engine);
-      } catch (error) {
-        set.status = 400;
-        return {
-          error: error instanceof Error ? error.message : 'Invalid engine',
-          code: 'INVALID_ENGINE',
-        };
-      }
+      const input = parsed.data;
+      const engine = input.engine ?? 'dagre';
       // Tier is resolved server-side: the room's stored tier wins when a
       // roomId is given, otherwise COMMUNITY. A client-asserted tier in the
       // body is never trusted. Locked rooms additionally require a ticket.
       let tier: Tier = 'COMMUNITY';
-      if (typeof input.roomId === 'string' && input.roomId) {
+      if (input.roomId) {
         const access = await requestAccess(
           manager,
           input.roomId,
@@ -242,21 +247,12 @@ export function createApiApp(
             code: 'R2_NOT_CONFIGURED',
           };
         }
-        const input = body as { contentType?: unknown; kind?: unknown };
-        if (!isImageContentType(input.contentType)) {
+        const parsed = ImageRequestUploadSchema.safeParse(body);
+        if (!parsed.success) {
           set.status = 400;
-          return {
-            error: 'Unsupported content type',
-            code: 'INVALID_CONTENT_TYPE',
-            allowed: Object.keys(IMAGE_CONTENT_TYPES),
-          };
+          return validationError(parsed.error);
         }
-        const kind: ImageKind =
-          input.kind === undefined ? 'image' : (input.kind as ImageKind);
-        if (!isImageKind(kind)) {
-          set.status = 400;
-          return { error: 'Invalid kind', code: 'INVALID_KIND' };
-        }
+        const input = parsed.data;
         const key = buildImageKey(room.id, input.contentType);
         try {
           const { url, expiresIn } = await r2.presignUpload(
@@ -269,7 +265,7 @@ export function createApiApp(
             uploadUrl: url,
             expiresIn,
             contentType: input.contentType,
-            kind,
+            kind: input.kind,
           };
         } catch (error) {
           return r2Error(set, error);
@@ -299,27 +295,18 @@ export function createApiApp(
             code: 'R2_NOT_CONFIGURED',
           };
         }
-        const input = body as {
-          key?: unknown;
-          contentType?: unknown;
-          size?: unknown;
-          kind?: unknown;
-        };
-        if (
-          typeof input.key !== 'string' ||
-          !keyBelongsToRoom(input.key, room.id)
-        ) {
+        const parsed = ImageConfirmSchema.safeParse(body);
+        if (!parsed.success) {
+          set.status = 400;
+          return validationError(parsed.error);
+        }
+        const input = parsed.data;
+        if (!keyBelongsToRoom(input.key, room.id)) {
           set.status = 400;
           return {
             error: 'Key does not belong to this room',
             code: 'INVALID_KEY',
           };
-        }
-        const kind: ImageKind =
-          input.kind === undefined ? 'image' : (input.kind as ImageKind);
-        if (!isImageKind(kind)) {
-          set.status = 400;
-          return { error: 'Invalid kind', code: 'INVALID_KIND' };
         }
         let head: ObjectHead | null;
         try {
@@ -331,8 +318,10 @@ export function createApiApp(
           set.status = 404;
           return { error: 'Upload not found', code: 'OBJECT_NOT_FOUND' };
         }
-        const contentType = head.contentType ?? input.contentType;
-        if (!isImageContentType(contentType)) {
+        const contentType = ImageContentTypeSchema.safeParse(
+          head.contentType ?? input.contentType,
+        );
+        if (!contentType.success) {
           set.status = 400;
           return {
             error: 'Unsupported content type',
@@ -369,9 +358,9 @@ export function createApiApp(
             roomId: room.id,
             key: input.key,
             url,
-            contentType,
+            contentType: contentType.data,
             size,
-            kind,
+            kind: input.kind,
           });
         } catch (error) {
           if ((error as { code?: string }).code === 'P2002') {
@@ -400,15 +389,12 @@ export function createApiApp(
           return access.body;
         }
         const room = access.room;
-        const kind = (query as { kind?: unknown }).kind;
-        if (kind !== undefined && !isImageKind(kind)) {
+        const parsed = ImageListQuerySchema.safeParse(query);
+        if (!parsed.success) {
           set.status = 400;
-          return { error: 'Invalid kind', code: 'INVALID_KIND' };
+          return validationError(parsed.error);
         }
-        return images.imageStore.listImages(
-          room.id,
-          kind === undefined ? undefined : (kind as ImageKind),
-        );
+        return images.imageStore.listImages(room.id, parsed.data.kind);
       },
     )
     .get(
@@ -499,28 +485,14 @@ export function createApiApp(
           return access.body;
         }
         const room = access.room;
-        const input = query as { limit?: unknown; before?: unknown };
-        let limit = 20;
-        if (input.limit !== undefined) {
-          const parsed = Number(input.limit);
-          if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-            set.status = 400;
-            return { error: 'limit must be an integer between 1 and 100' };
-          }
-          limit = parsed;
-        }
-        let before: Date | undefined;
-        if (input.before !== undefined) {
-          const parsed = new Date(String(input.before));
-          if (Number.isNaN(parsed.getTime())) {
-            set.status = 400;
-            return { error: 'before must be a valid date' };
-          }
-          before = parsed;
+        const parsed = SnapshotQuerySchema.safeParse(query);
+        if (!parsed.success) {
+          set.status = 400;
+          return validationError(parsed.error);
         }
         const snapshots = await manager.listRoomSnapshots(room.id, {
-          limit,
-          before,
+          limit: parsed.data.limit,
+          before: parsed.data.before,
         });
         return snapshots.map(({ id, docVersion, createdAt }) => ({
           id,

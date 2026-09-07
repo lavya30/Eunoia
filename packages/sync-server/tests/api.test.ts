@@ -77,6 +77,41 @@ describe('HTTP API', () => {
     expect((await compileResponse.json()).placeholder).toBe(true);
   });
 
+  test('returns structured validation errors for malformed requests', async () => {
+    const badRoom = await fetch(`${baseUrl}/api/rooms`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '   ', unexpected: true }),
+    });
+    expect(badRoom.status).toBe(400);
+    const roomPayload = (await badRoom.json()) as {
+      code: string;
+      issues: { path: string; code: string }[];
+    };
+    expect(roomPayload.code).toBe('VALIDATION_ERROR');
+    expect(roomPayload.issues.some((issue) => issue.path === 'name')).toBe(
+      true,
+    );
+
+    const badCompile = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: '', extra: true }),
+    });
+    expect(badCompile.status).toBe(400);
+    const compilePayload = (await badCompile.json()) as {
+      code: string;
+      issues: { path: string; code: string }[];
+    };
+    expect(compilePayload.code).toBe('VALIDATION_ERROR');
+    expect(compilePayload.issues.some((issue) => issue.path === 'source')).toBe(
+      true,
+    );
+    expect(
+      compilePayload.issues.some((issue) => issue.code === 'unrecognized_keys'),
+    ).toBe(true);
+  });
+
   test('rejects Pro-only engines for Community callers', async () => {
     for (const engine of ['elk', 'tala']) {
       const response = await fetch(`${baseUrl}/api/compile`, {

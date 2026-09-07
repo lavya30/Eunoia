@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export type LayoutEngine = 'dagre' | 'elk' | 'tala';
 
 export type Tier = 'COMMUNITY' | 'PRO' | 'ENTERPRISE';
@@ -62,6 +64,15 @@ const LAYOUT_ENGINES: LayoutEngine[] = ['dagre', 'elk', 'tala'];
 /** ELK and TALA are Pro/Enterprise-only; Dagre is available on every tier. */
 const PRO_ENGINES: LayoutEngine[] = ['elk', 'tala'];
 
+const CompileResponseSchema = z
+  .object({
+    nodes: z.array(z.record(z.unknown())),
+    edges: z.array(z.record(z.unknown())),
+    engine: z.enum(['dagre', 'elk', 'tala']),
+    placeholder: z.boolean().optional(),
+  })
+  .passthrough();
+
 export function parseEngine(value: unknown): LayoutEngine {
   if (value === undefined) return 'dagre';
   if (
@@ -115,7 +126,10 @@ export async function compileD2(
     });
     if (!response.ok)
       throw new Error(`D2 compiler returned ${response.status}`);
-    const compiled = (await response.json()) as CompileResponse;
+    const parsed = CompileResponseSchema.safeParse(await response.json());
+    if (!parsed.success)
+      throw new Error('D2 compiler returned an invalid response');
+    const compiled = parsed.data;
     assertNodeCountAllowed(compiled.nodes.length, tier, nodeLimit);
     return compiled;
   } catch (error) {
