@@ -72,7 +72,10 @@ export function createApiApp(
   return new Elysia({ adapter: node() })
     .onRequest(({ set }) => {
       set.headers['access-control-allow-origin'] = '*';
-      set.headers['access-control-allow-headers'] = 'content-type';
+      set.headers['access-control-allow-headers'] =
+        'content-type, authorization';
+      set.headers['access-control-allow-methods'] =
+        'GET, POST, DELETE, OPTIONS';
     })
     .get('/health', () => ({
       status: 'ok',
