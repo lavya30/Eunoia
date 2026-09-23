@@ -444,6 +444,9 @@
   flex: 1;
   overflow: hidden;
   padding: 22px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .canvas-viewport::before {
@@ -543,6 +546,31 @@
     0 2px 5px rgba(8, 10, 25, 0.14);
   cursor: default;
   touch-action: none;
+  will-change: transform;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.board-canvas text,
+.canvas-node,
+.canvas-node text,
+.board-connector text,
+.canvas-caption,
+.marquee-selection {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Keep in-place editing and code editing selectable. */
+.canvas-viewport input,
+.canvas-viewport textarea,
+.code-panel,
+.code-panel input,
+.code-panel textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .board-canvas:active {
@@ -1335,9 +1363,9 @@ circle.canvas-grid {
 .stage-toolbar {
   position: absolute;
   z-index: 8;
-  top: 14px;
+  top: 62px;
   right: 20px;
-  left: 20px;
+  left: auto;
   justify-content: flex-end;
   min-height: 0;
   padding: 0;
@@ -1691,6 +1719,8 @@ circle.canvas-grid {
 
 .board-canvas {
   min-height: 0;
+  overflow: hidden;
+  display: block;
   border-radius: 0;
   box-shadow: none;
 }
@@ -1705,7 +1735,7 @@ circle.canvas-grid {
 }
 
 .canvas-caption {
-  top: 27px;
+  top: 62px;
   right: 27px;
   left: 236px;
 }
@@ -1751,7 +1781,7 @@ circle.canvas-grid {
 }
 
 .selection-popover {
-  bottom: 70px;
+  bottom: 86px;
 }
 
 .code-panel {
@@ -1835,7 +1865,7 @@ circle.canvas-grid {
   }
 
   .canvas-caption {
-    top: 67px;
+    top: 62px;
     right: 24px;
     left: 24px;
   }
@@ -1869,6 +1899,6 @@ circle.canvas-grid {
   }
 
   .canvas-caption {
-    top: 108px;
+    top: 60px;
   }
 }

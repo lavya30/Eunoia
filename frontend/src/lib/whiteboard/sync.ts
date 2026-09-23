@@ -21,6 +21,7 @@ type SyncSessionOptions = {
   roomId: string;
   serverUrl: string | null;
   initialState: SyncBoardState;
+  getInitialState?: () => SyncBoardState;
   onState: (state: SyncBoardState) => void;
   onStatus: (status: SyncStatus) => void;
   onReady?: () => void;
@@ -110,6 +111,7 @@ export function resolveSyncServerUrl(): string | null {
 export function createBoardSync(options: SyncSessionOptions): SyncSession {
   const {
     initialState,
+    getInitialState,
     onError,
     onReady,
     onState,
@@ -176,7 +178,9 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
       send(encodeSyncStep1(doc));
       if (initialStateTimer !== null) window.clearTimeout(initialStateTimer);
       initialStateTimer = window.setTimeout(() => {
-        if (board.size === 0) publish(initialState);
+        // Read the latest local state at fire time: the snapshot captured
+        // when the session was created may already be stale.
+        if (board.size === 0) publish(getInitialState?.() ?? initialState);
         onReady?.();
       }, 900);
     };

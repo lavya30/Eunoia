@@ -37,6 +37,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type ChangeEvent as ReactChangeEvent,
   type WheelEvent as ReactWheelEvent,
@@ -492,8 +493,9 @@ function pointerToViewportPoint(
   event: { clientX: number; clientY: number },
   element: SVGSVGElement,
   viewport: { width: number; height: number },
+  cachedRect?: DOMRect | null,
 ): Point {
-  const bounds = element.getBoundingClientRect();
+  const bounds = cachedRect ?? element.getBoundingClientRect();
   if (bounds.width === 0 || bounds.height === 0) return { x: 0, y: 0 };
   return {
     x: ((event.clientX - bounds.left) / bounds.width) * viewport.width,
@@ -510,6 +512,196 @@ function isEditableTarget(target: EventTarget | null): boolean {
     target.tagName === 'SELECT' ||
     Boolean(target.closest('.monaco-editor'))
   );
+}
+
+function clearNativeSelection(): void {
+  // Dragging a marquee / shape must not create a browser text selection.
+  // CSS `user-select: none` prevents new ranges, this clears a pre-existing one.
+  if (typeof window === 'undefined') return;
+  const selection = window.getSelection();
+  if (selection && !selection.isCollapsed) selection.removeAllRanges();
+}
+
+function isAuxClick(event: { pointerType: string; button: number }): boolean {
+  // Allow touch/pen unconditionally; for mice ignore right-click (button 2).
+  // Middle-click (button 1) is handled by the caller as pan.
+  return event.pointerType === 'mouse' && event.button === 2;
+}
+
+function boardFileSlug(title: string): string {
+  const slug = title
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-_]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60);
+  return slug || 'board';
+}
+
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function clampSize(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+const NODE_TONES = new Set(['violet', 'orange', 'blue', 'yellow', 'mint', 'note']);
+const NODE_SHAPES = new Set(['round', 'cylinder', 'note', 'ellipse', 'text', 'image']);
+
+function sanitizeNode(raw: unknown): BoardNode | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const n = raw as Partial<BoardNode>;
+  if (typeof n.id !== 'string' || n.id.length === 0 || n.id.length > 120) return null;
+  const width = clampSize(finiteOr(n.width, 0), 8, 4000);
+  const height = clampSize(finiteOr(n.height, 0), 8, 4000);
+  return {
+    id: n.id,
+    label: typeof n.label === 'string' ? n.label.slice(0, 500) : '',
+    detail: typeof n.detail === 'string' ? n.detail.slice(0, 500) : '',
+    x: clampSize(finiteOr(n.x, 0), -100000, 100000),
+    y: clampSize(finiteOr(n.y, 0), -100000, 100000),
+    width,
+    height,
+    tone: (typeof n.tone === 'string' && NODE_TONES.has(n.tone) ? n.tone : 'mint') as BoardNode['tone'],
+    shape: (typeof n.shape === 'string' && NODE_SHAPES.has(n.shape) ? n.shape : undefined) as BoardNode['shape'],
+    href: typeof n.href === 'string' && n.href.startsWith('data:image/') ? n.href.slice(0, 8_000_000) : undefined,
+    stroke: typeof n.stroke === 'string' ? n.stroke.slice(0, 32) : undefined,
+    fill: typeof n.fill === 'string' ? n.fill.slice(0, 32) : undefined,
+    strokeWidth: n.strokeWidth === undefined ? undefined : clampSize(finiteOr(n.strokeWidth, 2), 0.5, 24),
+    dashed: n.dashed === true,
+    opacity: n.opacity === undefined ? undefined : clampSize(finiteOr(n.opacity, 1), 0.05, 1),
+    fontSize: n.fontSize === undefined ? undefined : clampSize(Math.round(finiteOr(n.fontSize, 16)), 8, 400),
+  };
+}
+
+function sanitizePoint(raw: unknown): Point | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Partial<Point>;
+  if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+  return {
+    x: clampSize(p.x as number, -100000, 100000),
+    y: clampSize(p.y as number, -100000, 100000),
+  };
+}
+
+function sanitizeArrow(raw: unknown): BoardArrow | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const a = raw as Partial<BoardArrow>;
+  if (typeof a.id !== 'string' || a.id.length === 0 || a.id.length > 120) return null;
+  const start = sanitizePoint(a.start);
+  const end = sanitizePoint(a.end);
+  if (!start || !end) return null;
+  return {
+    id: a.id,
+    start,
+    end,
+    color: typeof a.color === 'string' ? a.color.slice(0, 32) : '#25263a',
+    startNodeId: typeof a.startNodeId === 'string' ? a.startNodeId : undefined,
+    endNodeId: typeof a.endNodeId === 'string' ? a.endNodeId : undefined,
+  };
+}
+
+function sanitizeStroke(raw: unknown): BoardStroke | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Partial<BoardStroke>;
+  if (typeof s.id !== 'string' || s.id.length === 0 || s.id.length > 120) return null;
+  if (!Array.isArray(s.points)) return null;
+  const points = s.points.slice(0, 2000).flatMap((p) => {
+    const clean = sanitizePoint(p);
+    return clean ? [clean] : [];
+  });
+  if (points.length === 0) return null;
+  return {
+    id: s.id,
+    points,
+    color: typeof s.color === 'string' ? s.color.slice(0, 32) : '#25263a',
+  };
+}
+
+function sanitizeBoardState(value: unknown): PersistedBoard | null {
+  if (!isPersistedBoard(value)) return null;
+  return {
+    nodes: value.nodes.flatMap((n) => {
+      const clean = sanitizeNode(n);
+      return clean ? [clean] : [];
+    }),
+    arrows: value.arrows.flatMap((a) => {
+      const clean = sanitizeArrow(a);
+      return clean ? [clean] : [];
+    }),
+    strokes: value.strokes.flatMap((s) => {
+      const clean = sanitizeStroke(s);
+      return clean ? [clean] : [];
+    }),
+    code: value.code.slice(0, 500_000),
+  };
+}
+
+function reorderBySelection<T extends { id: string }>(
+  items: T[],
+  selectedIds: string[],
+  direction: 'forward' | 'backward' | 'front' | 'back',
+): T[] {
+  const selected = items.filter((item) => selectedIds.includes(item.id));
+  if (selected.length === 0) return items;
+  const remaining = items.filter((item) => !selectedIds.includes(item.id));
+  if (direction === 'front') return [...remaining, ...selected];
+  if (direction === 'back') return [...selected, ...remaining];
+  if (direction === 'forward') {
+    const next = [...items];
+    for (const item of selected) {
+      const index = next.findIndex((entry) => entry.id === item.id);
+      if (index >= 0 && index < next.length - 1) {
+        [next[index], next[index + 1]] = [next[index + 1], next[index]];
+      }
+    }
+    return next;
+  }
+  const next = [...items];
+  for (const item of [...selected].reverse()) {
+    const index = next.findIndex((entry) => entry.id === item.id);
+    if (index > 0) {
+      [next[index], next[index - 1]] = [next[index - 1], next[index]];
+    }
+  }
+  return next;
+}
+
+function downscaleImageToDataUrl(
+  source: string,
+  maxDimension = 1024,
+): Promise<{ href: string; width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const naturalWidth = img.naturalWidth || 400;
+      const naturalHeight = img.naturalHeight || 300;
+      const scale = Math.min(1, maxDimension / Math.max(naturalWidth, naturalHeight));
+      if (scale >= 1) {
+        resolve({ href: source, width: naturalWidth, height: naturalHeight });
+        return;
+      }
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(naturalHeight * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve({ href: source, width: naturalWidth, height: naturalHeight });
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve({ href: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height });
+      } catch {
+        resolve({ href: source, width: naturalWidth, height: naturalHeight });
+      }
+    };
+    img.onerror = () => resolve({ href: source, width: 400, height: 300 });
+    img.src = source;
+  });
 }
 
 function ToolButton({
@@ -544,10 +736,11 @@ function PresenceAvatar({
   initials: string;
   tone: string;
 }) {
+  // Decorative placeholder until real presence is wired via sync awareness.
   return (
     <span
       className={`presence-avatar presence-avatar--${tone}`}
-      aria-label={`${initials} is in the room`}
+      aria-hidden="true"
     >
       {initials}
     </span>
@@ -583,11 +776,13 @@ function CanvasNode({
   selected,
   onPointerDown,
   onDoubleClick,
+  onKeySelect,
 }: {
   node: BoardNode;
   selected: boolean;
   onPointerDown: (event: ReactPointerEvent<SVGGElement>) => void;
   onDoubleClick: () => void;
+  onKeySelect: (event: ReactKeyboardEvent<SVGGElement>, node: BoardNode) => void;
 }) {
   const isNote = node.shape === 'note';
   const isCylinder = node.shape === 'cylinder';
@@ -616,9 +811,12 @@ function CanvasNode({
       role="button"
       tabIndex={0}
       aria-label={`Select ${node.label}`}
+      aria-pressed={selected}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
+          event.stopPropagation();
+          onKeySelect(event, node);
         }
       }}
     >
@@ -758,8 +956,9 @@ export function WhiteboardPage() {
   const canvasRef = useRef<SVGSVGElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const interactionRef = useRef<Interaction | null>(null);
-  const movedRef = useRef(false);
   const spaceRef = useRef(false);
+  const viewportRectRef = useRef<DOMRect | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   const clipboardRef = useRef<{
     nodes: BoardNode[];
     arrows: BoardArrow[];
@@ -771,6 +970,11 @@ export function WhiteboardPage() {
   const syncRef = useRef<ReturnType<typeof createBoardSync> | null>(null);
   const compileAbortRef = useRef<AbortController | null>(null);
   const copiedTimerRef = useRef<number | null>(null);
+  const cameraRef = useRef<Camera>(camera);
+  const nodesRef = useRef<BoardNode[]>(nodes);
+  const arrowsRef = useRef<BoardArrow[]>(arrows);
+  const strokesRef = useRef<BoardStroke[]>(strokes);
+  const [svgPixelSize, setSvgPixelSize] = useState<{ width: number; height: number } | null>(null);
   const boardStateRef = useRef<SyncBoardState>({
     nodes,
     arrows,
@@ -782,6 +986,43 @@ export function WhiteboardPage() {
   useEffect(() => {
     boardStateRef.current = { nodes, arrows, strokes, code };
   }, [arrows, code, nodes, strokes]);
+
+  useEffect(() => {
+    cameraRef.current = camera;
+  }, [camera]);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  useEffect(() => {
+    arrowsRef.current = arrows;
+  }, [arrows]);
+
+  useEffect(() => {
+    strokesRef.current = strokes;
+  }, [strokes]);
+
+  // Track the SVG element's pixel size without reading refs during render,
+  // so the in-place text editor stays aligned on resize/zoom.
+  useEffect(() => {
+    const element = canvasRef.current;
+    if (!element) return;
+    const update = () => {
+      const rect = element.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setSvgPixelSize({ width: rect.width, height: rect.height });
+      }
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    window.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, []);
 
   const snapshot = useCallback(
     (): BoardSnapshot => ({
@@ -848,11 +1089,12 @@ export function WhiteboardPage() {
       const raw = window.localStorage.getItem(BOARD_STORAGE_KEY);
       if (raw) {
         const parsed: unknown = JSON.parse(raw);
-        if (isPersistedBoard(parsed)) {
-          setNodes(parsed.nodes);
-          setArrows(parsed.arrows);
-          setStrokes(parsed.strokes);
-          setCode(parsed.code);
+        const clean = sanitizeBoardState(parsed);
+        if (clean) {
+          setNodes(clean.nodes.length > 0 ? clean.nodes : INITIAL_NODES);
+          setArrows(clean.arrows);
+          setStrokes(clean.strokes);
+          setCode(clean.code);
         }
       }
       setPersistenceState('saved');
@@ -870,11 +1112,37 @@ export function WhiteboardPage() {
     if (!hasHydrated) return;
     setPersistenceState('saving');
     const timeoutId = window.setTimeout(() => {
+      const fullPayload: PersistedBoard = { nodes, arrows, strokes, code };
       try {
-        const payload: PersistedBoard = { nodes, arrows, strokes, code };
-        window.localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(payload));
+        window.localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(fullPayload));
         setPersistenceState('saved');
-      } catch {
+      } catch (error) {
+        // Image data URLs can exceed the ~5MB localStorage quota. Retry
+        // metadata-only so text/shapes still persist for this session.
+        const isQuota =
+          error instanceof DOMException
+            ? error.name === 'QuotaExceededError' || error.code === 22
+            : false;
+        if (isQuota) {
+          try {
+            const slimPayload: PersistedBoard = {
+              nodes: nodes.map((node) =>
+                node.shape === 'image' ? { ...node, href: undefined } : node,
+              ),
+              arrows,
+              strokes,
+              code,
+            };
+            window.localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(slimPayload));
+            setPersistenceState('saved');
+            setBoardError(
+              'Images are kept in memory only: local storage is full, so they will not persist after reload.',
+            );
+            return;
+          } catch {
+            // Fall through to the generic error below.
+          }
+        }
         setPersistenceState('error');
         setBoardError(
           'The board could not be saved in this browser. Export or keep the tab open to avoid losing changes.',
@@ -891,6 +1159,7 @@ export function WhiteboardPage() {
       roomId: ROOM_ID,
       serverUrl: resolveSyncServerUrl(),
       initialState: boardStateRef.current,
+      getInitialState: () => boardStateRef.current,
       onReady: () => setSyncReady(true),
       onStatus: (status) => {
         setSyncStatus(status);
@@ -898,16 +1167,17 @@ export function WhiteboardPage() {
       },
       onError: (message) => setBoardError(message),
       onState: (state) => {
-        if (!isPersistedBoard(state)) {
+        const clean = sanitizeBoardState(state);
+        if (!clean) {
           setBoardError(
             'The room sent an invalid board state. Local changes were kept.',
           );
           return;
         }
-        setNodes(state.nodes);
-        setArrows(state.arrows);
-        setStrokes(state.strokes);
-        setCode(state.code);
+        setNodes(clean.nodes);
+        setArrows(clean.arrows);
+        setStrokes(clean.strokes);
+        setCode(clean.code);
         setPersistenceState('saved');
       },
     });
@@ -950,6 +1220,28 @@ export function WhiteboardPage() {
     () => spatialIndex.search(viewBox),
     [spatialIndex, viewBox],
   );
+
+  const visibleStrokes = useMemo(
+    () => strokes.filter((stroke) => aabbIntersects(viewBox, strokeBounds(stroke))),
+    [strokes, viewBox],
+  );
+
+  const visibleArrows = useMemo(
+    () => arrows.filter((arrow) => aabbIntersects(viewBox, arrowBounds(arrow))),
+    [arrows, viewBox],
+  );
+
+  // Per-color markers: `fill="context-stroke"` has spotty browser support,
+  // so dynamic arrows get an explicit marker in their own color.
+  const arrowMarkerIds = useMemo(() => {
+    const ids = new Map<string, string>();
+    for (const arrow of arrows) {
+      if (!ids.has(arrow.color)) {
+        ids.set(arrow.color, `ah-${arrow.color.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'ink'}`);
+      }
+    }
+    return ids;
+  }, [arrows]);
 
   const selectedNodeBounds = useMemo(() => {
     const selectedNodes = nodes.filter((node) => selectedIds.includes(node.id));
@@ -1043,10 +1335,18 @@ export function WhiteboardPage() {
     setEditingNode(null);
   }, []);
 
+  const selectAllIds = useCallback(() => {
+    const ids = new Set<string>();
+    for (const node of nodesRef.current) ids.add(node.id);
+    for (const arrow of arrowsRef.current) ids.add(arrow.id);
+    for (const stroke of strokesRef.current) ids.add(stroke.id);
+    return [...ids];
+  }, []);
+
   const applySelectedColor = useCallback(
     (color: string, tone: BoardNode['tone']) => {
       setActiveColor(color);
-      if (selectedIds.length === 0) return;
+      if (locked || selectedIds.length === 0) return;
       recordHistory();
       setNodes((current) =>
         current.map((node) =>
@@ -1066,7 +1366,7 @@ export function WhiteboardPage() {
         ),
       );
     },
-    [recordHistory, selectedIds],
+    [locked, recordHistory, selectedIds],
   );
 
   const copySelected = useCallback(() => {
@@ -1082,16 +1382,17 @@ export function WhiteboardPage() {
   }, [arrows, nodes, selectedIds, strokes]);
 
   const cutSelected = useCallback(() => {
+    if (locked) return;
     copySelected();
     recordHistory();
     setNodes((current) => current.filter((n) => !selectedIds.includes(n.id)));
     setArrows((current) => current.filter((a) => !selectedIds.includes(a.id)));
     setStrokes((current) => current.filter((s) => !selectedIds.includes(s.id)));
     setSelectedIds([]);
-  }, [copySelected, recordHistory, selectedIds]);
+  }, [copySelected, locked, recordHistory, selectedIds]);
 
   const pasteClipboard = useCallback(() => {
-    if (!clipboardRef.current) return;
+    if (locked || !clipboardRef.current) return;
     const {
       nodes: cNodes,
       arrows: cArrows,
@@ -1133,7 +1434,7 @@ export function WhiteboardPage() {
       ...newStrokes.map((s) => s.id),
     ];
     setSelectedIds(newSelectedIds);
-  }, [recordHistory]);
+  }, [locked, recordHistory]);
 
   const duplicateSelected = useCallback(() => {
     copySelected();
@@ -1142,7 +1443,7 @@ export function WhiteboardPage() {
 
   const updateSelectedNodes = useCallback(
     (updates: Partial<BoardNode>) => {
-      if (selectedIds.length === 0) return;
+      if (locked || selectedIds.length === 0) return;
       recordHistory();
       setNodes((current) =>
         current.map((node) =>
@@ -1150,41 +1451,18 @@ export function WhiteboardPage() {
         ),
       );
     },
-    [recordHistory, selectedIds],
+    [locked, recordHistory, selectedIds],
   );
 
   const moveSelectedLayer = useCallback(
     (direction: 'forward' | 'backward' | 'front' | 'back') => {
-      if (selectedIds.length === 0) return;
+      if (locked || selectedIds.length === 0) return;
       recordHistory();
-      setNodes((current) => {
-        const selected = current.filter((node) =>
-          selectedIds.includes(node.id),
-        );
-        const remaining = current.filter(
-          (node) => !selectedIds.includes(node.id),
-        );
-        if (direction === 'front') return [...remaining, ...selected];
-        if (direction === 'back') return [...selected, ...remaining];
-        if (direction === 'forward') {
-          const next = [...current];
-          selected.forEach((node) => {
-            const index = next.findIndex((item) => item.id === node.id);
-            if (index < next.length - 1)
-              [next[index], next[index + 1]] = [next[index + 1], next[index]];
-          });
-          return next;
-        }
-        const next = [...current];
-        [...selected].reverse().forEach((node) => {
-          const index = next.findIndex((item) => item.id === node.id);
-          if (index > 0)
-            [next[index], next[index - 1]] = [next[index - 1], next[index]];
-        });
-        return next;
-      });
+      setNodes((current) => reorderBySelection(current, selectedIds, direction));
+      setArrows((current) => reorderBySelection(current, selectedIds, direction));
+      setStrokes((current) => reorderBySelection(current, selectedIds, direction));
     },
-    [recordHistory, selectedIds],
+    [locked, recordHistory, selectedIds],
   );
 
   const handleResizePointerDown = useCallback(
@@ -1193,10 +1471,12 @@ export function WhiteboardPage() {
         locked ||
         !canvasRef.current ||
         selectedIds.length !== 1 ||
-        !selectedNodeBounds
+        !selectedNodeBounds ||
+        isAuxClick(event)
       )
         return;
       event.stopPropagation();
+      event.preventDefault();
       historyRecordedRef.current = false;
       interactionRef.current = {
         kind: 'resize',
@@ -1216,8 +1496,9 @@ export function WhiteboardPage() {
       arrowId: string,
       endpoint: 'start' | 'end',
     ) => {
-      if (locked || !canvasRef.current) return;
+      if (locked || !canvasRef.current || isAuxClick(event)) return;
       event.stopPropagation();
+      event.preventDefault();
       historyRecordedRef.current = false;
       interactionRef.current = {
         kind: 'arrowEndpoint',
@@ -1232,13 +1513,18 @@ export function WhiteboardPage() {
 
   const handleElementPointerDown = useCallback(
     (event: ReactPointerEvent<SVGElement>, elementId: string) => {
-      if (!canvasRef.current) return;
+      if (!canvasRef.current || isAuxClick(event)) return;
+      // Don't let a canvas drag extend a browser text selection.
+      clearNativeSelection();
+      event.preventDefault();
+      viewportRectRef.current = canvasRef.current.getBoundingClientRect();
       const screenPoint = pointerToViewportPoint(
         event,
         canvasRef.current,
         canvasViewport,
+        viewportRectRef.current,
       );
-      const worldPoint = screenToWorld(screenPoint, camera, canvasViewport);
+      const worldPoint = screenToWorld(screenPoint, cameraRef.current, canvasViewport);
 
       if (activeTool === 'hand') {
         historyRecordedRef.current = false;
@@ -1315,7 +1601,6 @@ export function WhiteboardPage() {
       activeColor,
       activeTool,
       arrows,
-      camera,
       canvasViewport,
       ensureHistory,
       locked,
@@ -1332,14 +1617,35 @@ export function WhiteboardPage() {
     [handleElementPointerDown],
   );
 
+  const handleNodeKeySelect = useCallback(
+    (event: ReactKeyboardEvent<SVGGElement>, node: BoardNode) => {
+      if (locked) return;
+      if (event.shiftKey) {
+        setSelectedIds((current) =>
+          current.includes(node.id)
+            ? current.filter((id) => id !== node.id)
+            : [...current, node.id],
+        );
+      } else {
+        setSelectedIds([node.id]);
+        if (event.key === 'Enter') handleNodeEdit(node.id);
+      }
+    },
+    [handleNodeEdit, locked],
+  );
+
   const handleCanvasPointerDown = useCallback(
     (event: ReactPointerEvent<SVGSVGElement>) => {
+      if (isAuxClick(event)) return;
+      clearNativeSelection();
+      event.preventDefault();
+      viewportRectRef.current = event.currentTarget.getBoundingClientRect();
       const screenPoint = pointerToViewportPoint(
         event,
         event.currentTarget,
         canvasViewport,
+        viewportRectRef.current,
       );
-      movedRef.current = false;
       historyRecordedRef.current = false;
 
       // Middle-click or space-bar always pans
@@ -1356,7 +1662,7 @@ export function WhiteboardPage() {
       if (locked) return;
 
       if (activeTool === 'select') {
-        const startWorld = screenToWorld(screenPoint, camera, canvasViewport);
+        const startWorld = screenToWorld(screenPoint, cameraRef.current, canvasViewport);
         interactionRef.current = {
           kind: 'marquee',
           pointerId: event.pointerId,
@@ -1368,7 +1674,7 @@ export function WhiteboardPage() {
         return;
       }
 
-      const worldPoint = screenToWorld(screenPoint, camera, canvasViewport);
+      const worldPoint = screenToWorld(screenPoint, cameraRef.current, canvasViewport);
       if (activeTool === 'draw') {
         ensureHistory();
         interactionRef.current = {
@@ -1390,7 +1696,7 @@ export function WhiteboardPage() {
       }
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [activeColor, activeTool, camera, canvasViewport, ensureHistory, locked],
+    [activeColor, activeTool, canvasViewport, ensureHistory, locked],
   );
 
   const handleCanvasPointerMove = useCallback(
@@ -1398,12 +1704,12 @@ export function WhiteboardPage() {
       const interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
       event.preventDefault();
-      movedRef.current = true;
 
       const screenPoint = pointerToViewportPoint(
         event,
         event.currentTarget,
         canvasViewport,
+        viewportRectRef.current,
       );
 
       if (interaction.kind === 'pan') {
@@ -1419,14 +1725,16 @@ export function WhiteboardPage() {
         return;
       }
 
-      const worldPoint = screenToWorld(screenPoint, camera, canvasViewport);
+      const currentCamera = cameraRef.current;
+      const worldPoint = screenToWorld(screenPoint, currentCamera, canvasViewport);
 
       if (interaction.kind === 'arrowEndpoint') {
         ensureHistory();
-        const currentArrow = arrows.find((a) => a.id === interaction.arrowId);
+        const currentArrow = arrowsRef.current.find((a) => a.id === interaction.arrowId);
         if (!currentArrow) return;
 
-        const targetNode = findSnapNode(worldPoint, nodes);
+        const currentNodes = nodesRef.current;
+        const targetNode = findSnapNode(worldPoint, currentNodes);
         let newPoint = worldPoint;
         let boundNodeId: string | undefined = undefined;
 
@@ -1505,11 +1813,13 @@ export function WhiteboardPage() {
             let endNodeId = arrow.endNodeId;
 
             if (!startNodeId) {
-              const snap = findSnapNode(arrow.start, nodes, 10);
+              const currentNodes = nodesRef.current;
+              const snap = findSnapNode(arrow.start, currentNodes, 10);
               if (snap) startNodeId = snap.id;
             }
             if (!endNodeId) {
-              const snap = findSnapNode(arrow.end, nodes, 10);
+              const currentNodes = nodesRef.current;
+              const snap = findSnapNode(arrow.end, currentNodes, 10);
               if (snap) endNodeId = snap.id;
             }
 
@@ -1518,8 +1828,9 @@ export function WhiteboardPage() {
             const endIsMoving = endNodeId && movedNodeIds.includes(endNodeId);
 
             if (startIsMoving || endIsMoving) {
+              const currentNodes = nodesRef.current;
               const nextNodesMap = new Map(
-                nodes.map((node) => {
+                currentNodes.map((node) => {
                   const isMoving = movedNodeIds.includes(node.id);
                   const nodeOrigin = interaction.originNodes.find(
                     (item) => item.id === node.id,
@@ -1584,7 +1895,8 @@ export function WhiteboardPage() {
       if (interaction.kind === 'resize') {
         ensureHistory();
         const targetId = interaction.targetId;
-        const targetNode = nodes.find((n) => n.id === targetId);
+        const currentNodes = nodesRef.current;
+        const targetNode = currentNodes.find((n) => n.id === targetId);
         const isImageNode = targetNode?.shape === 'image';
         const isTextNode = targetNode?.shape === 'text';
         const nextBounds = resizeAabb(
@@ -1638,7 +1950,8 @@ export function WhiteboardPage() {
             ) {
               return arrow;
             }
-            const targetNode = nodes.find((n) => n.id === targetId);
+            const currentNodes = nodesRef.current;
+            const targetNode = currentNodes.find((n) => n.id === targetId);
             if (!targetNode) return arrow;
 
             const resizedNode = {
@@ -1651,7 +1964,7 @@ export function WhiteboardPage() {
             let newStart = arrow.start;
             let newEnd = arrow.end;
             if (arrow.startNodeId === targetId) {
-              const endNode = nodes.find(
+              const endNode = currentNodes.find(
                 (n) => n.id === (arrow.endNodeId ?? ''),
               );
               newStart = getAnchorPoint(
@@ -1660,7 +1973,7 @@ export function WhiteboardPage() {
               );
             }
             if (arrow.endNodeId === targetId) {
-              const startNode = nodes.find(
+              const startNode = currentNodes.find(
                 (n) => n.id === (arrow.startNodeId ?? ''),
               );
               newEnd = getAnchorPoint(
@@ -1675,6 +1988,10 @@ export function WhiteboardPage() {
       }
 
       if (interaction.kind === 'draw') {
+        const lastPoint = interaction.points[interaction.points.length - 1];
+        const dx = worldPoint.x - lastPoint.x;
+        const dy = worldPoint.y - lastPoint.y;
+        if (dx * dx + dy * dy < 4) return; // Skip if < 2px distance
         const nextPoints = [...interaction.points, worldPoint];
         interactionRef.current = {
           ...interaction,
@@ -1730,14 +2047,14 @@ export function WhiteboardPage() {
       if (marqueeWidth > 4 || marqueeHeight > 4) {
         const liveSelected = elementsInBounds(
           nextMarquee,
-          nodes,
-          arrows,
-          strokes,
+          nodesRef.current,
+          arrowsRef.current,
+          strokesRef.current,
         );
         setSelectedIds(liveSelected);
       }
     },
-    [arrows, camera, canvasViewport, ensureHistory, nodes, strokes],
+    [canvasViewport, ensureHistory],
   );
 
   const handleCanvasPointerUp = useCallback(
@@ -1749,8 +2066,11 @@ export function WhiteboardPage() {
         event,
         event.currentTarget,
         canvasViewport,
+        viewportRectRef.current,
       );
-      const worldPoint = screenToWorld(screenPoint, camera, canvasViewport);
+      viewportRectRef.current = null;
+      const currentCamera = cameraRef.current;
+      const worldPoint = screenToWorld(screenPoint, currentCamera, canvasViewport);
 
       if (interaction.kind === 'draw') {
         const points = [...interaction.points, worldPoint];
@@ -1791,8 +2111,9 @@ export function WhiteboardPage() {
             Math.abs(end.x - start.x) + Math.abs(end.y - start.y) > 10
               ? end
               : { x: start.x + 140, y: start.y };
-          const startNode = findSnapNode(start, nodes);
-          const endNode = findSnapNode(rawEnd, nodes);
+          const currentNodes = nodesRef.current;
+          const startNode = findSnapNode(start, currentNodes);
+          const endNode = findSnapNode(rawEnd, currentNodes);
 
           let finalStart = start;
           let finalEnd = rawEnd;
@@ -1885,19 +2206,25 @@ export function WhiteboardPage() {
         if (w <= 4 && h <= 4) {
           setSelectedIds([]);
         } else {
-          const selected = elementsInBounds(bounds, nodes, arrows, strokes);
+          const selected = elementsInBounds(
+            bounds,
+            nodesRef.current,
+            arrowsRef.current,
+            strokesRef.current,
+          );
           setSelectedIds(selected);
         }
       }
 
       interactionRef.current = null;
       setMarquee(null);
+      setCreatePreview(null);
       historyRecordedRef.current = false;
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    [arrows, camera, canvasViewport, nodes, strokes],
+    [canvasViewport],
   );
 
   const cancelInteraction = useCallback(() => {
@@ -1917,9 +2244,12 @@ export function WhiteboardPage() {
         ),
       );
     }
+    if (interaction?.kind === 'create') {
+      setCreatePreview(null);
+    }
     interactionRef.current = null;
     historyRecordedRef.current = false;
-    movedRef.current = false;
+    viewportRectRef.current = null;
     setMarquee(null);
   }, []);
 
@@ -1928,6 +2258,7 @@ export function WhiteboardPage() {
       const interaction = interactionRef.current;
       if (!interaction || interaction.pointerId !== event.pointerId) return;
       cancelInteraction();
+      viewportRectRef.current = null;
       if (event.currentTarget.hasPointerCapture(event.pointerId))
         event.currentTarget.releasePointerCapture(event.pointerId);
     },
@@ -1940,8 +2271,14 @@ export function WhiteboardPage() {
         event,
         event.currentTarget,
         canvasViewport,
+        viewportRectRef.current,
       );
-      const delta = event.deltaY > 0 ? -0.06 : 0.06;
+      // Normalize wheel/pinch deltas across mice, trackpads, and
+      // deltaMode lines/pages so zoom speed feels consistent.
+      const modeScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+      const normalized = event.deltaY * modeScale;
+      const delta = Math.max(-0.25, Math.min(0.25, -normalized * 0.0012));
+      if (delta === 0) return;
       setCamera((current) =>
         zoomCameraAtPoint(current, screenPoint, delta, canvasViewport),
       );
@@ -1975,7 +2312,7 @@ export function WhiteboardPage() {
     });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${boardTitle.replace(/\s+/g, '-')}-board.json`;
+    link.download = `${boardFileSlug(boardTitle)}-board.json`;
     link.click();
     URL.revokeObjectURL(link.href);
     setExportMenuOpen(false);
@@ -1987,12 +2324,13 @@ export function WhiteboardPage() {
     const clone = svg.cloneNode(true) as SVGSVGElement;
     // Remove interactive elements from export
     clone.querySelectorAll('[data-interactive]').forEach((el) => el.remove());
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
     const serializer = new XMLSerializer();
     const svgString = serializer.serializeToString(clone);
     const blob = new Blob([svgString], { type: 'image/svg+xml' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${boardTitle.replace(/\s+/g, '-')}-board.svg`;
+    link.download = `${boardFileSlug(boardTitle)}-board.svg`;
     link.click();
     URL.revokeObjectURL(link.href);
     setExportMenuOpen(false);
@@ -2003,16 +2341,24 @@ export function WhiteboardPage() {
     if (!svg) return;
     const clone = svg.cloneNode(true) as SVGSVGElement;
     clone.querySelectorAll('[data-interactive]').forEach((el) => el.remove());
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
     const serializer = new XMLSerializer();
     const svgString = serializer.serializeToString(clone);
     const canvas = document.createElement('canvas');
     const rect = svg.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
     const scale = 2; // 2x for retina
-    canvas.width = rect.width * scale;
-    canvas.height = rect.height * scale;
+    const maxPixels = 4096;
+    const clampedScale = Math.min(
+      scale,
+      maxPixels / rect.width,
+      maxPixels / rect.height,
+    );
+    canvas.width = Math.max(1, Math.round(rect.width * clampedScale));
+    canvas.height = Math.max(1, Math.round(rect.height * clampedScale));
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.scale(scale, scale);
+    ctx.scale(clampedScale, clampedScale);
     const img = new Image();
     img.onload = () => {
       ctx.drawImage(img, 0, 0, rect.width, rect.height);
@@ -2020,11 +2366,13 @@ export function WhiteboardPage() {
         if (!blob) return;
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `${boardTitle.replace(/\s+/g, '-')}-board.png`;
+        link.download = `${boardFileSlug(boardTitle)}-board.png`;
         link.click();
         URL.revokeObjectURL(link.href);
       }, 'image/png');
     };
+    img.onerror = () =>
+      setBoardError('The board could not be exported as PNG. Try SVG instead.');
     img.src =
       'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
     setExportMenuOpen(false);
@@ -2044,18 +2392,19 @@ export function WhiteboardPage() {
       maxX = Math.max(maxX, node.x + node.width);
       maxY = Math.max(maxY, node.y + node.height);
     });
-    const contentW = maxX - minX + padding * 2;
-    const contentH = maxY - minY + padding * 2;
+    const contentW = Math.max(1, maxX - minX + padding * 2);
+    const contentH = Math.max(1, maxY - minY + padding * 2);
     const scaleX = canvasViewport.width / contentW;
     const scaleY = canvasViewport.height / contentH;
-    const nextZoom = Math.min(scaleX, scaleY, 1);
+    const nextZoom = Math.min(Math.max(Math.min(scaleX, scaleY, 1), 0.35), 2.2);
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
     setCamera({
-      x: centerX - canvasViewport.width / nextZoom / 2,
-      y: centerY - canvasViewport.height / nextZoom / 2,
+      x: centerX,
+      y: centerY,
       zoom: nextZoom,
     });
+    setExportMenuOpen(false);
   }, [canvasViewport.height, canvasViewport.width, nodes]);
 
   useEffect(() => {
@@ -2063,6 +2412,10 @@ export function WhiteboardPage() {
       if (isEditableTarget(event.target)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
+        if (exportMenuOpen) {
+          setExportMenuOpen(false);
+          return;
+        }
         if (editingNode) {
           cancelEdit();
           return;
@@ -2083,7 +2436,7 @@ export function WhiteboardPage() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
-        setSelectedIds(nodes.map((node) => node.id));
+        setSelectedIds(selectAllIds());
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c') {
         event.preventDefault();
@@ -2118,8 +2471,15 @@ export function WhiteboardPage() {
         );
         setSelectedIds([]);
       }
-      // Tool & Layer shortcuts (only when no modifier keys or with shift)
-      if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+      // Tool & Layer shortcuts (only when no modifier keys or with shift).
+      // Skip while focus sits on a button/link so Space/Enter keep working.
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const focusOnControl =
+        target !== null &&
+        (target.tagName === 'BUTTON' ||
+          target.tagName === 'A' ||
+          target.getAttribute('role') === 'button');
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && !focusOnControl) {
         switch (event.key.toLowerCase()) {
           case 'v': selectTool('select'); break;
           case 'h': selectTool('hand'); break;
@@ -2151,11 +2511,17 @@ export function WhiteboardPage() {
       }
     };
 
+    const handleBlur = () => {
+      spaceRef.current = false;
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
   }, [
     adjustZoom,
@@ -2165,13 +2531,14 @@ export function WhiteboardPage() {
     cutSelected,
     duplicateSelected,
     editingNode,
+    exportMenuOpen,
     locked,
     moveSelectedLayer,
-    nodes,
     pasteClipboard,
     recordHistory,
     redo,
     resetCamera,
+    selectAllIds,
     selectTool,
     selectedIds,
     undo,
@@ -2198,14 +2565,16 @@ export function WhiteboardPage() {
   }, []);
 
   const handleAddImage = useCallback(() => {
+    if (locked) return;
     imageInputRef.current?.click();
-  }, []);
+  }, [locked]);
 
   const handleImageChange = useCallback(
     async (event: ReactChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       if (!file) return;
       event.target.value = '';
+      if (locked) return;
       if (!file.type.startsWith('image/')) {
         setBoardError('Choose a PNG, JPEG, WebP, GIF, or another image file.');
         return;
@@ -2215,19 +2584,14 @@ export function WhiteboardPage() {
         return;
       }
       try {
-        const href = await readFileAsDataUrl(file);
-        const dimensions = await new Promise<{ width: number; height: number }>(
-          (resolve) => {
-            const img = new Image();
-            img.onload = () =>
-              resolve({
-                width: img.naturalWidth || 400,
-                height: img.naturalHeight || 300,
-              });
-            img.onerror = () => resolve({ width: 400, height: 300 });
-            img.src = href;
-          },
-        );
+        const rawHref = await readFileAsDataUrl(file);
+        // Downscale large photos before storing: full-resolution data URLs
+        // would blow up localStorage and the Yjs sync payload.
+        const { href, width, height } = await downscaleImageToDataUrl(rawHref, 1024);
+        const dimensions = {
+          width: width || 400,
+          height: height || 300,
+        };
 
         const initWidth = Math.min(480, dimensions.width);
         const initHeight = Math.max(
@@ -2260,7 +2624,7 @@ export function WhiteboardPage() {
         );
       }
     },
-    [camera.x, camera.y, recordHistory],
+    [camera.x, camera.y, locked, recordHistory],
   );
 
   const handleCodeChange = useCallback((value: string) => {
@@ -2329,9 +2693,49 @@ export function WhiteboardPage() {
   );
 
   const activeEditingNode = editingNode ? nodes.find((n) => n.id === editingNode.id) : null;
-  const activeEditingNodeScreenPos = activeEditingNode
-    ? worldToScreen({ x: activeEditingNode.x, y: activeEditingNode.y }, camera, canvasViewport)
-    : null;
+  // Derived from state only (svgPixelSize is tracked via ResizeObserver),
+  // so render never reads refs — fixes the react-hooks/refs violation and
+  // keeps the overlay aligned after resizes.
+  const activeEditingNodeScreenPos = useMemo(() => {
+    if (!activeEditingNode || !svgPixelSize) return null;
+    const screenPt = worldToScreen(
+      { x: activeEditingNode.x, y: activeEditingNode.y },
+      camera,
+      canvasViewport,
+    );
+    // Convert from viewport-relative SVG coords to pixel offset within the SVG element
+    const pxX = (screenPt.x / canvasViewport.width) * svgPixelSize.width;
+    const pxY = (screenPt.y / canvasViewport.height) * svgPixelSize.height;
+    return { x: pxX, y: pxY };
+  }, [activeEditingNode, camera, canvasViewport, svgPixelSize]);
+
+  // Keep the browser tab in sync with the board name.
+  useEffect(() => {
+    document.title = `${boardTitle} – Eunoia`;
+  }, [boardTitle]);
+
+  // Close the export menu on outside click / Escape.
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        exportMenuRef.current &&
+        event.target instanceof Node &&
+        !exportMenuRef.current.contains(event.target)
+      ) {
+        setExportMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExportMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [exportMenuOpen]);
 
   return (
     <div className="eunoia-board-shell">
@@ -2358,7 +2762,8 @@ export function WhiteboardPage() {
             type="button"
             onClick={() => {
               const newTitle = window.prompt('Rename diagram', boardTitle);
-              if (newTitle?.trim()) setBoardTitle(newTitle.trim());
+              const trimmed = newTitle?.trim().slice(0, 60);
+              if (trimmed) setBoardTitle(trimmed);
             }}
           >
             <span className="board-title">{boardTitle}</span>
@@ -2385,12 +2790,28 @@ export function WhiteboardPage() {
         <div className="board-header-actions">
           <div
             className="presence-stack"
-            aria-label="3 collaborators in this room"
+            role="status"
+            aria-label={
+              syncStatus === 'connected'
+                ? 'Live room: connected'
+                : syncStatus === 'offline'
+                  ? 'Local room: changes stay in this browser'
+                  : 'Room: connecting'
+            }
+            title={
+              syncStatus === 'connected'
+                ? 'Live room: connected'
+                : syncStatus === 'offline'
+                  ? 'Local room'
+                  : 'Connecting…'
+            }
           >
             <PresenceAvatar initials="AK" tone="violet" />
             <PresenceAvatar initials="JO" tone="orange" />
             <PresenceAvatar initials="MN" tone="blue" />
-            <span className="presence-more">+2</span>
+            <span className="presence-more" aria-hidden="true">
+              {syncStatus === 'connected' ? '●' : '+2'}
+            </span>
           </div>
           <button
             className="header-icon-button"
@@ -2404,12 +2825,14 @@ export function WhiteboardPage() {
             {copied ? <Check size={16} /> : <Share2 size={16} />}
             {copied ? 'Link copied' : 'Share room'}
           </button>
-          <div style={{ position: 'relative' }}>
+          <div ref={exportMenuRef} style={{ position: 'relative' }}>
             <button
               className="header-icon-button"
               type="button"
               aria-label="More board actions"
               title="More board actions"
+              aria-expanded={exportMenuOpen}
+              aria-haspopup="menu"
               onClick={() => setExportMenuOpen((prev) => !prev)}
             >
               <Ellipsis size={18} />
@@ -2608,7 +3031,7 @@ export function WhiteboardPage() {
             </ToolButton>
             <ToolButton
               label="Select all objects"
-              onClick={() => setSelectedIds(nodes.map((node) => node.id))}
+              onClick={() => setSelectedIds(selectAllIds())}
             >
               <Layers2 size={17} />
             </ToolButton>
@@ -2708,13 +3131,6 @@ export function WhiteboardPage() {
               <ArrowRight size={17} />
             </ToolButton>
             <ToolButton
-              label="Line"
-              active={activeTool === 'arrow'}
-              onClick={() => selectTool('arrow')}
-            >
-              <Minus size={17} />
-            </ToolButton>
-            <ToolButton
               label="Draw"
               active={activeTool === 'draw'}
               onClick={() => selectTool('draw')}
@@ -2765,6 +3181,10 @@ export function WhiteboardPage() {
                   <Ellipsis size={16} />
                 </button>
               </div>
+              <fieldset
+                disabled={locked}
+                style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
+              >
               <div className="style-section">
                 <span className="style-label">Stroke</span>
                 <div className="style-swatch-row">
@@ -2912,7 +3332,7 @@ export function WhiteboardPage() {
                   step="5"
                   value={selectedOpacity}
                   aria-label="Opacity"
-                  disabled={!selectedNode}
+                  disabled={!selectedNode || locked}
                   onChange={(event) =>
                     updateSelectedNodes({
                       opacity: Number(event.target.value) / 100,
@@ -2957,6 +3377,7 @@ export function WhiteboardPage() {
                   </button>
                 </div>
               </div>
+              </fieldset>
               <div className="style-panel-footer">
                 <span>Selected object</span>
                 <span>⌘ K</span>
@@ -3039,12 +3460,21 @@ export function WhiteboardPage() {
               ref={canvasRef}
               className="board-canvas"
               viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.width} ${viewBox.height}`}
-              role="img"
-              aria-label="Architecture diagram showing a web client, API gateway, event worker, PostgreSQL, and Redis"
+              role="application"
+              aria-label="Architecture whiteboard. Drag empty space to select, drag shapes to move, double-click a shape to edit its label."
+              aria-describedby="canvas-hint"
               onPointerDown={handleCanvasPointerDown}
               onPointerMove={handleCanvasPointerMove}
               onPointerUp={handleCanvasPointerUp}
               onPointerCancel={handleCanvasPointerCancel}
+              onDragStart={(event) => event.preventDefault()}
+              onContextMenu={(event) => {
+                // Let right-clicks open the native menu; never start a board gesture.
+                if (interactionRef.current) {
+                  cancelInteraction();
+                }
+                event.stopPropagation();
+              }}
             >
               <defs>
                 <pattern
@@ -3063,8 +3493,21 @@ export function WhiteboardPage() {
                   refY="4"
                   orient="auto"
                 >
-                  <path d="M 0 0 L 9 4 L 0 8 z" fill="context-stroke" />
+                  <path d="M 0 0 L 9 4 L 0 8 z" fill="#6b7192" />
                 </marker>
+                {[...arrowMarkerIds.entries()].map(([color, id]) => (
+                  <marker
+                    key={id}
+                    id={id}
+                    markerWidth="11"
+                    markerHeight="11"
+                    refX="8"
+                    refY="4"
+                    orient="auto"
+                  >
+                    <path d="M 0 0 L 9 4 L 0 8 z" fill={color} />
+                  </marker>
+                ))}
                 <filter
                   id="softShadow"
                   x="-20%"
@@ -3110,7 +3553,7 @@ export function WhiteboardPage() {
                   ))}
                 </g>
                 <g className="board-freehand-layer">
-                  {strokes.map((stroke) => {
+                  {visibleStrokes.map((stroke) => {
                     const isSelected = selectedIds.includes(stroke.id);
                     return (
                       <g
@@ -3154,8 +3597,9 @@ export function WhiteboardPage() {
                   })}
                 </g>
                 <g className="board-arrow-layer">
-                  {arrows.map((arrow) => {
+                  {visibleArrows.map((arrow) => {
                     const isSelected = selectedIds.includes(arrow.id);
+                    const markerId = arrowMarkerIds.get(arrow.color) ?? 'arrowhead';
                     return (
                       <g
                         key={arrow.id}
@@ -3183,7 +3627,7 @@ export function WhiteboardPage() {
                           stroke={arrow.color}
                           strokeWidth="2.5"
                           strokeLinecap="round"
-                          markerEnd="url(#arrowhead)"
+                          markerEnd={`url(#${markerId})`}
                         />
                         {isSelected && (
                           <>
@@ -3246,6 +3690,7 @@ export function WhiteboardPage() {
                       handleNodePointerDown(event, node)
                     }
                     onDoubleClick={() => handleNodeEdit(node.id)}
+                    onKeySelect={(event, target) => handleNodeKeySelect(event, target)}
                   />
                 ))}
               </g>
@@ -3441,7 +3886,7 @@ export function WhiteboardPage() {
                 <Maximize2 size={15} />
               </button>
             </div>
-            <div className="canvas-hint">
+            <div className="canvas-hint" id="canvas-hint">
               <Hand size={14} /> Drag to move · scroll to zoom
             </div>
             <div className="history-control">
