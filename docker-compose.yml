@@ -32,6 +32,7 @@ services:
       HOST: 0.0.0.0
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/eunoia?schema=public
       REDIS_URL: redis://redis:6379
+      D2_COMPILER_URL: http://d2-compiler:9400/compile
     ports:
       - "3001:3001"
     depends_on:
@@ -39,6 +40,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      d2-compiler:
+        condition: service_healthy
+
+  d2-compiler:
+    build:
+      context: .
+      dockerfile: services/d2-compiler/Dockerfile
+    ports:
+      - "9400:9400"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9400/healthz | grep -q '\"status\":\"ok\"'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
   eunoia-postgres:

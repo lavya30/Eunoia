@@ -1,8 +1,8 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Config } from '../config.js';
-import type { ImageDeps } from '../images.js';
-import type { RoomManager } from '../RoomManager.js';
-import { createApiApp } from './app.js';
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Config } from "../config.js";
+import type { ImageDeps } from "../images.js";
+import type { RoomManager } from "../RoomManager.js";
+import { createApiApp } from "./app.js";
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -14,14 +14,14 @@ export async function handleApiRequest(
   config: Config,
   images: ImageDeps,
 ): Promise<void> {
-  if (req.method === 'OPTIONS') {
+  if (req.method === "OPTIONS") {
     res.statusCode = 204;
-    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader("access-control-allow-origin", "*");
     res.setHeader(
-      'access-control-allow-headers',
-      'content-type, authorization',
+      "access-control-allow-headers",
+      "content-type, authorization",
     );
-    res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
     res.end();
     return;
   }
@@ -29,27 +29,27 @@ export async function handleApiRequest(
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (value)
-      headers.set(key, Array.isArray(value) ? value.join(', ') : value);
+      headers.set(key, Array.isArray(value) ? value.join(", ") : value);
   }
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     if (Buffer.concat(chunks).length > MAX_BODY_BYTES)
-      throw new Error('Request body too large');
+      throw new Error("Request body too large");
   }
   const body =
-    chunks.length && req.method !== 'GET' && req.method !== 'HEAD'
+    chunks.length && req.method !== "GET" && req.method !== "HEAD"
       ? Buffer.concat(chunks)
       : undefined;
   const request = new Request(
-    `http://${req.headers.host ?? 'localhost'}${req.url ?? '/'}`,
+    `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`,
     { method: req.method, headers, body },
   );
   const response = await createApiApp(manager, config, images).handle(request);
   res.statusCode = response.status;
-  res.setHeader('access-control-allow-origin', '*');
-  res.setHeader('access-control-allow-headers', 'content-type, authorization');
-  res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader("access-control-allow-origin", "*");
+  res.setHeader("access-control-allow-headers", "content-type, authorization");
+  res.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
   response.headers.forEach((value, key) => {
     res.setHeader(key, value);
   });

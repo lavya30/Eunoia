@@ -1,15 +1,15 @@
-import { decompressSync } from 'fflate';
-import * as decoding from 'lib0/decoding';
-import * as encoding from 'lib0/encoding';
-import * as awarenessProtocol from 'y-protocols/awareness';
-import * as syncProtocol from 'y-protocols/sync';
-import type * as Y from 'yjs';
-import * as Yjs from 'yjs';
-import type { StoredSnapshot } from './RoomLoader.js';
-import type { RedisTelemetry } from './redis.js';
-import type { SnapshotWorker } from './SnapshotWorker.js';
-import type { CursorTelemetry, RoomClient } from './types.js';
-import { WS_MESSAGE_AWARENESS, WS_MESSAGE_SYNC } from './types.js';
+import { decompressSync } from "fflate";
+import * as decoding from "lib0/decoding";
+import * as encoding from "lib0/encoding";
+import * as awarenessProtocol from "y-protocols/awareness";
+import * as syncProtocol from "y-protocols/sync";
+import type * as Y from "yjs";
+import * as Yjs from "yjs";
+import type { StoredSnapshot } from "./RoomLoader.js";
+import type { RedisTelemetry } from "./redis.js";
+import type { SnapshotWorker } from "./SnapshotWorker.js";
+import type { CursorTelemetry, RoomClient } from "./types.js";
+import { WS_MESSAGE_AWARENESS, WS_MESSAGE_SYNC } from "./types.js";
 
 /**
  * Close code sent to peers when their room is restored from a snapshot.
@@ -17,7 +17,7 @@ import { WS_MESSAGE_AWARENESS, WS_MESSAGE_SYNC } from './types.js';
  * so they must reload and resync from the restored snapshot.
  */
 export const RESTORE_CLOSE_CODE = 4100;
-export const RESTORE_CLOSE_REASON = 'Snapshot restored; reload to resync';
+export const RESTORE_CLOSE_REASON = "Snapshot restored; reload to resync";
 
 export class Room {
   awareness: awarenessProtocol.Awareness;
@@ -44,8 +44,8 @@ export class Room {
   }
 
   private attach(): void {
-    this._doc.on('update', this.handleDocUpdate);
-    this.awareness.on('update', this.handleAwarenessUpdate);
+    this._doc.on("update", this.handleDocUpdate);
+    this.awareness.on("update", this.handleAwarenessUpdate);
   }
 
   private readonly handleDocUpdate = (
@@ -66,7 +66,7 @@ export class Room {
     origin: unknown,
   ): void => {
     const changed = added.concat(updated, removed);
-    if (!changed.length || origin === 'redis') return;
+    if (!changed.length || origin === "redis") return;
     const update = awarenessProtocol.encodeAwarenessUpdate(
       this.awareness,
       changed,
@@ -90,12 +90,12 @@ export class Room {
   async restoreSnapshot(snapshot: StoredSnapshot): Promise<void> {
     await this.snapshotWorker.forceFlush(this._doc);
     const oldDoc = this._doc;
-    oldDoc.off('update', this.handleDocUpdate);
-    this.awareness.off('update', this.handleAwarenessUpdate);
+    oldDoc.off("update", this.handleDocUpdate);
+    this.awareness.off("update", this.handleAwarenessUpdate);
     this.awareness.destroy();
 
     const doc = new Yjs.Doc();
-    Yjs.applyUpdate(doc, decompressSync(snapshot.data), 'snapshot-restore');
+    Yjs.applyUpdate(doc, decompressSync(snapshot.data), "snapshot-restore");
     this._doc = doc;
     this.awareness = new awarenessProtocol.Awareness(doc);
     this.attach();
@@ -155,7 +155,7 @@ export class Room {
   async dispose(): Promise<void> {
     (await this.unsubscribeRedis)();
     for (const client of this.clients.values())
-      client.socket.close(1001, 'Server shutting down');
+      client.socket.close(1001, "Server shutting down");
     this.clients.clear();
     this.awareness.destroy();
     await this.snapshotWorker.dispose(this.doc);
@@ -164,10 +164,10 @@ export class Room {
 
   private isClient(value: unknown): value is RoomClient {
     return (
-      typeof value === 'object' &&
+      typeof value === "object" &&
       value !== null &&
-      'id' in value &&
-      'send' in value
+      "id" in value &&
+      "send" in value
     );
   }
 

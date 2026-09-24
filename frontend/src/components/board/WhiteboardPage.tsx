@@ -61,6 +61,15 @@ import {
   type Point,
 } from '@/lib/whiteboard/geometry';
 import { SpatialIndex } from '@/lib/whiteboard/spatial-index';
+import type {
+  BoardArrow,
+  BoardNode,
+  BoardStroke,
+} from '@/lib/whiteboard/board-types';
+import {
+  parseCompileResponse,
+  reconcileDiagram,
+} from '@/lib/whiteboard/d2-adapter';
 import {
   createBoardSync,
   resolveSyncHttpUrl,
@@ -79,40 +88,6 @@ type ToolId =
   | 'arrow'
   | 'draw'
   | 'text';
-
-type BoardNode = {
-  id: string;
-  label: string;
-  detail: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  tone: 'violet' | 'orange' | 'blue' | 'yellow' | 'mint' | 'note';
-  shape?: 'round' | 'cylinder' | 'note' | 'ellipse' | 'text' | 'image';
-  href?: string;
-  stroke?: string;
-  fill?: string;
-  strokeWidth?: number;
-  dashed?: boolean;
-  opacity?: number;
-  fontSize?: number;
-};
-
-type BoardArrow = {
-  id: string;
-  start: Point;
-  end: Point;
-  color: string;
-  startNodeId?: string;
-  endNodeId?: string;
-};
-
-type BoardStroke = {
-  id: string;
-  points: Point[];
-  color: string;
-};
 
 type BoardSnapshot = {
   nodes: BoardNode[];
@@ -548,13 +523,28 @@ function clampSize(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-const NODE_TONES = new Set(['violet', 'orange', 'blue', 'yellow', 'mint', 'note']);
-const NODE_SHAPES = new Set(['round', 'cylinder', 'note', 'ellipse', 'text', 'image']);
+const NODE_TONES = new Set([
+  'violet',
+  'orange',
+  'blue',
+  'yellow',
+  'mint',
+  'note',
+]);
+const NODE_SHAPES = new Set([
+  'round',
+  'cylinder',
+  'note',
+  'ellipse',
+  'text',
+  'image',
+]);
 
 function sanitizeNode(raw: unknown): BoardNode | null {
   if (!raw || typeof raw !== 'object') return null;
   const n = raw as Partial<BoardNode>;
-  if (typeof n.id !== 'string' || n.id.length === 0 || n.id.length > 120) return null;
+  if (typeof n.id !== 'string' || n.id.length === 0 || n.id.length > 120)
+    return null;
   const width = clampSize(finiteOr(n.width, 0), 8, 4000);
   const height = clampSize(finiteOr(n.height, 0), 8, 4000);
   return {
@@ -565,15 +555,31 @@ function sanitizeNode(raw: unknown): BoardNode | null {
     y: clampSize(finiteOr(n.y, 0), -100000, 100000),
     width,
     height,
-    tone: (typeof n.tone === 'string' && NODE_TONES.has(n.tone) ? n.tone : 'mint') as BoardNode['tone'],
-    shape: (typeof n.shape === 'string' && NODE_SHAPES.has(n.shape) ? n.shape : undefined) as BoardNode['shape'],
-    href: typeof n.href === 'string' && n.href.startsWith('data:image/') ? n.href.slice(0, 8_000_000) : undefined,
+    tone: (typeof n.tone === 'string' && NODE_TONES.has(n.tone)
+      ? n.tone
+      : 'mint') as BoardNode['tone'],
+    shape: (typeof n.shape === 'string' && NODE_SHAPES.has(n.shape)
+      ? n.shape
+      : undefined) as BoardNode['shape'],
+    href:
+      typeof n.href === 'string' && n.href.startsWith('data:image/')
+        ? n.href.slice(0, 8_000_000)
+        : undefined,
     stroke: typeof n.stroke === 'string' ? n.stroke.slice(0, 32) : undefined,
     fill: typeof n.fill === 'string' ? n.fill.slice(0, 32) : undefined,
-    strokeWidth: n.strokeWidth === undefined ? undefined : clampSize(finiteOr(n.strokeWidth, 2), 0.5, 24),
+    strokeWidth:
+      n.strokeWidth === undefined
+        ? undefined
+        : clampSize(finiteOr(n.strokeWidth, 2), 0.5, 24),
     dashed: n.dashed === true,
-    opacity: n.opacity === undefined ? undefined : clampSize(finiteOr(n.opacity, 1), 0.05, 1),
-    fontSize: n.fontSize === undefined ? undefined : clampSize(Math.round(finiteOr(n.fontSize, 16)), 8, 400),
+    opacity:
+      n.opacity === undefined
+        ? undefined
+        : clampSize(finiteOr(n.opacity, 1), 0.05, 1),
+    fontSize:
+      n.fontSize === undefined
+        ? undefined
+        : clampSize(Math.round(finiteOr(n.fontSize, 16)), 8, 400),
   };
 }
 
@@ -590,7 +596,8 @@ function sanitizePoint(raw: unknown): Point | null {
 function sanitizeArrow(raw: unknown): BoardArrow | null {
   if (!raw || typeof raw !== 'object') return null;
   const a = raw as Partial<BoardArrow>;
-  if (typeof a.id !== 'string' || a.id.length === 0 || a.id.length > 120) return null;
+  if (typeof a.id !== 'string' || a.id.length === 0 || a.id.length > 120)
+    return null;
   const start = sanitizePoint(a.start);
   const end = sanitizePoint(a.end);
   if (!start || !end) return null;
@@ -607,7 +614,8 @@ function sanitizeArrow(raw: unknown): BoardArrow | null {
 function sanitizeStroke(raw: unknown): BoardStroke | null {
   if (!raw || typeof raw !== 'object') return null;
   const s = raw as Partial<BoardStroke>;
-  if (typeof s.id !== 'string' || s.id.length === 0 || s.id.length > 120) return null;
+  if (typeof s.id !== 'string' || s.id.length === 0 || s.id.length > 120)
+    return null;
   if (!Array.isArray(s.points)) return null;
   const points = s.points.slice(0, 2000).flatMap((p) => {
     const clean = sanitizePoint(p);
@@ -679,7 +687,10 @@ function downscaleImageToDataUrl(
     img.onload = () => {
       const naturalWidth = img.naturalWidth || 400;
       const naturalHeight = img.naturalHeight || 300;
-      const scale = Math.min(1, maxDimension / Math.max(naturalWidth, naturalHeight));
+      const scale = Math.min(
+        1,
+        maxDimension / Math.max(naturalWidth, naturalHeight),
+      );
       if (scale >= 1) {
         resolve({ href: source, width: naturalWidth, height: naturalHeight });
         return;
@@ -694,7 +705,11 @@ function downscaleImageToDataUrl(
           return;
         }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve({ href: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height });
+        resolve({
+          href: canvas.toDataURL('image/png'),
+          width: canvas.width,
+          height: canvas.height,
+        });
       } catch {
         resolve({ href: source, width: naturalWidth, height: naturalHeight });
       }
@@ -782,7 +797,10 @@ function CanvasNode({
   selected: boolean;
   onPointerDown: (event: ReactPointerEvent<SVGGElement>) => void;
   onDoubleClick: () => void;
-  onKeySelect: (event: ReactKeyboardEvent<SVGGElement>, node: BoardNode) => void;
+  onKeySelect: (
+    event: ReactKeyboardEvent<SVGGElement>,
+    node: BoardNode,
+  ) => void;
 }) {
   const isNote = node.shape === 'note';
   const isCylinder = node.shape === 'cylinder';
@@ -893,7 +911,10 @@ function CanvasNode({
         <text
           className={`node-label ${isText ? 'node-label--text' : ''}`}
           x={node.x + (isText ? 0 : 18)}
-          y={node.y + (isText ? Math.round(node.height * 0.72) : isNote ? 42 : 43)}
+          y={
+            node.y +
+            (isText ? Math.round(node.height * 0.72) : isNote ? 42 : 43)
+          }
           style={{
             fontSize: isText
               ? `${node.fontSize ?? Math.max(14, Math.round(node.height * 0.65))}px`
@@ -974,13 +995,17 @@ export function WhiteboardPage() {
   const nodesRef = useRef<BoardNode[]>(nodes);
   const arrowsRef = useRef<BoardArrow[]>(arrows);
   const strokesRef = useRef<BoardStroke[]>(strokes);
-  const [svgPixelSize, setSvgPixelSize] = useState<{ width: number; height: number } | null>(null);
+  const [svgPixelSize, setSvgPixelSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const boardStateRef = useRef<SyncBoardState>({
     nodes,
     arrows,
     strokes,
     code,
   });
+  const lastCompiledCodeRef = useRef<string | null>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- hydrate and persist an external browser store. */
   useEffect(() => {
@@ -1114,7 +1139,10 @@ export function WhiteboardPage() {
     const timeoutId = window.setTimeout(() => {
       const fullPayload: PersistedBoard = { nodes, arrows, strokes, code };
       try {
-        window.localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(fullPayload));
+        window.localStorage.setItem(
+          BOARD_STORAGE_KEY,
+          JSON.stringify(fullPayload),
+        );
         setPersistenceState('saved');
       } catch (error) {
         // Image data URLs can exceed the ~5MB localStorage quota. Retry
@@ -1133,7 +1161,10 @@ export function WhiteboardPage() {
               strokes,
               code,
             };
-            window.localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(slimPayload));
+            window.localStorage.setItem(
+              BOARD_STORAGE_KEY,
+              JSON.stringify(slimPayload),
+            );
             setPersistenceState('saved');
             setBoardError(
               'Images are kept in memory only: local storage is full, so they will not persist after reload.',
@@ -1222,7 +1253,8 @@ export function WhiteboardPage() {
   );
 
   const visibleStrokes = useMemo(
-    () => strokes.filter((stroke) => aabbIntersects(viewBox, strokeBounds(stroke))),
+    () =>
+      strokes.filter((stroke) => aabbIntersects(viewBox, strokeBounds(stroke))),
     [strokes, viewBox],
   );
 
@@ -1237,7 +1269,10 @@ export function WhiteboardPage() {
     const ids = new Map<string, string>();
     for (const arrow of arrows) {
       if (!ids.has(arrow.color)) {
-        ids.set(arrow.color, `ah-${arrow.color.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'ink'}`);
+        ids.set(
+          arrow.color,
+          `ah-${arrow.color.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'ink'}`,
+        );
       }
     }
     return ids;
@@ -1299,8 +1334,6 @@ export function WhiteboardPage() {
     setCamera(INITIAL_CAMERA);
   }, []);
 
-
-
   const handleNodeEdit = useCallback(
     (nodeId: string) => {
       if (locked) return;
@@ -1318,7 +1351,9 @@ export function WhiteboardPage() {
 
     if (trimmed === '' && targetNode?.shape === 'text') {
       recordHistory();
-      setNodes((current) => current.filter((item) => item.id !== editingNode.id));
+      setNodes((current) =>
+        current.filter((item) => item.id !== editingNode.id),
+      );
       setSelectedIds([]);
     } else if (trimmed && trimmed !== targetNode?.label) {
       recordHistory();
@@ -1458,9 +1493,15 @@ export function WhiteboardPage() {
     (direction: 'forward' | 'backward' | 'front' | 'back') => {
       if (locked || selectedIds.length === 0) return;
       recordHistory();
-      setNodes((current) => reorderBySelection(current, selectedIds, direction));
-      setArrows((current) => reorderBySelection(current, selectedIds, direction));
-      setStrokes((current) => reorderBySelection(current, selectedIds, direction));
+      setNodes((current) =>
+        reorderBySelection(current, selectedIds, direction),
+      );
+      setArrows((current) =>
+        reorderBySelection(current, selectedIds, direction),
+      );
+      setStrokes((current) =>
+        reorderBySelection(current, selectedIds, direction),
+      );
     },
     [locked, recordHistory, selectedIds],
   );
@@ -1524,7 +1565,11 @@ export function WhiteboardPage() {
         canvasViewport,
         viewportRectRef.current,
       );
-      const worldPoint = screenToWorld(screenPoint, cameraRef.current, canvasViewport);
+      const worldPoint = screenToWorld(
+        screenPoint,
+        cameraRef.current,
+        canvasViewport,
+      );
 
       if (activeTool === 'hand') {
         historyRecordedRef.current = false;
@@ -1662,7 +1707,11 @@ export function WhiteboardPage() {
       if (locked) return;
 
       if (activeTool === 'select') {
-        const startWorld = screenToWorld(screenPoint, cameraRef.current, canvasViewport);
+        const startWorld = screenToWorld(
+          screenPoint,
+          cameraRef.current,
+          canvasViewport,
+        );
         interactionRef.current = {
           kind: 'marquee',
           pointerId: event.pointerId,
@@ -1674,7 +1723,11 @@ export function WhiteboardPage() {
         return;
       }
 
-      const worldPoint = screenToWorld(screenPoint, cameraRef.current, canvasViewport);
+      const worldPoint = screenToWorld(
+        screenPoint,
+        cameraRef.current,
+        canvasViewport,
+      );
       if (activeTool === 'draw') {
         ensureHistory();
         interactionRef.current = {
@@ -1726,11 +1779,17 @@ export function WhiteboardPage() {
       }
 
       const currentCamera = cameraRef.current;
-      const worldPoint = screenToWorld(screenPoint, currentCamera, canvasViewport);
+      const worldPoint = screenToWorld(
+        screenPoint,
+        currentCamera,
+        canvasViewport,
+      );
 
       if (interaction.kind === 'arrowEndpoint') {
         ensureHistory();
-        const currentArrow = arrowsRef.current.find((a) => a.id === interaction.arrowId);
+        const currentArrow = arrowsRef.current.find(
+          (a) => a.id === interaction.arrowId,
+        );
         if (!currentArrow) return;
 
         const currentNodes = nodesRef.current;
@@ -2070,7 +2129,11 @@ export function WhiteboardPage() {
       );
       viewportRectRef.current = null;
       const currentCamera = cameraRef.current;
-      const worldPoint = screenToWorld(screenPoint, currentCamera, canvasViewport);
+      const worldPoint = screenToWorld(
+        screenPoint,
+        currentCamera,
+        canvasViewport,
+      );
 
       if (interaction.kind === 'draw') {
         const points = [...interaction.points, worldPoint];
@@ -2275,7 +2338,8 @@ export function WhiteboardPage() {
       );
       // Normalize wheel/pinch deltas across mice, trackpads, and
       // deltaMode lines/pages so zoom speed feels consistent.
-      const modeScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+      const modeScale =
+        event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
       const normalized = event.deltaY * modeScale;
       const delta = Math.max(-0.25, Math.min(0.25, -normalized * 0.0012));
       if (delta === 0) return;
@@ -2479,24 +2543,50 @@ export function WhiteboardPage() {
         (target.tagName === 'BUTTON' ||
           target.tagName === 'A' ||
           target.getAttribute('role') === 'button');
-      if (!event.metaKey && !event.ctrlKey && !event.altKey && !focusOnControl) {
+      if (
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !focusOnControl
+      ) {
         switch (event.key.toLowerCase()) {
-          case 'v': selectTool('select'); break;
-          case 'h': selectTool('hand'); break;
-          case 'r': selectTool('rectangle'); break;
-          case 'e': selectTool('ellipse'); break;
-          case 'a': selectTool('arrow'); break;
-          case 'd': selectTool('draw'); break;
-          case 't': selectTool('text'); break;
-          case 'n': selectTool('note'); break;
+          case 'v':
+            selectTool('select');
+            break;
+          case 'h':
+            selectTool('hand');
+            break;
+          case 'r':
+            selectTool('rectangle');
+            break;
+          case 'e':
+            selectTool('ellipse');
+            break;
+          case 'a':
+            selectTool('arrow');
+            break;
+          case 'd':
+            selectTool('draw');
+            break;
+          case 't':
+            selectTool('text');
+            break;
+          case 'n':
+            selectTool('note');
+            break;
           case ']':
             moveSelectedLayer(event.shiftKey ? 'front' : 'forward');
             break;
           case '[':
             moveSelectedLayer(event.shiftKey ? 'back' : 'backward');
             break;
-          case '=': case '+': adjustZoom(8); break;
-          case '-': adjustZoom(-8); break;
+          case '=':
+          case '+':
+            adjustZoom(8);
+            break;
+          case '-':
+            adjustZoom(-8);
+            break;
           case ' ':
             event.preventDefault();
             spaceRef.current = true;
@@ -2587,7 +2677,10 @@ export function WhiteboardPage() {
         const rawHref = await readFileAsDataUrl(file);
         // Downscale large photos before storing: full-resolution data URLs
         // would blow up localStorage and the Yjs sync payload.
-        const { href, width, height } = await downscaleImageToDataUrl(rawHref, 1024);
+        const { href, width, height } = await downscaleImageToDataUrl(
+          rawHref,
+          1024,
+        );
         const dimensions = {
           width: width || 400,
           height: height || 300,
@@ -2641,6 +2734,7 @@ export function WhiteboardPage() {
       );
       return;
     }
+    const source = code;
     compileAbortRef.current?.abort();
     const controller = new AbortController();
     compileAbortRef.current = controller;
@@ -2650,7 +2744,7 @@ export function WhiteboardPage() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          source: code,
+          source,
           engine: 'dagre',
           roomId: ROOM_ID,
         }),
@@ -2658,15 +2752,49 @@ export function WhiteboardPage() {
       });
       const payload: unknown = await response.json();
       if (!response.ok) {
+        const body =
+          payload && typeof payload === 'object'
+            ? (payload as Record<string, unknown>)
+            : null;
         const message =
-          payload &&
-          typeof payload === 'object' &&
-          'error' in payload &&
-          typeof payload.error === 'string'
-            ? payload.error
+          body && typeof body.error === 'string'
+            ? body.error
             : `D2 compilation failed (${response.status}).`;
-        throw new Error(message);
+        const hint =
+          body?.code === 'TIER_UPGRADE_REQUIRED'
+            ? ' This diagram needs a Pro layout engine or fewer nodes.'
+            : '';
+        throw new Error(`${message}${hint}`);
       }
+      const diagram = parseCompileResponse(payload);
+      if (!diagram) {
+        throw new Error(
+          'D2 compiler returned an invalid response. The board was left unchanged.',
+        );
+      }
+      lastCompiledCodeRef.current = source;
+      if (diagram.placeholder) {
+        // No compiler configured: placeholder carries no layout, so there is
+        // nothing to reconcile. Keep the board untouched.
+        setCompileState('compiled');
+        setBoardError(null);
+        return;
+      }
+      recordHistory();
+      const next = reconcileDiagram(
+        nodesRef.current,
+        arrowsRef.current,
+        diagram,
+        getAnchorPoint,
+        nodeCenter,
+      );
+      const keptIds = new Set([
+        ...next.nodes.map((node) => node.id),
+        ...next.arrows.map((arrow) => arrow.id),
+      ]);
+      setNodes(next.nodes);
+      setArrows(next.arrows);
+      setSelectedIds((current) => current.filter((id) => keptIds.has(id)));
       setCompileState('compiled');
       setBoardError(null);
     } catch (error) {
@@ -2681,7 +2809,18 @@ export function WhiteboardPage() {
       if (compileAbortRef.current === controller)
         compileAbortRef.current = null;
     }
-  }, [code]);
+  }, [code, recordHistory]);
+
+  // Auto-compile a short pause after the user stops typing, as promised by
+  // the footer copy. Skips when the code already matches the last success.
+  useEffect(() => {
+    if (!hasHydrated || compileState !== 'draft') return;
+    if (code === lastCompiledCodeRef.current) return;
+    const timeoutId = window.setTimeout(() => {
+      void compileCode();
+    }, 800);
+    return () => window.clearTimeout(timeoutId);
+  }, [code, compileState, hasHydrated, compileCode]);
 
   useEffect(
     () => () => {
@@ -2692,7 +2831,9 @@ export function WhiteboardPage() {
     [],
   );
 
-  const activeEditingNode = editingNode ? nodes.find((n) => n.id === editingNode.id) : null;
+  const activeEditingNode = editingNode
+    ? nodes.find((n) => n.id === editingNode.id)
+    : null;
   // Derived from state only (svgPixelSize is tracked via ResizeObserver),
   // so render never reads refs — fixes the react-hooks/refs violation and
   // keeps the overlay aligned after resizes.
@@ -3185,198 +3326,200 @@ export function WhiteboardPage() {
                 disabled={locked}
                 style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
               >
-              <div className="style-section">
-                <span className="style-label">Stroke</span>
-                <div className="style-swatch-row">
-                  <button
-                    className="style-swatch style-swatch--ink is-selected"
-                    type="button"
-                    aria-label="Ink stroke"
-                    onClick={() => applySelectedColor('#25263a', 'mint')}
-                  />
-                  <button
-                    className="style-swatch style-swatch--red"
-                    type="button"
-                    aria-label="Red stroke"
-                    onClick={() => applySelectedColor('#df4c54', 'orange')}
-                  />
-                  <button
-                    className="style-swatch style-swatch--green"
-                    type="button"
-                    aria-label="Green stroke"
-                    onClick={() => applySelectedColor('#3caa62', 'mint')}
-                  />
-                  <button
-                    className="style-swatch style-swatch--blue"
-                    type="button"
-                    aria-label="Blue stroke"
-                    onClick={() => applySelectedColor('#4a86c6', 'blue')}
-                  />
-                  <button
-                    className="style-swatch style-swatch--orange"
-                    type="button"
-                    aria-label="Orange stroke"
-                    onClick={() => applySelectedColor('#ef8c52', 'orange')}
-                  />
-                  <button
-                    className="style-swatch style-swatch--yellow"
-                    type="button"
-                    aria-label="Yellow stroke"
-                    onClick={() => applySelectedColor('#f7d66f', 'yellow')}
+                <div className="style-section">
+                  <span className="style-label">Stroke</span>
+                  <div className="style-swatch-row">
+                    <button
+                      className="style-swatch style-swatch--ink is-selected"
+                      type="button"
+                      aria-label="Ink stroke"
+                      onClick={() => applySelectedColor('#25263a', 'mint')}
+                    />
+                    <button
+                      className="style-swatch style-swatch--red"
+                      type="button"
+                      aria-label="Red stroke"
+                      onClick={() => applySelectedColor('#df4c54', 'orange')}
+                    />
+                    <button
+                      className="style-swatch style-swatch--green"
+                      type="button"
+                      aria-label="Green stroke"
+                      onClick={() => applySelectedColor('#3caa62', 'mint')}
+                    />
+                    <button
+                      className="style-swatch style-swatch--blue"
+                      type="button"
+                      aria-label="Blue stroke"
+                      onClick={() => applySelectedColor('#4a86c6', 'blue')}
+                    />
+                    <button
+                      className="style-swatch style-swatch--orange"
+                      type="button"
+                      aria-label="Orange stroke"
+                      onClick={() => applySelectedColor('#ef8c52', 'orange')}
+                    />
+                    <button
+                      className="style-swatch style-swatch--yellow"
+                      type="button"
+                      aria-label="Yellow stroke"
+                      onClick={() => applySelectedColor('#f7d66f', 'yellow')}
+                    />
+                  </div>
+                </div>
+                <div className="style-section">
+                  <span className="style-label">Background</span>
+                  <div className="style-swatch-row">
+                    <button
+                      className="style-swatch style-swatch--transparent"
+                      type="button"
+                      aria-label="Transparent background"
+                      onClick={() => updateSelectedNodes({ fill: 'none' })}
+                    />
+                    <button
+                      className="style-swatch style-swatch--lavender"
+                      type="button"
+                      aria-label="Lavender background"
+                      onClick={() => updateSelectedNodes({ fill: '#dbd7fa' })}
+                    />
+                    <button
+                      className="style-swatch style-swatch--peach"
+                      type="button"
+                      aria-label="Peach background"
+                      onClick={() => updateSelectedNodes({ fill: '#ffc8be' })}
+                    />
+                    <button
+                      className="style-swatch style-swatch--mint"
+                      type="button"
+                      aria-label="Mint background"
+                      onClick={() => updateSelectedNodes({ fill: '#b9ebcf' })}
+                    />
+                    <button
+                      className="style-swatch style-swatch--sky"
+                      type="button"
+                      aria-label="Sky background"
+                      onClick={() => updateSelectedNodes({ fill: '#badff3' })}
+                    />
+                    <button
+                      className="style-swatch style-swatch--lemon"
+                      type="button"
+                      aria-label="Lemon background"
+                      onClick={() => updateSelectedNodes({ fill: '#ffe895' })}
+                    />
+                  </div>
+                </div>
+                <div className="style-section style-section--split">
+                  <div>
+                    <span className="style-label">Stroke width</span>
+                    <div className="style-choice-row">
+                      <button
+                        className="style-choice"
+                        type="button"
+                        aria-label="Thin stroke"
+                        onClick={() =>
+                          updateSelectedNodes({ strokeWidth: 1.5 })
+                        }
+                      >
+                        <Minus size={16} />
+                      </button>
+                      <button
+                        className="style-choice is-selected"
+                        type="button"
+                        aria-label="Medium stroke"
+                        onClick={() => updateSelectedNodes({ strokeWidth: 2 })}
+                      >
+                        <Minus size={16} strokeWidth={2.6} />
+                      </button>
+                      <button
+                        className="style-choice"
+                        type="button"
+                        aria-label="Thick stroke"
+                        onClick={() => updateSelectedNodes({ strokeWidth: 4 })}
+                      >
+                        <Minus size={16} strokeWidth={4} />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="style-label">Stroke style</span>
+                    <div className="style-choice-row">
+                      <button
+                        className="style-choice is-selected"
+                        type="button"
+                        aria-label="Solid stroke"
+                        onClick={() => updateSelectedNodes({ dashed: false })}
+                      >
+                        <Minus size={16} />
+                      </button>
+                      <button
+                        className="style-choice"
+                        type="button"
+                        aria-label="Dashed stroke"
+                        onClick={() => updateSelectedNodes({ dashed: true })}
+                      >
+                        <Minus size={16} strokeDasharray="3 3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="style-section">
+                  <div className="style-label-row">
+                    <span className="style-label">Opacity</span>
+                    <span className="style-value">{selectedOpacity}</span>
+                  </div>
+                  <input
+                    className="opacity-input"
+                    type="range"
+                    min="10"
+                    max="100"
+                    step="5"
+                    value={selectedOpacity}
+                    aria-label="Opacity"
+                    disabled={!selectedNode || locked}
+                    onChange={(event) =>
+                      updateSelectedNodes({
+                        opacity: Number(event.target.value) / 100,
+                      })
+                    }
                   />
                 </div>
-              </div>
-              <div className="style-section">
-                <span className="style-label">Background</span>
-                <div className="style-swatch-row">
-                  <button
-                    className="style-swatch style-swatch--transparent"
-                    type="button"
-                    aria-label="Transparent background"
-                    onClick={() => updateSelectedNodes({ fill: 'none' })}
-                  />
-                  <button
-                    className="style-swatch style-swatch--lavender"
-                    type="button"
-                    aria-label="Lavender background"
-                    onClick={() => updateSelectedNodes({ fill: '#dbd7fa' })}
-                  />
-                  <button
-                    className="style-swatch style-swatch--peach"
-                    type="button"
-                    aria-label="Peach background"
-                    onClick={() => updateSelectedNodes({ fill: '#ffc8be' })}
-                  />
-                  <button
-                    className="style-swatch style-swatch--mint"
-                    type="button"
-                    aria-label="Mint background"
-                    onClick={() => updateSelectedNodes({ fill: '#b9ebcf' })}
-                  />
-                  <button
-                    className="style-swatch style-swatch--sky"
-                    type="button"
-                    aria-label="Sky background"
-                    onClick={() => updateSelectedNodes({ fill: '#badff3' })}
-                  />
-                  <button
-                    className="style-swatch style-swatch--lemon"
-                    type="button"
-                    aria-label="Lemon background"
-                    onClick={() => updateSelectedNodes({ fill: '#ffe895' })}
-                  />
-                </div>
-              </div>
-              <div className="style-section style-section--split">
-                <div>
-                  <span className="style-label">Stroke width</span>
-                  <div className="style-choice-row">
+                <div className="style-section">
+                  <span className="style-label">Layers</span>
+                  <div className="style-choice-row style-choice-row--wide">
                     <button
                       className="style-choice"
                       type="button"
-                      aria-label="Thin stroke"
-                      onClick={() => updateSelectedNodes({ strokeWidth: 1.5 })}
+                      aria-label="Bring forward"
+                      onClick={() => moveSelectedLayer('forward')}
                     >
-                      <Minus size={16} />
-                    </button>
-                    <button
-                      className="style-choice is-selected"
-                      type="button"
-                      aria-label="Medium stroke"
-                      onClick={() => updateSelectedNodes({ strokeWidth: 2 })}
-                    >
-                      <Minus size={16} strokeWidth={2.6} />
+                      <Layers2 size={16} />
                     </button>
                     <button
                       className="style-choice"
                       type="button"
-                      aria-label="Thick stroke"
-                      onClick={() => updateSelectedNodes({ strokeWidth: 4 })}
+                      aria-label="Send backward"
+                      onClick={() => moveSelectedLayer('backward')}
                     >
-                      <Minus size={16} strokeWidth={4} />
+                      <Layers2 size={16} />
+                    </button>
+                    <button
+                      className="style-choice"
+                      type="button"
+                      aria-label="Bring to front"
+                      onClick={() => moveSelectedLayer('front')}
+                    >
+                      <Layers2 size={16} />
+                    </button>
+                    <button
+                      className="style-choice"
+                      type="button"
+                      aria-label="Send to back"
+                      onClick={() => moveSelectedLayer('back')}
+                    >
+                      <Layers2 size={16} />
                     </button>
                   </div>
                 </div>
-                <div>
-                  <span className="style-label">Stroke style</span>
-                  <div className="style-choice-row">
-                    <button
-                      className="style-choice is-selected"
-                      type="button"
-                      aria-label="Solid stroke"
-                      onClick={() => updateSelectedNodes({ dashed: false })}
-                    >
-                      <Minus size={16} />
-                    </button>
-                    <button
-                      className="style-choice"
-                      type="button"
-                      aria-label="Dashed stroke"
-                      onClick={() => updateSelectedNodes({ dashed: true })}
-                    >
-                      <Minus size={16} strokeDasharray="3 3" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className="style-section">
-                <div className="style-label-row">
-                  <span className="style-label">Opacity</span>
-                  <span className="style-value">{selectedOpacity}</span>
-                </div>
-                <input
-                  className="opacity-input"
-                  type="range"
-                  min="10"
-                  max="100"
-                  step="5"
-                  value={selectedOpacity}
-                  aria-label="Opacity"
-                  disabled={!selectedNode || locked}
-                  onChange={(event) =>
-                    updateSelectedNodes({
-                      opacity: Number(event.target.value) / 100,
-                    })
-                  }
-                />
-              </div>
-              <div className="style-section">
-                <span className="style-label">Layers</span>
-                <div className="style-choice-row style-choice-row--wide">
-                  <button
-                    className="style-choice"
-                    type="button"
-                    aria-label="Bring forward"
-                    onClick={() => moveSelectedLayer('forward')}
-                  >
-                    <Layers2 size={16} />
-                  </button>
-                  <button
-                    className="style-choice"
-                    type="button"
-                    aria-label="Send backward"
-                    onClick={() => moveSelectedLayer('backward')}
-                  >
-                    <Layers2 size={16} />
-                  </button>
-                  <button
-                    className="style-choice"
-                    type="button"
-                    aria-label="Bring to front"
-                    onClick={() => moveSelectedLayer('front')}
-                  >
-                    <Layers2 size={16} />
-                  </button>
-                  <button
-                    className="style-choice"
-                    type="button"
-                    aria-label="Send to back"
-                    onClick={() => moveSelectedLayer('back')}
-                  >
-                    <Layers2 size={16} />
-                  </button>
-                </div>
-              </div>
               </fieldset>
               <div className="style-panel-footer">
                 <span>Selected object</span>
@@ -3599,7 +3742,8 @@ export function WhiteboardPage() {
                 <g className="board-arrow-layer">
                   {visibleArrows.map((arrow) => {
                     const isSelected = selectedIds.includes(arrow.id);
-                    const markerId = arrowMarkerIds.get(arrow.color) ?? 'arrowhead';
+                    const markerId =
+                      arrowMarkerIds.get(arrow.color) ?? 'arrowhead';
                     return (
                       <g
                         key={arrow.id}
@@ -3690,7 +3834,9 @@ export function WhiteboardPage() {
                       handleNodePointerDown(event, node)
                     }
                     onDoubleClick={() => handleNodeEdit(node.id)}
-                    onKeySelect={(event, target) => handleNodeKeySelect(event, target)}
+                    onKeySelect={(event, target) =>
+                      handleNodeKeySelect(event, target)
+                    }
                   />
                 ))}
               </g>
@@ -3701,20 +3847,30 @@ export function WhiteboardPage() {
                       className="selection-outline"
                       x={selectedNodeBounds.minX - 8}
                       y={selectedNodeBounds.minY - 8}
-                      width={selectedNodeBounds.maxX - selectedNodeBounds.minX + 16}
-                      height={selectedNodeBounds.maxY - selectedNodeBounds.minY + 16}
+                      width={
+                        selectedNodeBounds.maxX - selectedNodeBounds.minX + 16
+                      }
+                      height={
+                        selectedNodeBounds.maxY - selectedNodeBounds.minY + 16
+                      }
                       rx="8"
                     />
                     <line
                       className="rotation-stem"
-                      x1={(selectedNodeBounds.minX + selectedNodeBounds.maxX) / 2}
+                      x1={
+                        (selectedNodeBounds.minX + selectedNodeBounds.maxX) / 2
+                      }
                       y1={selectedNodeBounds.minY - 8}
-                      x2={(selectedNodeBounds.minX + selectedNodeBounds.maxX) / 2}
+                      x2={
+                        (selectedNodeBounds.minX + selectedNodeBounds.maxX) / 2
+                      }
                       y2={selectedNodeBounds.minY - 31}
                     />
                     <circle
                       className="rotation-handle"
-                      cx={(selectedNodeBounds.minX + selectedNodeBounds.maxX) / 2}
+                      cx={
+                        (selectedNodeBounds.minX + selectedNodeBounds.maxX) / 2
+                      }
                       cy={selectedNodeBounds.minY - 37}
                       r="5"
                     />
@@ -3743,19 +3899,45 @@ export function WhiteboardPage() {
                     height={marquee.maxY - marquee.minY}
                   />
                 )}
-                {createPreview && (() => {
-                  const px = Math.min(createPreview.start.x, createPreview.end.x);
-                  const py = Math.min(createPreview.start.y, createPreview.end.y);
-                  const pw = Math.abs(createPreview.end.x - createPreview.start.x);
-                  const ph = Math.abs(createPreview.end.y - createPreview.start.y);
-                  if (pw < 2 && ph < 2) return null;
-                  if (createPreview.tool === 'ellipse') {
+                {createPreview &&
+                  (() => {
+                    const px = Math.min(
+                      createPreview.start.x,
+                      createPreview.end.x,
+                    );
+                    const py = Math.min(
+                      createPreview.start.y,
+                      createPreview.end.y,
+                    );
+                    const pw = Math.abs(
+                      createPreview.end.x - createPreview.start.x,
+                    );
+                    const ph = Math.abs(
+                      createPreview.end.y - createPreview.start.y,
+                    );
+                    if (pw < 2 && ph < 2) return null;
+                    if (createPreview.tool === 'ellipse') {
+                      return (
+                        <ellipse
+                          cx={px + pw / 2}
+                          cy={py + ph / 2}
+                          rx={pw / 2}
+                          ry={ph / 2}
+                          fill="none"
+                          stroke={createPreview.color}
+                          strokeWidth="2"
+                          strokeDasharray="6 4"
+                          opacity="0.6"
+                        />
+                      );
+                    }
                     return (
-                      <ellipse
-                        cx={px + pw / 2}
-                        cy={py + ph / 2}
-                        rx={pw / 2}
-                        ry={ph / 2}
+                      <rect
+                        x={px}
+                        y={py}
+                        width={pw}
+                        height={ph}
+                        rx={createPreview.tool === 'note' ? 2 : 6}
                         fill="none"
                         stroke={createPreview.color}
                         strokeWidth="2"
@@ -3763,26 +3945,9 @@ export function WhiteboardPage() {
                         opacity="0.6"
                       />
                     );
-                  }
-                  return (
-                    <rect
-                      x={px}
-                      y={py}
-                      width={pw}
-                      height={ph}
-                      rx={createPreview.tool === 'note' ? 2 : 6}
-                      fill="none"
-                      stroke={createPreview.color}
-                      strokeWidth="2"
-                      strokeDasharray="6 4"
-                      opacity="0.6"
-                    />
-                  );
-                })()}
+                  })()}
               </g>
             </svg>
-
-
 
             {/* In-place text editing overlay */}
             {activeEditingNode && editingNode && activeEditingNodeScreenPos && (
@@ -3793,7 +3958,9 @@ export function WhiteboardPage() {
                 type="text"
                 value={editingNode.value}
                 placeholder={
-                  activeEditingNode.shape === 'text' ? 'Type text...' : 'Edit label...'
+                  activeEditingNode.shape === 'text'
+                    ? 'Type text...'
+                    : 'Edit label...'
                 }
                 onChange={(e) =>
                   setEditingNode({ ...editingNode, value: e.target.value })
@@ -3808,7 +3975,10 @@ export function WhiteboardPage() {
                   position: 'absolute',
                   left: activeEditingNodeScreenPos.x,
                   top: activeEditingNodeScreenPos.y,
-                  minWidth: Math.max(activeEditingNode.width * camera.zoom, 120),
+                  minWidth: Math.max(
+                    activeEditingNode.width * camera.zoom,
+                    120,
+                  ),
                   height: Math.max(activeEditingNode.height * camera.zoom, 36),
                   fontSize: Math.max(13 * camera.zoom, 12),
                   fontFamily:
@@ -3816,7 +3986,8 @@ export function WhiteboardPage() {
                       ? "'Excalifont', 'Comic Sans MS', cursive"
                       : "'Inter', system-ui, sans-serif",
                   fontWeight: 600,
-                  textAlign: activeEditingNode.shape === 'text' ? 'left' : 'center',
+                  textAlign:
+                    activeEditingNode.shape === 'text' ? 'left' : 'center',
                   border: '2px solid #6965db',
                   borderRadius: 6,
                   outline: 'none',

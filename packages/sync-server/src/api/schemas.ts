@@ -1,18 +1,18 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 const MAX_TEXT_LENGTH = 120;
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_ROOM_ID_LENGTH = 256;
 const MAX_IMAGE_KEY_LENGTH = 512;
 
-export const TierSchema = z.enum(['COMMUNITY', 'PRO', 'ENTERPRISE']);
-export const LayoutEngineSchema = z.enum(['dagre', 'elk', 'tala']);
-export const ImageKindSchema = z.enum(['image', 'thumbnail']);
+export const TierSchema = z.enum(["COMMUNITY", "PRO", "ENTERPRISE"]);
+export const LayoutEngineSchema = z.enum(["dagre", "elk", "tala"]);
+export const ImageKindSchema = z.enum(["image", "thumbnail"]);
 export const ImageContentTypeSchema = z.enum([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
 ]);
 
 export const CreateRoomSchema = z
@@ -44,7 +44,7 @@ export const CompileRequestSchema = z
 export const ImageRequestUploadSchema = z
   .object({
     contentType: ImageContentTypeSchema,
-    kind: ImageKindSchema.default('image'),
+    kind: ImageKindSchema.default("image"),
   })
   .strict();
 
@@ -53,7 +53,7 @@ export const ImageConfirmSchema = z
     key: z.string().min(1).max(MAX_IMAGE_KEY_LENGTH),
     contentType: ImageContentTypeSchema.optional(),
     size: z.number().int().positive().max(50_000_000).optional(),
-    kind: ImageKindSchema.default('image'),
+    kind: ImageKindSchema.default("image"),
   })
   .strict();
 
@@ -72,7 +72,7 @@ export const SnapshotQuerySchema = z
 
 export const CursorTelemetrySchema = z
   .object({
-    type: z.literal('cursor'),
+    type: z.literal("cursor"),
     // Clients may include this legacy field, but the server always replaces it.
     clientId: z.string().trim().max(MAX_ROOM_ID_LENGTH).optional(),
     x: z.number().finite().min(-1_000_000_000).max(1_000_000_000),
@@ -91,10 +91,10 @@ export const CursorTelemetrySchema = z
 
 export function validationError(error: z.ZodError) {
   return {
-    error: 'Invalid request',
-    code: 'VALIDATION_ERROR',
+    error: "Invalid request",
+    code: "VALIDATION_ERROR",
     issues: error.issues.map((issue) => ({
-      path: issue.path.join('.'),
+      path: issue.path.join("."),
       message: issue.message,
       code: issue.code,
     })),

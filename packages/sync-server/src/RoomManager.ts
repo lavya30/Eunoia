@@ -1,16 +1,16 @@
-import { randomUUID } from 'node:crypto';
-import type { Config } from './config.js';
-import { Room } from './Room.js';
+import { randomUUID } from "node:crypto";
+import type { Config } from "./config.js";
+import { Room } from "./Room.js";
 import {
   loadRoomDoc,
   type RoomMetadata,
   type SnapshotListOptions,
   type SnapshotStore,
   type StoredSnapshot,
-} from './RoomLoader.js';
-import { RedisTelemetry } from './redis.js';
-import { hashPassword, verifyPassword } from './room-auth.js';
-import { SnapshotWorker } from './SnapshotWorker.js';
+} from "./RoomLoader.js";
+import { RedisTelemetry } from "./redis.js";
+import { hashPassword, verifyPassword } from "./room-auth.js";
+import { SnapshotWorker } from "./SnapshotWorker.js";
 
 export class RoomManager {
   private readonly rooms = new Map<string, Room>();
@@ -50,9 +50,9 @@ export class RoomManager {
     const passwordHash = password ? hashPassword(password) : undefined;
     const metadata: RoomMetadata = {
       id: input?.id ?? randomUUID(),
-      name: input?.name ?? 'Untitled room',
-      ownerId: input?.ownerId ?? 'anonymous',
-      tier: input?.tier ?? 'COMMUNITY',
+      name: input?.name ?? "Untitled room",
+      ownerId: input?.ownerId ?? "anonymous",
+      tier: input?.tier ?? "COMMUNITY",
       hasPassword: passwordHash !== undefined,
     };
     await this.store.ensureRoom(metadata, passwordHash);
@@ -139,9 +139,9 @@ export class RoomManager {
   private async loadRoom(roomId: string): Promise<Room> {
     await this.store.ensureRoom({
       id: roomId,
-      name: 'Untitled room',
-      ownerId: 'anonymous',
-      tier: 'COMMUNITY',
+      name: "Untitled room",
+      ownerId: "anonymous",
+      tier: "COMMUNITY",
       hasPassword: false,
     });
     const doc = await loadRoomDoc(roomId, this.store);

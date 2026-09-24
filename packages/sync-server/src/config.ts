@@ -1,8 +1,8 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
-  HOST: z.string().default('0.0.0.0'),
+  HOST: z.string().default("0.0.0.0"),
   DATABASE_URL: z.string().optional(),
   REDIS_URL: z.string().optional(),
   D2_COMPILER_URL: z.string().url().optional(),
@@ -21,8 +21,8 @@ const envSchema = z.object({
   ROOM_TICKET_SECRET: z.string().min(1).optional(),
   ROOM_TICKET_TTL_SEC: z.coerce.number().int().positive().default(86400),
   NODE_ENV: z
-    .enum(['development', 'test', 'production'])
-    .default('development'),
+    .enum(["development", "test", "production"])
+    .default("development"),
 });
 
 export type Config = {
@@ -45,13 +45,13 @@ export type Config = {
   snapshotRetentionDays: number;
   roomTicketSecret?: string;
   roomTicketTtlSec: number;
-  nodeEnv: 'development' | 'test' | 'production';
+  nodeEnv: "development" | "test" | "production";
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = envSchema.parse(env);
-  if (parsed.NODE_ENV === 'production' && !parsed.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required in production');
+  if (parsed.NODE_ENV === "production" && !parsed.DATABASE_URL) {
+    throw new Error("DATABASE_URL is required in production");
   }
 
   return {

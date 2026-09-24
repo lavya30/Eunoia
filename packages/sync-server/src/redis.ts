@@ -1,5 +1,5 @@
-import { Redis } from 'ioredis';
-import type { CursorTelemetry } from './types.js';
+import { Redis } from "ioredis";
+import type { CursorTelemetry } from "./types.js";
 
 type CursorListener = (cursor: CursorTelemetry) => void;
 
@@ -19,8 +19,8 @@ export class RedisTelemetry {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
     });
-    this.subscriber.on('message', (channel, message) => {
-      const roomId = channel.slice('cursor:'.length);
+    this.subscriber.on("message", (channel, message) => {
+      const roomId = channel.slice("cursor:".length);
       try {
         const cursor = JSON.parse(message) as CursorTelemetry;
         for (const listener of this.listeners.get(roomId) ?? [])

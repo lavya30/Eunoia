@@ -314,7 +314,7 @@ function CollabBeamDemo() {
         fromRef={userARef}
         toRef={roomRef}
         curvature={-60}
-        
+
         gradientStartColor="#6965DB"
         gradientStopColor="#22c55e"
         pathColor="#e2e1ea"
@@ -323,7 +323,7 @@ function CollabBeamDemo() {
         containerRef={containerRef}
         fromRef={roomRef}
         toRef={userBRef}
-        
+
         curvature={-60}
         gradientStartColor="#22c55e"
         gradientStopColor="#ffb005"

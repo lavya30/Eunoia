@@ -1,16 +1,16 @@
-import { node } from '@elysiajs/node';
-import { Elysia } from 'elysia';
-import type { Config } from '../config.js';
-import { CompileRequestError, compileD2, type Tier } from '../d2-compiler.js';
+import { node } from "@elysiajs/node";
+import { Elysia } from "elysia";
+import type { Config } from "../config.js";
+import { CompileRequestError, compileD2, type Tier } from "../d2-compiler.js";
 import {
   buildImageKey,
   type ImageDeps,
   keyBelongsToRoom,
   type ObjectHead,
-} from '../images.js';
-import type { RoomMetadata } from '../RoomLoader.js';
-import type { RoomManager } from '../RoomManager.js';
-import { authorizeRoom, extractTicket, issueTicket } from '../room-auth.js';
+} from "../images.js";
+import type { RoomMetadata } from "../RoomLoader.js";
+import type { RoomManager } from "../RoomManager.js";
+import { authorizeRoom, extractTicket, issueTicket } from "../room-auth.js";
 import {
   CompileRequestSchema,
   CreateRoomSchema,
@@ -21,7 +21,7 @@ import {
   SnapshotQuerySchema,
   UnlockRoomSchema,
   validationError,
-} from './schemas.js';
+} from "./schemas.js";
 
 export type { ImageDeps };
 
@@ -42,14 +42,14 @@ async function requestAccess(
     extractTicket(headers, query),
     secret,
   );
-  if (access.status === 'ok') return { room: access.room };
-  return access.status === 'missing'
-    ? { status: 404, body: { error: 'Room not found', code: 'ROOM_NOT_FOUND' } }
+  if (access.status === "ok") return { room: access.room };
+  return access.status === "missing"
+    ? { status: 404, body: { error: "Room not found", code: "ROOM_NOT_FOUND" } }
     : {
         status: 401,
         body: {
-          error: 'Room requires a valid access ticket',
-          code: 'ROOM_LOCKED',
+          error: "Room requires a valid access ticket",
+          code: "ROOM_LOCKED",
         },
       };
 }
@@ -57,8 +57,8 @@ async function requestAccess(
 function r2Error(set: { status?: unknown }, error: unknown) {
   set.status = 502;
   return {
-    error: error instanceof Error ? error.message : 'Image storage failed',
-    code: 'R2_ERROR',
+    error: error instanceof Error ? error.message : "Image storage failed",
+    code: "R2_ERROR",
   };
 }
 
@@ -68,27 +68,27 @@ export function createApiApp(
   images: ImageDeps,
 ) {
   const ticketSecret = config.roomTicketSecret;
-  if (!ticketSecret) throw new Error('roomTicketSecret is required');
+  if (!ticketSecret) throw new Error("roomTicketSecret is required");
   return new Elysia({ adapter: node() })
     .onRequest(({ set }) => {
-      set.headers['access-control-allow-origin'] = '*';
-      set.headers['access-control-allow-headers'] =
-        'content-type, authorization';
-      set.headers['access-control-allow-methods'] =
-        'GET, POST, DELETE, OPTIONS';
+      set.headers["access-control-allow-origin"] = "*";
+      set.headers["access-control-allow-headers"] =
+        "content-type, authorization";
+      set.headers["access-control-allow-methods"] =
+        "GET, POST, DELETE, OPTIONS";
     })
-    .get('/health', () => ({
-      status: 'ok',
+    .get("/health", () => ({
+      status: "ok",
       activeRooms: manager.activeRoomCount,
     }))
-    .post('/api/rooms', async ({ body, set }) => {
+    .post("/api/rooms", async ({ body, set }) => {
       const parsed = CreateRoomSchema.safeParse(body);
       if (!parsed.success) {
         set.status = 400;
-        if (parsed.error.issues.some((issue) => issue.path[0] === 'password'))
+        if (parsed.error.issues.some((issue) => issue.path[0] === "password"))
           return {
-            error: 'Password must be at least 8 characters',
-            code: 'INVALID_PASSWORD',
+            error: "Password must be at least 8 characters",
+            code: "INVALID_PASSWORD",
           };
         return validationError(parsed.error);
       }
@@ -104,7 +104,7 @@ export function createApiApp(
       set.status = 201;
       return room;
     })
-    .get('/api/rooms/:roomId', async ({ params, headers, query, set }) => {
+    .get("/api/rooms/:roomId", async ({ params, headers, query, set }) => {
       const access = await requestAccess(
         manager,
         params.roomId,
@@ -112,17 +112,17 @@ export function createApiApp(
         query as Record<string, unknown>,
         ticketSecret,
       );
-      if ('body' in access) {
+      if ("body" in access) {
         set.status = access.status;
         return access.body;
       }
       return access.room;
     })
-    .post('/api/rooms/:roomId/unlock', async ({ params, body, set }) => {
+    .post("/api/rooms/:roomId/unlock", async ({ params, body, set }) => {
       const room = await manager.getRoomMetadata(params.roomId);
       if (!room) {
         set.status = 404;
-        return { error: 'Room not found' };
+        return { error: "Room not found" };
       }
       const parsed = UnlockRoomSchema.safeParse(body);
       if (!parsed.success) {
@@ -136,7 +136,7 @@ export function createApiApp(
           !(await manager.verifyRoomPassword(room.id, input.password))
         ) {
           set.status = 403;
-          return { error: 'Invalid password', code: 'INVALID_PASSWORD' };
+          return { error: "Invalid password", code: "INVALID_PASSWORD" };
         }
       }
       const { ticket, expiresIn } = issueTicket(
@@ -146,7 +146,7 @@ export function createApiApp(
       );
       return { ticket, expiresIn, roomId: room.id };
     })
-    .delete('/api/rooms/:roomId', async ({ params, headers, query, set }) => {
+    .delete("/api/rooms/:roomId", async ({ params, headers, query, set }) => {
       const access = await requestAccess(
         manager,
         params.roomId,
@@ -154,7 +154,7 @@ export function createApiApp(
         query as Record<string, unknown>,
         ticketSecret,
       );
-      if ('body' in access) {
+      if ("body" in access) {
         set.status = access.status;
         return access.body;
       }
@@ -162,32 +162,32 @@ export function createApiApp(
       set.status = 204;
       return;
     })
-    .post('/api/compile', async ({ body, headers, query, set }) => {
+    .post("/api/compile", async ({ body, headers, query, set }) => {
       const parsed = CompileRequestSchema.safeParse(body);
       if (!parsed.success) {
         set.status = 400;
         const engineIssue = parsed.error.issues.find(
-          (issue) => issue.path[0] === 'engine',
+          (issue) => issue.path[0] === "engine",
         );
         if (engineIssue) {
           const engine =
-            typeof body === 'object' && body !== null
+            typeof body === "object" && body !== null
               ? (body as Record<string, unknown>).engine
               : undefined;
           return {
             error: `Unknown layout engine: ${JSON.stringify(engine)}`,
-            code: 'INVALID_ENGINE',
+            code: "INVALID_ENGINE",
             details: { engine },
           };
         }
         return validationError(parsed.error);
       }
       const input = parsed.data;
-      const engine = input.engine ?? 'dagre';
+      const engine = input.engine ?? "dagre";
       // Tier is resolved server-side: the room's stored tier wins when a
       // roomId is given, otherwise COMMUNITY. A client-asserted tier in the
       // body is never trusted. Locked rooms additionally require a ticket.
-      let tier: Tier = 'COMMUNITY';
+      let tier: Tier = "COMMUNITY";
       if (input.roomId) {
         const access = await requestAccess(
           manager,
@@ -196,7 +196,7 @@ export function createApiApp(
           query as Record<string, unknown>,
           ticketSecret,
         );
-        if ('body' in access) {
+        if ("body" in access) {
           set.status = access.status;
           return access.body;
         }
@@ -207,7 +207,7 @@ export function createApiApp(
           { source: input.source, engine },
           {
             compilerUrl: config.d2CompilerUrl,
-            isDevelopment: config.nodeEnv !== 'production',
+            isDevelopment: config.nodeEnv !== "production",
             tier,
             nodeLimit: config.d2CommunityNodeLimit,
           },
@@ -223,12 +223,12 @@ export function createApiApp(
         }
         set.status = 502;
         return {
-          error: error instanceof Error ? error.message : 'D2 compiler failed',
+          error: error instanceof Error ? error.message : "D2 compiler failed",
         };
       }
     })
     .post(
-      '/api/rooms/:roomId/images/request-upload',
+      "/api/rooms/:roomId/images/request-upload",
       async ({ params, body, headers, query, set }) => {
         const access = await requestAccess(
           manager,
@@ -237,7 +237,7 @@ export function createApiApp(
           query as Record<string, unknown>,
           ticketSecret,
         );
-        if ('body' in access) {
+        if ("body" in access) {
           set.status = access.status;
           return access.body;
         }
@@ -246,8 +246,8 @@ export function createApiApp(
         if (!r2) {
           set.status = 503;
           return {
-            error: 'Image storage is not configured',
-            code: 'R2_NOT_CONFIGURED',
+            error: "Image storage is not configured",
+            code: "R2_NOT_CONFIGURED",
           };
         }
         const parsed = ImageRequestUploadSchema.safeParse(body);
@@ -276,7 +276,7 @@ export function createApiApp(
       },
     )
     .post(
-      '/api/rooms/:roomId/images/confirm',
+      "/api/rooms/:roomId/images/confirm",
       async ({ params, body, headers, query, set }) => {
         const access = await requestAccess(
           manager,
@@ -285,7 +285,7 @@ export function createApiApp(
           query as Record<string, unknown>,
           ticketSecret,
         );
-        if ('body' in access) {
+        if ("body" in access) {
           set.status = access.status;
           return access.body;
         }
@@ -294,8 +294,8 @@ export function createApiApp(
         if (!r2) {
           set.status = 503;
           return {
-            error: 'Image storage is not configured',
-            code: 'R2_NOT_CONFIGURED',
+            error: "Image storage is not configured",
+            code: "R2_NOT_CONFIGURED",
           };
         }
         const parsed = ImageConfirmSchema.safeParse(body);
@@ -307,8 +307,8 @@ export function createApiApp(
         if (!keyBelongsToRoom(input.key, room.id)) {
           set.status = 400;
           return {
-            error: 'Key does not belong to this room',
-            code: 'INVALID_KEY',
+            error: "Key does not belong to this room",
+            code: "INVALID_KEY",
           };
         }
         let head: ObjectHead | null;
@@ -319,7 +319,7 @@ export function createApiApp(
         }
         if (!head) {
           set.status = 404;
-          return { error: 'Upload not found', code: 'OBJECT_NOT_FOUND' };
+          return { error: "Upload not found", code: "OBJECT_NOT_FOUND" };
         }
         const contentType = ImageContentTypeSchema.safeParse(
           head.contentType ?? input.contentType,
@@ -327,28 +327,28 @@ export function createApiApp(
         if (!contentType.success) {
           set.status = 400;
           return {
-            error: 'Unsupported content type',
-            code: 'INVALID_CONTENT_TYPE',
+            error: "Unsupported content type",
+            code: "INVALID_CONTENT_TYPE",
           };
         }
         const size = head.size ?? input.size;
-        if (typeof size !== 'number' || !Number.isInteger(size) || size <= 0) {
+        if (typeof size !== "number" || !Number.isInteger(size) || size <= 0) {
           set.status = 400;
-          return { error: 'Size is required', code: 'INVALID_SIZE' };
+          return { error: "Size is required", code: "INVALID_SIZE" };
         }
         if (size > config.r2MaxUploadBytes) {
           await r2.delete(input.key).catch(() => undefined);
           set.status = 413;
           return {
             error: `Upload exceeds the ${config.r2MaxUploadBytes} byte limit`,
-            code: 'UPLOAD_TOO_LARGE',
+            code: "UPLOAD_TOO_LARGE",
           };
         }
         if (await images.imageStore.findByKey(input.key)) {
           set.status = 409;
           return {
-            error: 'Image already confirmed',
-            code: 'IMAGE_ALREADY_CONFIRMED',
+            error: "Image already confirmed",
+            code: "IMAGE_ALREADY_CONFIRMED",
           };
         }
         try {
@@ -366,11 +366,11 @@ export function createApiApp(
             kind: input.kind,
           });
         } catch (error) {
-          if ((error as { code?: string }).code === 'P2002') {
+          if ((error as { code?: string }).code === "P2002") {
             set.status = 409;
             return {
-              error: 'Image already confirmed',
-              code: 'IMAGE_ALREADY_CONFIRMED',
+              error: "Image already confirmed",
+              code: "IMAGE_ALREADY_CONFIRMED",
             };
           }
           return r2Error(set, error);
@@ -378,7 +378,7 @@ export function createApiApp(
       },
     )
     .get(
-      '/api/rooms/:roomId/images',
+      "/api/rooms/:roomId/images",
       async ({ params, headers, query, set }) => {
         const access = await requestAccess(
           manager,
@@ -387,7 +387,7 @@ export function createApiApp(
           query as Record<string, unknown>,
           ticketSecret,
         );
-        if ('body' in access) {
+        if ("body" in access) {
           set.status = access.status;
           return access.body;
         }
@@ -401,7 +401,7 @@ export function createApiApp(
       },
     )
     .get(
-      '/api/rooms/:roomId/images/:imageId/url',
+      "/api/rooms/:roomId/images/:imageId/url",
       async ({ params, headers, query, set }) => {
         const access = await requestAccess(
           manager,
@@ -410,21 +410,21 @@ export function createApiApp(
           query as Record<string, unknown>,
           ticketSecret,
         );
-        if ('body' in access) {
+        if ("body" in access) {
           set.status = access.status;
           return access.body;
         }
         const image = await images.imageStore.getImage(params.imageId);
         if (!image || image.roomId !== params.roomId) {
           set.status = 404;
-          return { error: 'Image not found' };
+          return { error: "Image not found" };
         }
         const r2 = images.r2;
         if (!r2) {
           set.status = 503;
           return {
-            error: 'Image storage is not configured',
-            code: 'R2_NOT_CONFIGURED',
+            error: "Image storage is not configured",
+            code: "R2_NOT_CONFIGURED",
           };
         }
         try {
@@ -437,7 +437,7 @@ export function createApiApp(
       },
     )
     .delete(
-      '/api/rooms/:roomId/images/:imageId',
+      "/api/rooms/:roomId/images/:imageId",
       async ({ params, headers, query, set }) => {
         const access = await requestAccess(
           manager,
@@ -446,21 +446,21 @@ export function createApiApp(
           query as Record<string, unknown>,
           ticketSecret,
         );
-        if ('body' in access) {
+        if ("body" in access) {
           set.status = access.status;
           return access.body;
         }
         const image = await images.imageStore.getImage(params.imageId);
         if (!image || image.roomId !== params.roomId) {
           set.status = 404;
-          return { error: 'Image not found' };
+          return { error: "Image not found" };
         }
         const r2 = images.r2;
         if (!r2) {
           set.status = 503;
           return {
-            error: 'Image storage is not configured',
-            code: 'R2_NOT_CONFIGURED',
+            error: "Image storage is not configured",
+            code: "R2_NOT_CONFIGURED",
           };
         }
         try {
@@ -474,7 +474,7 @@ export function createApiApp(
       },
     )
     .get(
-      '/api/rooms/:roomId/snapshots',
+      "/api/rooms/:roomId/snapshots",
       async ({ params, headers, query, set }) => {
         const access = await requestAccess(
           manager,
@@ -483,7 +483,7 @@ export function createApiApp(
           query as Record<string, unknown>,
           ticketSecret,
         );
-        if ('body' in access) {
+        if ("body" in access) {
           set.status = access.status;
           return access.body;
         }
@@ -505,7 +505,7 @@ export function createApiApp(
       },
     )
     .post(
-      '/api/rooms/:roomId/snapshots/:snapshotId/restore',
+      "/api/rooms/:roomId/snapshots/:snapshotId/restore",
       async ({ params, headers, query, set }) => {
         const access = await requestAccess(
           manager,
@@ -514,7 +514,7 @@ export function createApiApp(
           query as Record<string, unknown>,
           ticketSecret,
         );
-        if ('body' in access) {
+        if ("body" in access) {
           set.status = access.status;
           return access.body;
         }
@@ -524,7 +524,7 @@ export function createApiApp(
             restoredAt: new Date().toISOString(),
           };
         set.status = 404;
-        return { error: 'Snapshot not found' };
+        return { error: "Snapshot not found" };
       },
     );
 }

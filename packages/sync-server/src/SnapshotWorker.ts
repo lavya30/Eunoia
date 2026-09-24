@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import { compressSync } from 'fflate';
-import * as Y from 'yjs';
-import type { SnapshotStore } from './RoomLoader.js';
+import { randomUUID } from "node:crypto";
+import { compressSync } from "fflate";
+import * as Y from "yjs";
+import type { SnapshotStore } from "./RoomLoader.js";
 
 export class SnapshotWorker {
   private timer?: ReturnType<typeof setTimeout>;
@@ -28,7 +28,7 @@ export class SnapshotWorker {
     if (!this.dirty) return;
     this.dirty = false;
     const state = Y.encodeStateAsUpdate(doc);
-    const version = Buffer.from(Y.encodeStateVector(doc)).toString('base64url');
+    const version = Buffer.from(Y.encodeStateVector(doc)).toString("base64url");
     const compressed = compressSync(state);
     this.flushPromise = this.store
       .saveSnapshot({

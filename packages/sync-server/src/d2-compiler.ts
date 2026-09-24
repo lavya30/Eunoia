@@ -1,8 +1,8 @@
-import { z } from 'zod';
+import { z } from "zod";
 
-export type LayoutEngine = 'dagre' | 'elk' | 'tala';
+export type LayoutEngine = "dagre" | "elk" | "tala";
 
-export type Tier = 'COMMUNITY' | 'PRO' | 'ENTERPRISE';
+export type Tier = "COMMUNITY" | "PRO" | "ENTERPRISE";
 
 export type CompileRequest = {
   source: string;
@@ -34,14 +34,14 @@ export class CompileRequestError extends Error {
     readonly details?: Record<string, unknown>,
   ) {
     super(message);
-    this.name = 'CompileRequestError';
+    this.name = "CompileRequestError";
   }
 }
 
 export class TierUpgradeError extends CompileRequestError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 403, 'TIER_UPGRADE_REQUIRED', details);
-    this.name = 'TierUpgradeError';
+    super(message, 403, "TIER_UPGRADE_REQUIRED", details);
+    this.name = "TierUpgradeError";
   }
 }
 
@@ -50,33 +50,33 @@ export class InvalidEngineError extends CompileRequestError {
     super(
       `Unknown layout engine: ${JSON.stringify(engine)}`,
       400,
-      'INVALID_ENGINE',
+      "INVALID_ENGINE",
       {
         engine,
       },
     );
-    this.name = 'InvalidEngineError';
+    this.name = "InvalidEngineError";
   }
 }
 
-const LAYOUT_ENGINES: LayoutEngine[] = ['dagre', 'elk', 'tala'];
+const LAYOUT_ENGINES: LayoutEngine[] = ["dagre", "elk", "tala"];
 
 /** ELK and TALA are Pro/Enterprise-only; Dagre is available on every tier. */
-const PRO_ENGINES: LayoutEngine[] = ['elk', 'tala'];
+const PRO_ENGINES: LayoutEngine[] = ["elk", "tala"];
 
 const CompileResponseSchema = z
   .object({
     nodes: z.array(z.record(z.unknown())),
     edges: z.array(z.record(z.unknown())),
-    engine: z.enum(['dagre', 'elk', 'tala']),
+    engine: z.enum(["dagre", "elk", "tala"]),
     placeholder: z.boolean().optional(),
   })
   .passthrough();
 
 export function parseEngine(value: unknown): LayoutEngine {
-  if (value === undefined) return 'dagre';
+  if (value === undefined) return "dagre";
   if (
-    typeof value === 'string' &&
+    typeof value === "string" &&
     LAYOUT_ENGINES.includes(value as LayoutEngine)
   )
     return value as LayoutEngine;
@@ -84,7 +84,7 @@ export function parseEngine(value: unknown): LayoutEngine {
 }
 
 export function assertEngineAllowed(engine: LayoutEngine, tier: Tier): void {
-  if (tier === 'COMMUNITY' && PRO_ENGINES.includes(engine))
+  if (tier === "COMMUNITY" && PRO_ENGINES.includes(engine))
     throw new TierUpgradeError(
       `The '${engine}' layout engine requires a Pro or Enterprise tier`,
       { engine, tier },
@@ -96,7 +96,7 @@ export function assertNodeCountAllowed(
   tier: Tier,
   nodeLimit: number,
 ): void {
-  if (tier === 'COMMUNITY' && nodeCount > nodeLimit)
+  if (tier === "COMMUNITY" && nodeCount > nodeLimit)
     throw new TierUpgradeError(
       `Community diagrams are limited to ${nodeLimit} nodes (got ${nodeCount})`,
       { nodeCount, limit: nodeLimit, tier },
@@ -120,15 +120,15 @@ export async function compileD2(
 
   try {
     const response = await fetch(compilerUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ source: request.source, engine, tier }),
     });
     if (!response.ok)
       throw new Error(`D2 compiler returned ${response.status}`);
     const parsed = CompileResponseSchema.safeParse(await response.json());
     if (!parsed.success)
-      throw new Error('D2 compiler returned an invalid response');
+      throw new Error("D2 compiler returned an invalid response");
     const compiled = parsed.data;
     assertNodeCountAllowed(compiled.nodes.length, tier, nodeLimit);
     return compiled;
@@ -138,7 +138,7 @@ export async function compileD2(
       return {
         ...placeholderLayout(engine),
         error:
-          error instanceof Error ? error.message : 'D2 compiler unavailable',
+          error instanceof Error ? error.message : "D2 compiler unavailable",
       };
     throw error;
   }

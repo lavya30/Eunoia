@@ -1,4 +1,4 @@
-import type { WebSocket } from 'ws';
+import type { WebSocket } from "ws";
 
 export type CanvasElement = {
   id: string;
@@ -14,11 +14,11 @@ export type RoomInfo = {
   id: string;
   name: string;
   ownerId: string;
-  tier: 'COMMUNITY' | 'PRO' | 'ENTERPRISE';
+  tier: "COMMUNITY" | "PRO" | "ENTERPRISE";
 };
 
 export type CursorTelemetry = {
-  type: 'cursor';
+  type: "cursor";
   clientId: string;
   x: number;
   y: number;
