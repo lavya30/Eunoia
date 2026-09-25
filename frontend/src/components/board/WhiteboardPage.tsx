@@ -44,14 +44,19 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import {
-  aabbFromRect,
   aabbIntersects,
+  angleOfPoint,
   cameraViewBox,
+  degToRad,
   INITIAL_CAMERA,
+  normalizeRotation,
   panCamera,
   resizeAabb,
   resizeHandles,
+  rotatedNodeAabb,
+  rotatePoint,
   screenToWorld,
+  snapAngle,
   worldToScreen,
   snapPoint,
   unionAabbs,
@@ -63,9 +68,11 @@ import {
 } from '@/lib/whiteboard/geometry';
 import { SpatialIndex } from '@/lib/whiteboard/spatial-index';
 import type {
+  ArrowRouting,
   BoardArrow,
   BoardNode,
   BoardStroke,
+  InkPoint,
 } from '@/lib/whiteboard/board-types';
 import {
   parseCompileResponse,
@@ -134,7 +141,7 @@ type Interaction =
       startWorld: Point;
       originNodes: Array<{ id: string; x: number; y: number }>;
       originArrows: Array<{ id: string; start: Point; end: Point }>;
-      originStrokes: Array<{ id: string; points: Point[] }>;
+      originStrokes: Array<{ id: string; points: InkPoint[] }>;
     }
   | {
       kind: 'arrowEndpoint';
@@ -156,6 +163,16 @@ type Interaction =
       originBounds: Aabb;
     }
   | {
+      kind: 'rotate';
+      pointerId: number;
+      targetIds: string[];
+      center: Point;
+      startAngle: number;
+      originNodes: Array<{ id: string; rotation: number }>;
+      originArrows: Array<{ id: string; start: Point; end: Point }>;
+      originStrokes: Array<{ id: string; points: InkPoint[] }>;
+    }
+  | {
       kind: 'create';
       pointerId: number;
       tool: Exclude<ToolId, 'select' | 'hand'>;
@@ -166,8 +183,10 @@ type Interaction =
   | {
       kind: 'draw';
       pointerId: number;
-      points: Point[];
+      points: InkPoint[];
       color: string;
+      brushSize: number;
+      thinning: number;
     };
 
 const INITIAL_NODES: BoardNode[] = [
@@ -369,10 +388,180 @@ function strokeBounds(stroke: BoardStroke): Aabb {
     if (p.x > maxX) maxX = p.x;
     if (p.y > maxY) maxY = p.y;
   }
-  return { minX: minX - 6, minY: minY - 6, maxX: maxX + 6, maxY: maxY + 6 };
+  // Pad by half the brush diameter (plus smoothing slop) so thick ink is
+  // never culled at the viewport edge and marquee selection hits its edges.
+  const pad = (stroke.brushSize ?? 6) / 2 + 3;
+  return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+}
+
+/**
+ * Central path router for user arrows. `straight` is the legacy `M…L`
+ * segment; `orthogonal` emits axis-aligned `H/V` elbows via the segment
+ * midpoint; `curved` emits a cubic with control points offset
+ * perpendicular to the chord for a gentle arc.
+ */
+function arrowPath(arrow: BoardArrow): string {
+  const { start, end } = arrow;
+  const routing = arrow.routing ?? 'straight';
+  if (routing === 'orthogonal') {
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+    // Elbow orientation follows the dominant axis so short connectors
+    // don't zig-zag: mostly-horizontal chords bend vertically and vice versa.
+    if (Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)) {
+      return `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`;
+    }
+    return `M ${start.x} ${start.y} L ${start.x} ${midY} L ${end.x} ${midY} L ${end.x} ${end.y}`;
+  }
+  if (routing === 'curved') {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const len = Math.hypot(dx, dy) || 1;
+    // Perpendicular bow, scaled by chord length and capped for stability.
+    const bow = Math.min(60, len * 0.18);
+    const nx = -dy / len;
+    const ny = dx / len;
+    const c1x = start.x + dx * 0.3 + nx * bow;
+    const c1y = start.y + dy * 0.3 + ny * bow;
+    const c2x = start.x + dx * 0.7 + nx * bow;
+    const c2y = start.y + dy * 0.7 + ny * bow;
+    return `M ${start.x} ${start.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${end.x} ${end.y}`;
+  }
+  return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+}
+
+/**
+ * Variable-width ink outline for a freehand stroke. Uses the brush size
+ * and per-point pressure to build a tapered polygon; falls back to the
+ * legacy uniform centerline smoothing when no pressure data exists so old
+ * boards render identically.
+ */
+function inkOutlinePath(stroke: BoardStroke): string {
+  const points = stroke.points;
+  if (points.length === 0) return '';
+  const brushSize = stroke.brushSize ?? 6;
+  const hasPressure = points.some(
+    (p) => typeof p.pressure === 'number' && Number.isFinite(p.pressure),
+  );
+  if (!hasPressure) return smoothPath(points);
+  const halfWidths = points.map((p) => {
+    const pressure =
+      typeof p.pressure === 'number' && Number.isFinite(p.pressure)
+        ? Math.min(1, Math.max(0, p.pressure))
+        : 0.5;
+    // Taper: light touches draw thin, full pressure draws the full brush.
+    return (brushSize * (0.25 + 0.75 * pressure)) / 2;
+  });
+  const left: string[] = [];
+  const right: string[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const prev = points[Math.max(0, i - 1)];
+    const next = points[Math.min(points.length - 1, i + 1)];
+    let dx = next.x - prev.x;
+    let dy = next.y - prev.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.0001) {
+      dx = 0;
+      dy = 1;
+    } else {
+      dx /= len;
+      dy /= len;
+    }
+    const nx = -dy;
+    const ny = dx;
+    const hw = halfWidths[i];
+    left.push(`${points[i].x + nx * hw} ${points[i].y + ny * hw}`);
+    right.push(`${points[i].x - nx * hw} ${points[i].y - ny * hw}`);
+  }
+  if (left.length === 1) {
+    // Single dot: render a small filled blob instead of a degenerate line.
+    const [cx, cy] = left[0].split(' ').map(Number);
+    const r = halfWidths[0];
+    return `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${r * 2} 0 a ${r} ${r} 0 1 0 ${-r * 2} 0 Z`;
+  }
+  return `M ${left.join(' L ')} L ${right.reverse().join(' L ')} Z`;
+}
+
+/** Build an ink point from a pointer event, normalizing pen pressure. */
+function inkPointFromPointer(
+  pressure: number | undefined,
+  worldPoint: Point,
+): InkPoint {
+  const raw = typeof pressure === 'number' ? pressure : 0.5;
+  // Mice report 0/0.5 with no meaningful pressure; treat 0 as default.
+  const normalized =
+    Number.isFinite(raw) && raw > 0 ? Math.min(1, Math.max(0, raw)) : 0.5;
+  return { ...worldPoint, pressure: normalized };
+}
+
+function inkPerpendicularDistance(
+  p: InkPoint,
+  a: InkPoint,
+  b: InkPoint,
+): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 0.000001) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t =
+    ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  const clamped = Math.min(1, Math.max(0, t));
+  return Math.hypot(p.x - (a.x + clamped * dx), p.y - (a.y + clamped * dy));
+}
+
+/**
+ * Ramer–Douglas–Peucker simplification on x/y. Pressure travels with the
+ * kept points. Runs on pointer-up so live ink stays raw and stored/synced
+ * strokes stay small.
+ */
+function simplifyInkPoints(
+  points: InkPoint[],
+  tolerance = 1.5,
+): InkPoint[] {
+  if (points.length <= 2) return points;
+  const keep = new Array<boolean>(points.length).fill(false);
+  keep[0] = true;
+  keep[points.length - 1] = true;
+  const stack: Array<[number, number]> = [[0, points.length - 1]];
+  while (stack.length > 0) {
+    const [first, last] = stack.pop() as [number, number];
+    let maxDist = 0;
+    let maxIndex = -1;
+    for (let i = first + 1; i < last; i++) {
+      const dist = inkPerpendicularDistance(
+        points[i],
+        points[first],
+        points[last],
+      );
+      if (dist > maxDist) {
+        maxDist = dist;
+        maxIndex = i;
+      }
+    }
+    if (maxIndex !== -1 && maxDist > tolerance) {
+      keep[maxIndex] = true;
+      stack.push([first, maxIndex], [maxIndex, last]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
 }
 
 function arrowBounds(arrow: BoardArrow): Aabb {
+  if (arrow.routing === 'curved') {
+    // Cubic control points can bow outside the start/end box; expand by
+    // the same capped bow used in arrowPath (18% of chord, max 60).
+    const chord = Math.hypot(
+      arrow.end.x - arrow.start.x,
+      arrow.end.y - arrow.start.y,
+    );
+    const pad = Math.min(60, chord * 0.18) + 10;
+    return {
+      minX: Math.min(arrow.start.x, arrow.end.x) - pad,
+      minY: Math.min(arrow.start.y, arrow.end.y) - pad,
+      maxX: Math.max(arrow.start.x, arrow.end.x) + pad,
+      maxY: Math.max(arrow.start.y, arrow.end.y) + pad,
+    };
+  }
   return {
     minX: Math.min(arrow.start.x, arrow.end.x) - 8,
     minY: Math.min(arrow.start.y, arrow.end.y) - 8,
@@ -382,7 +571,13 @@ function arrowBounds(arrow: BoardArrow): Aabb {
 }
 
 function nodeBounds(node: BoardNode): Aabb {
-  return aabbFromRect(node.x, node.y, node.width, node.height);
+  return rotatedNodeAabb(
+    node.x,
+    node.y,
+    node.width,
+    node.height,
+    node.rotation,
+  );
 }
 
 function elementsInBounds(
@@ -422,35 +617,79 @@ function nodeCenter(node: BoardNode): Point {
 }
 
 function getAnchorPoint(node: BoardNode, targetPoint: Point): Point {
+  const rotation = normalizeRotation(node.rotation ?? 0);
   const cx = node.x + node.width / 2;
   const cy = node.y + node.height / 2;
-  const dx = targetPoint.x - cx;
-  const dy = targetPoint.y - cy;
+  const center = { x: cx, y: cy };
+  // Work in the node's unrotated local frame, then rotate the result back.
+  const localTarget =
+    rotation === 0
+      ? targetPoint
+      : rotatePoint(targetPoint, center, -degToRad(rotation));
+  const dx = localTarget.x - cx;
+  const dy = localTarget.y - cy;
 
   if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
     return { x: cx, y: cy };
   }
 
+  let local: Point;
   if (node.shape === 'ellipse') {
     const rx = node.width / 2;
     const ry = node.height / 2;
     const angle = Math.atan2(dy, dx);
-    return {
+    local = {
       x: cx + rx * Math.cos(angle),
       y: cy + ry * Math.sin(angle),
     };
+  } else {
+    const hw = node.width / 2;
+    const hh = node.height / 2;
+    const tanX = Math.abs(hw / dx);
+    const tanY = Math.abs(hh / dy);
+    const t = Math.min(tanX, tanY);
+    local = {
+      x: cx + dx * t,
+      y: cy + dy * t,
+    };
   }
+  return rotation === 0 ? local : rotatePoint(local, center, degToRad(rotation));
+}
 
+/**
+ * Side-midpoint anchor for orthogonal routing: picks the edge whose
+ * outward normal best aligns with the direction to the target.
+ */
+function getOrthogonalAnchor(node: BoardNode, targetPoint: Point): Point {
+  const rotation = normalizeRotation(node.rotation ?? 0);
+  const cx = node.x + node.width / 2;
+  const cy = node.y + node.height / 2;
+  const center = { x: cx, y: cy };
+  const localTarget =
+    rotation === 0
+      ? targetPoint
+      : rotatePoint(targetPoint, center, -degToRad(rotation));
+  const dx = localTarget.x - cx;
+  const dy = localTarget.y - cy;
   const hw = node.width / 2;
   const hh = node.height / 2;
-  const tanX = Math.abs(hw / dx);
-  const tanY = Math.abs(hh / dy);
-  const t = Math.min(tanX, tanY);
+  let local: Point;
+  if (Math.abs(dx) / (hw || 1) >= Math.abs(dy) / (hh || 1)) {
+    local = { x: dx >= 0 ? cx + hw : cx - hw, y: cy };
+  } else {
+    local = { x: cx, y: dy >= 0 ? cy + hh : cy - hh };
+  }
+  return rotation === 0 ? local : rotatePoint(local, center, degToRad(rotation));
+}
 
-  return {
-    x: cx + dx * t,
-    y: cy + dy * t,
-  };
+/** Anchor dispatcher honoring the arrow's routing mode. */
+function getRoutedAnchor(
+  node: BoardNode,
+  targetPoint: Point,
+  routing?: ArrowRouting,
+): Point {
+  if (routing === 'orthogonal') return getOrthogonalAnchor(node, targetPoint);
+  return getAnchorPoint(node, targetPoint);
 }
 
 function findSnapNode(
@@ -459,11 +698,30 @@ function findSnapNode(
   padding = 20,
 ): BoardNode | null {
   for (const node of nodes) {
+    const rotation = normalizeRotation(node.rotation ?? 0);
+    if (rotation === 0) {
+      if (
+        point.x >= node.x - padding &&
+        point.x <= node.x + node.width + padding &&
+        point.y >= node.y - padding &&
+        point.y <= node.y + node.height + padding
+      ) {
+        return node;
+      }
+      continue;
+    }
+    // Inverse-rotate the point into the node's local frame for an exact
+    // hit test instead of the (oversized) rotated AABB.
+    const center = {
+      x: node.x + node.width / 2,
+      y: node.y + node.height / 2,
+    };
+    const local = rotatePoint(point, center, -degToRad(rotation));
     if (
-      point.x >= node.x - padding &&
-      point.x <= node.x + node.width + padding &&
-      point.y >= node.y - padding &&
-      point.y <= node.y + node.height + padding
+      local.x >= node.x - padding &&
+      local.x <= node.x + node.width + padding &&
+      local.y >= node.y - padding &&
+      local.y <= node.y + node.height + padding
     ) {
       return node;
     }
@@ -620,6 +878,10 @@ function sanitizeNode(raw: unknown): BoardNode | null {
       n.opacity === undefined
         ? undefined
         : clampSize(finiteOr(n.opacity, 1), 0.05, 1),
+    rotation:
+      n.rotation === undefined
+        ? undefined
+        : normalizeRotation(finiteOr(n.rotation, 0)),
     fontSize:
       n.fontSize === undefined
         ? undefined
@@ -629,13 +891,23 @@ function sanitizeNode(raw: unknown): BoardNode | null {
 
 function sanitizePoint(raw: unknown): Point | null {
   if (!raw || typeof raw !== 'object') return null;
-  const p = raw as Partial<Point>;
+  const p = raw as Partial<Point> & { pressure?: unknown };
   if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
-  return {
+  const clean: Point = {
     x: clampSize(p.x as number, -100000, 100000),
     y: clampSize(p.y as number, -100000, 100000),
   };
+  if (typeof p.pressure === 'number' && Number.isFinite(p.pressure)) {
+    (clean as InkPoint).pressure = clampSize(p.pressure, 0, 1);
+  }
+  return clean;
 }
+
+const ARROW_ROUTINGS: ReadonlySet<string> = new Set([
+  'straight',
+  'orthogonal',
+  'curved',
+]);
 
 function sanitizeArrow(raw: unknown): BoardArrow | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -652,6 +924,10 @@ function sanitizeArrow(raw: unknown): BoardArrow | null {
     color: typeof a.color === 'string' ? a.color.slice(0, 32) : '#25263a',
     startNodeId: typeof a.startNodeId === 'string' ? a.startNodeId : undefined,
     endNodeId: typeof a.endNodeId === 'string' ? a.endNodeId : undefined,
+    routing:
+      typeof a.routing === 'string' && ARROW_ROUTINGS.has(a.routing)
+        ? (a.routing as ArrowRouting)
+        : undefined,
   };
 }
 
@@ -663,13 +939,25 @@ function sanitizeStroke(raw: unknown): BoardStroke | null {
   if (!Array.isArray(s.points)) return null;
   const points = s.points.slice(0, 2000).flatMap((p) => {
     const clean = sanitizePoint(p);
-    return clean ? [clean] : [];
+    return clean ? [clean as InkPoint] : [];
   });
   if (points.length === 0) return null;
   return {
     id: s.id,
     points,
     color: typeof s.color === 'string' ? s.color.slice(0, 32) : '#25263a',
+    brushSize:
+      s.brushSize === undefined
+        ? undefined
+        : clampSize(finiteOr(s.brushSize, 6), 1, 64),
+    thinning:
+      s.thinning === undefined
+        ? undefined
+        : clampSize(finiteOr(s.thinning, 0.5), -1, 1),
+    opacity:
+      s.opacity === undefined
+        ? undefined
+        : clampSize(finiteOr(s.opacity, 1), 0.05, 1),
   };
 }
 
@@ -872,9 +1160,18 @@ function CanvasNode({
     opacity: node.opacity ?? 1,
   };
 
+  const rotation = normalizeRotation(node.rotation ?? 0);
+  const centerX = node.x + node.width / 2;
+  const centerY = node.y + node.height / 2;
+
   return (
     <g
       className={`canvas-node canvas-node--${node.tone} ${isNote ? 'is-note' : ''} ${selected ? 'is-selected' : ''}`}
+      transform={
+        rotation === 0
+          ? undefined
+          : `rotate(${rotation} ${centerX} ${centerY})`
+      }
       onPointerDown={(event) => {
         event.stopPropagation();
         onPointerDown(event);
@@ -1047,6 +1344,9 @@ export function WhiteboardPage({
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [copied, setCopied] = useState(false);
   const [activeColor, setActiveColor] = useState('#25263a');
+  const [arrowRouting, setArrowRouting] = useState<ArrowRouting>('straight');
+  const [brushSize, setBrushSize] = useState(8);
+  const [brushThinning, setBrushThinning] = useState(0.5);
   const [locked, setLocked] = useState(false);
   const [stylePanelOpen, setStylePanelOpen] = useState(true);
   const [boardError, setBoardError] = useState<string | null>(null);
@@ -1094,6 +1394,17 @@ export function WhiteboardPage({
     strokes,
     code,
   });
+  const arrowRoutingRef = useRef<ArrowRouting>(arrowRouting);
+
+  useEffect(() => {
+    arrowRoutingRef.current = arrowRouting;
+  }, [arrowRouting]);
+
+  const brushRef = useRef({ size: brushSize, thinning: brushThinning });
+
+  useEffect(() => {
+    brushRef.current = { size: brushSize, thinning: brushThinning };
+  }, [brushSize, brushThinning]);
   const lastCompiledCodeRef = useRef<string | null>(null);
   const restoreNoticeRef = useRef(false);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
@@ -1531,6 +1842,30 @@ export function WhiteboardPage({
     return index;
   }, [nodes]);
 
+  const arrowIndex = useMemo(() => {
+    const index = new SpatialIndex<BoardArrow>();
+    index.rebuild(
+      arrows.map((arrow) => ({
+        ...arrowBounds(arrow),
+        id: arrow.id,
+        value: arrow,
+      })),
+    );
+    return index;
+  }, [arrows]);
+
+  const strokeIndex = useMemo(() => {
+    const index = new SpatialIndex<BoardStroke>();
+    index.rebuild(
+      strokes.map((stroke) => ({
+        ...strokeBounds(stroke),
+        id: stroke.id,
+        value: stroke,
+      })),
+    );
+    return index;
+  }, [strokes]);
+
   const viewBox = useMemo(
     () => cameraViewBox(camera, canvasViewport),
     [camera, canvasViewport],
@@ -1542,14 +1877,13 @@ export function WhiteboardPage({
   );
 
   const visibleStrokes = useMemo(
-    () =>
-      strokes.filter((stroke) => aabbIntersects(viewBox, strokeBounds(stroke))),
-    [strokes, viewBox],
+    () => strokeIndex.search(viewBox),
+    [strokeIndex, viewBox],
   );
 
   const visibleArrows = useMemo(
-    () => arrows.filter((arrow) => aabbIntersects(viewBox, arrowBounds(arrow))),
-    [arrows, viewBox],
+    () => arrowIndex.search(viewBox),
+    [arrowIndex, viewBox],
   );
 
   // Per-color markers: `fill="context-stroke"` has spotty browser support,
@@ -1606,6 +1940,68 @@ export function WhiteboardPage({
     [nodes, selectedId],
   );
   const selectedOpacity = Math.round((selectedNode?.opacity ?? 1) * 100);
+  const selectedArrowCount = useMemo(
+    () => arrows.filter((arrow) => selectedIds.includes(arrow.id)).length,
+    [arrows, selectedIds],
+  );
+  const selectedStrokeCount = useMemo(
+    () => strokes.filter((stroke) => selectedIds.includes(stroke.id)).length,
+    [strokes, selectedIds],
+  );
+  const selectedArrowRouting = useMemo<ArrowRouting | null>(() => {
+    const selected = arrows.filter((arrow) => selectedIds.includes(arrow.id));
+    if (selected.length === 0) return null;
+    const first = selected[0].routing ?? 'straight';
+    return selected.every((arrow) => (arrow.routing ?? 'straight') === first)
+      ? first
+      : null;
+  }, [arrows, selectedIds]);
+
+  const applyArrowRouting = useCallback(
+    (routing: ArrowRouting) => {
+      setArrowRouting(routing);
+      if (locked) return;
+      if (!selectedIds.some((id) => arrowsRef.current.some((a) => a.id === id)))
+        return;
+      recordHistory();
+      setArrows((current) =>
+        current.map((arrow) =>
+          selectedIds.includes(arrow.id) ? { ...arrow, routing } : arrow,
+        ),
+      );
+    },
+    [locked, recordHistory, selectedIds],
+  );
+
+  const applyBrushSize = useCallback(
+    (size: number) => {
+      setBrushSize(size);
+      if (locked || selectedStrokeCount === 0) return;
+      recordHistory();
+      setStrokes((current) =>
+        current.map((stroke) =>
+          selectedIds.includes(stroke.id)
+            ? { ...stroke, brushSize: size }
+            : stroke,
+        ),
+      );
+    },
+    [locked, recordHistory, selectedIds, selectedStrokeCount],
+  );
+
+  const applyBrushThinning = useCallback(
+    (thinning: number) => {
+      setBrushThinning(thinning);
+      if (locked || selectedStrokeCount === 0) return;
+      recordHistory();
+      setStrokes((current) =>
+        current.map((stroke) =>
+          selectedIds.includes(stroke.id) ? { ...stroke, thinning } : stroke,
+        ),
+      );
+    },
+    [locked, recordHistory, selectedIds, selectedStrokeCount],
+  );
 
   const selectTool = useCallback((tool: ToolId) => {
     setActiveTool(tool);
@@ -1745,7 +2141,11 @@ export function WhiteboardPage({
     const newStrokes = cStrokes.map((s) => ({
       ...s,
       id: nextId('stroke'),
-      points: s.points.map((p) => ({ x: p.x + offset, y: p.y + offset })),
+      points: s.points.map((p) =>
+        typeof p.pressure === 'number'
+          ? { x: p.x + offset, y: p.y + offset, pressure: p.pressure }
+          : { x: p.x + offset, y: p.y + offset },
+      ),
     }));
 
     setNodes((current) => [...current, ...newNodes]);
@@ -1814,6 +2214,66 @@ export function WhiteboardPage({
         handle,
         targetId: selectedIds[0],
         originBounds: selectedNodeBounds,
+      };
+      canvasRef.current.setPointerCapture(event.pointerId);
+    },
+    [locked, selectedNodeBounds, selectedIds],
+  );
+
+  const handleRotatePointerDown = useCallback(
+    (event: ReactPointerEvent<SVGCircleElement>) => {
+      if (locked || !canvasRef.current || !selectedNodeBounds || isAuxClick(event))
+        return;
+      event.stopPropagation();
+      event.preventDefault();
+      const rect = canvasRef.current.getBoundingClientRect();
+      viewportRectRef.current = rect;
+      const screenPoint = pointerToViewportPoint(
+        event,
+        canvasRef.current,
+        canvasViewportRef.current,
+        rect,
+      );
+      const worldPoint = screenToWorld(
+        screenPoint,
+        cameraRef.current,
+        canvasViewportRef.current,
+      );
+      const center = {
+        x: (selectedNodeBounds.minX + selectedNodeBounds.maxX) / 2,
+        y: (selectedNodeBounds.minY + selectedNodeBounds.maxY) / 2,
+      };
+      const currentNodes = nodesRef.current;
+      const targetIds = currentNodes
+        .filter((node) => selectedIds.includes(node.id))
+        .map((node) => node.id);
+      if (targetIds.length === 0) return;
+      historyRecordedRef.current = false;
+      interactionRef.current = {
+        kind: 'rotate',
+        pointerId: event.pointerId,
+        targetIds,
+        center,
+        startAngle: angleOfPoint(worldPoint, center),
+        originNodes: currentNodes
+          .filter((node) => targetIds.includes(node.id))
+          .map((node) => ({
+            id: node.id,
+            rotation: normalizeRotation(node.rotation ?? 0),
+          })),
+        originArrows: arrowsRef.current
+          .filter((arrow) => selectedIds.includes(arrow.id))
+          .map((arrow) => ({
+            id: arrow.id,
+            start: { ...arrow.start },
+            end: { ...arrow.end },
+          })),
+        originStrokes: strokesRef.current
+          .filter((stroke) => selectedIds.includes(stroke.id))
+          .map((stroke) => ({
+            id: stroke.id,
+            points: stroke.points.map((p) => ({ ...p })),
+          })),
       };
       canvasRef.current.setPointerCapture(event.pointerId);
     },
@@ -1914,8 +2374,10 @@ export function WhiteboardPage({
         interactionRef.current = {
           kind: 'draw',
           pointerId: event.pointerId,
-          points: [worldPoint],
+          points: [inkPointFromPointer(event.pressure, worldPoint)],
           color: activeColor,
+          brushSize: brushRef.current.size,
+          thinning: brushRef.current.thinning,
         };
       } else {
         ensureHistory();
@@ -2022,8 +2484,10 @@ export function WhiteboardPage({
         interactionRef.current = {
           kind: 'draw',
           pointerId: event.pointerId,
-          points: [worldPoint],
+          points: [inkPointFromPointer(event.pressure, worldPoint)],
           color: activeColor,
+          brushSize: brushRef.current.size,
+          thinning: brushRef.current.thinning,
         };
       } else {
         ensureHistory();
@@ -2092,7 +2556,11 @@ export function WhiteboardPage({
             interaction.endpoint === 'start'
               ? currentArrow.end
               : currentArrow.start;
-          newPoint = getAnchorPoint(targetNode, otherPoint);
+          newPoint = getRoutedAnchor(
+            targetNode,
+            otherPoint,
+            currentArrow.routing,
+          );
         }
 
         setArrows((current) =>
@@ -2201,12 +2669,20 @@ export function WhiteboardPage({
               let newEnd = arrow.end;
 
               if (sNode && eNode) {
-                newStart = getAnchorPoint(sNode, nodeCenter(eNode));
-                newEnd = getAnchorPoint(eNode, nodeCenter(sNode));
+                newStart = getRoutedAnchor(
+                  sNode,
+                  nodeCenter(eNode),
+                  arrow.routing,
+                );
+                newEnd = getRoutedAnchor(
+                  eNode,
+                  nodeCenter(sNode),
+                  arrow.routing,
+                );
               } else if (sNode) {
-                newStart = getAnchorPoint(sNode, arrow.end);
+                newStart = getRoutedAnchor(sNode, arrow.end, arrow.routing);
               } else if (eNode) {
-                newEnd = getAnchorPoint(eNode, arrow.start);
+                newEnd = getRoutedAnchor(eNode, arrow.start, arrow.routing);
               }
 
               return {
@@ -2230,10 +2706,126 @@ export function WhiteboardPage({
             if (!origin) return stroke;
             return {
               ...stroke,
-              points: origin.points.map((p) => ({
-                x: p.x + delta.x,
-                y: p.y + delta.y,
-              })),
+              points: origin.points.map((p) =>
+                typeof p.pressure === 'number'
+                  ? { x: p.x + delta.x, y: p.y + delta.y, pressure: p.pressure }
+                  : { x: p.x + delta.x, y: p.y + delta.y },
+              ),
+            };
+          }),
+        );
+        return;
+      }
+
+      if (interaction.kind === 'rotate') {
+        ensureHistory();
+        const center = interaction.center;
+        const worldAngle = angleOfPoint(worldPoint, center);
+        const rawDeltaDeg =
+          ((worldAngle - interaction.startAngle) * 180) / Math.PI;
+        // Shift snaps to 15° increments. Modifier meaning is per
+        // interaction kind: Shift is aspect-lock while resizing.
+        const deltaDeg = event.shiftKey
+          ? snapAngle(rawDeltaDeg, 15)
+          : rawDeltaDeg;
+        const totalRad = degToRad(deltaDeg);
+        const rotatingIds = new Set(
+          interaction.originNodes.map((item) => item.id),
+        );
+        const currentNodes = nodesRef.current;
+        const rotatedById = new Map<string, BoardNode>();
+        for (const node of currentNodes) {
+          const origin = interaction.originNodes.find(
+            (item) => item.id === node.id,
+          );
+          rotatedById.set(
+            node.id,
+            origin
+              ? {
+                  ...node,
+                  rotation: normalizeRotation(
+                    origin.rotation + deltaDeg,
+                  ),
+                }
+              : node,
+          );
+        }
+        setNodes((current) =>
+          current.map((node) => rotatedById.get(node.id) ?? node),
+        );
+
+        setArrows((current) =>
+          current.map((arrow) => {
+            const origin = interaction.originArrows?.find(
+              (item) => item.id === arrow.id,
+            );
+            const base = origin ?? arrow;
+            const startRotating =
+              !!arrow.startNodeId && rotatingIds.has(arrow.startNodeId);
+            const endRotating =
+              !!arrow.endNodeId && rotatingIds.has(arrow.endNodeId);
+            if (!startRotating && !endRotating) {
+              // Free arrow: rigid rotation about the selection center.
+              // Unselected, unattached arrows are left untouched.
+              if (!origin) return arrow;
+              return {
+                ...arrow,
+                start: rotatePoint(base.start, center, totalRad),
+                end: rotatePoint(base.end, center, totalRad),
+              };
+            }
+            // Bound ends re-anchor against the rotated node; free ends
+            // rotate rigidly with the gesture.
+            let newStart = startRotating
+              ? base.start
+              : rotatePoint(base.start, center, totalRad);
+            let newEnd = endRotating
+              ? base.end
+              : rotatePoint(base.end, center, totalRad);
+            const startId = arrow.startNodeId;
+            const endId = arrow.endNodeId;
+            if (startRotating && startId) {
+              const sNode = rotatedById.get(startId);
+              if (sNode) {
+                const eNode =
+                  endId !== undefined ? rotatedById.get(endId) : undefined;
+                newStart = getRoutedAnchor(
+                  sNode,
+                  eNode ? nodeCenter(eNode) : newEnd,
+                  arrow.routing,
+                );
+              }
+            }
+            if (endRotating && endId) {
+              const eNode = rotatedById.get(endId);
+              if (eNode) {
+                const sNode =
+                  startId !== undefined ? rotatedById.get(startId) : undefined;
+                newEnd = getRoutedAnchor(
+                  eNode,
+                  sNode ? nodeCenter(sNode) : newStart,
+                  arrow.routing,
+                );
+              }
+            }
+            return { ...arrow, start: newStart, end: newEnd };
+          }),
+        );
+
+        setStrokes((current) =>
+          current.map((stroke) => {
+            const origin = interaction.originStrokes?.find(
+              (item) => item.id === stroke.id,
+            );
+            if (!origin) return stroke;
+            return {
+              ...stroke,
+              points: origin.points.map((p) => {
+                const rotated = rotatePoint(p, center, totalRad);
+                return typeof p.pressure === 'number'
+                  ? { ...rotated, pressure: p.pressure }
+                  : rotated;
+              }),
             };
           }),
         );
@@ -2315,18 +2907,20 @@ export function WhiteboardPage({
               const endNode = currentNodes.find(
                 (n) => n.id === (arrow.endNodeId ?? ''),
               );
-              newStart = getAnchorPoint(
+              newStart = getRoutedAnchor(
                 resizedNode,
                 endNode ? nodeCenter(endNode) : arrow.end,
+                arrow.routing,
               );
             }
             if (arrow.endNodeId === targetId) {
               const startNode = currentNodes.find(
                 (n) => n.id === (arrow.startNodeId ?? ''),
               );
-              newEnd = getAnchorPoint(
+              newEnd = getRoutedAnchor(
                 resizedNode,
                 startNode ? nodeCenter(startNode) : arrow.start,
+                arrow.routing,
               );
             }
             return { ...arrow, start: newStart, end: newEnd };
@@ -2336,15 +2930,48 @@ export function WhiteboardPage({
       }
 
       if (interaction.kind === 'draw') {
-        const lastPoint = interaction.points[interaction.points.length - 1];
-        const dx = worldPoint.x - lastPoint.x;
-        const dy = worldPoint.y - lastPoint.y;
-        if (dx * dx + dy * dy < 4) return; // Skip if < 2px distance
-        const nextPoints = [...interaction.points, worldPoint];
+        // High-frequency pen input: fold in coalesced events so fast
+        // strokes keep their pressure curve instead of chord-cutting it.
+        const native = event.nativeEvent as PointerEvent & {
+          getCoalescedEvents?: () => PointerEvent[];
+        };
+        const rawSamples =
+          typeof native.getCoalescedEvents === 'function' &&
+          native.getCoalescedEvents().length > 0
+            ? native.getCoalescedEvents()
+            : [native];
+        const viewport = canvasViewportRef.current;
+        const camera = cameraRef.current;
+        const samples: InkPoint[] = [];
+        for (const sample of rawSamples) {
+          const screen = pointerToViewportPoint(
+            { clientX: sample.clientX, clientY: sample.clientY },
+            event.currentTarget,
+            viewport,
+            viewportRectRef.current,
+          );
+          samples.push(
+            inkPointFromPointer(
+              sample.pressure,
+              screenToWorld(screen, camera, viewport),
+            ),
+          );
+        }
+        let nextPoints = interaction.points;
+        for (const sample of samples) {
+          const lastPoint = nextPoints[nextPoints.length - 1];
+          const dx = sample.x - lastPoint.x;
+          const dy = sample.y - lastPoint.y;
+          if (dx * dx + dy * dy < 4) continue; // Skip if < 2px distance
+          nextPoints = [...nextPoints, sample];
+        }
+        if (nextPoints === interaction.points) return;
         interactionRef.current = {
           ...interaction,
           points: nextPoints,
         };
+        const brushSize = interaction.brushSize;
+        const thinning = interaction.thinning;
         setStrokes((current) => {
           const last = current[current.length - 1];
           if (!last || last.id !== `draft-${interaction.pointerId}`) {
@@ -2354,6 +2981,8 @@ export function WhiteboardPage({
                 id: `draft-${interaction.pointerId}`,
                 points: nextPoints,
                 color: interaction.color,
+                brushSize,
+                thinning,
               },
             ];
           }
@@ -2425,11 +3054,19 @@ export function WhiteboardPage({
       );
 
       if (interaction.kind === 'draw') {
-        const points = [...interaction.points, worldPoint];
+        // Simplify on commit (not live) so stored/synced strokes stay
+        // small while the in-progress stroke keeps full fidelity.
+        const raw = [
+          ...interaction.points,
+          inkPointFromPointer(event.pressure, worldPoint),
+        ];
+        const points = simplifyInkPoints(raw);
+        const brushSize = interaction.brushSize;
+        const thinning = interaction.thinning;
         setStrokes((current) =>
           current.map((stroke) =>
             stroke.id === `draft-${interaction.pointerId}`
-              ? { ...stroke, id: nextId('stroke'), points }
+              ? { ...stroke, id: nextId('stroke'), points, brushSize, thinning }
               : stroke,
           ),
         );
@@ -2472,12 +3109,24 @@ export function WhiteboardPage({
           let finalEnd = rawEnd;
 
           if (startNode && endNode && startNode.id !== endNode.id) {
-            finalStart = getAnchorPoint(startNode, nodeCenter(endNode));
-            finalEnd = getAnchorPoint(endNode, nodeCenter(startNode));
+            finalStart = getRoutedAnchor(
+              startNode,
+              nodeCenter(endNode),
+              arrowRoutingRef.current,
+            );
+            finalEnd = getRoutedAnchor(
+              endNode,
+              nodeCenter(startNode),
+              arrowRoutingRef.current,
+            );
           } else if (startNode) {
-            finalStart = getAnchorPoint(startNode, rawEnd);
+            finalStart = getRoutedAnchor(
+              startNode,
+              rawEnd,
+              arrowRoutingRef.current,
+            );
           } else if (endNode) {
-            finalEnd = getAnchorPoint(endNode, start);
+            finalEnd = getRoutedAnchor(endNode, start, arrowRoutingRef.current);
           }
 
           setArrows((current) => [
@@ -2489,6 +3138,7 @@ export function WhiteboardPage({
               color: interaction.color,
               startNodeId: startNode?.id,
               endNodeId: endNode?.id,
+              routing: arrowRoutingRef.current,
             },
           ]);
         } else {
@@ -4204,6 +4854,127 @@ export function WhiteboardPage({
                   </div>
                 </div>
                 <div className="style-section">
+                  <span className="style-label">Connector routing</span>
+                  <div className="style-choice-row">
+                    {(
+                      [
+                        { id: 'straight', label: 'Straight' },
+                        { id: 'orthogonal', label: 'Orthogonal' },
+                        { id: 'curved', label: 'Curved' },
+                      ] as Array<{ id: ArrowRouting; label: string }>
+                    ).map((option) => {
+                      const isActive =
+                        (selectedArrowRouting ?? arrowRouting) === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          className={`style-choice ${isActive ? 'is-selected' : ''}`}
+                          type="button"
+                          aria-label={`${option.label} routing`}
+                          aria-pressed={isActive}
+                          title={
+                            selectedArrowCount > 0
+                              ? `Apply ${option.label.toLowerCase()} routing to selection`
+                              : `New arrows use ${option.label.toLowerCase()} routing`
+                          }
+                          onClick={() => applyArrowRouting(option.id)}
+                        >
+                          <svg
+                            width="22"
+                            height="14"
+                            viewBox="0 0 22 14"
+                            aria-hidden="true"
+                          >
+                            {option.id === 'straight' && (
+                              <line
+                                x1="2"
+                                y1="12"
+                                x2="20"
+                                y2="2"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              />
+                            )}
+                            {option.id === 'orthogonal' && (
+                              <path
+                                d="M 2 12 L 2 7 L 20 7 L 20 2"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              />
+                            )}
+                            {option.id === 'curved' && (
+                              <path
+                                d="M 2 12 C 8 12, 14 2, 20 2"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              />
+                            )}
+                          </svg>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="style-section style-section--split">
+                  <div>
+                    <span className="style-label">Brush size</span>
+                    <div className="style-choice-row">
+                      {[
+                        { size: 4, label: 'Fine pen' },
+                        { size: 8, label: 'Medium pen' },
+                        { size: 16, label: 'Thick pen' },
+                      ].map((option) => (
+                        <button
+                          key={option.size}
+                          className={`style-choice ${brushSize === option.size ? 'is-selected' : ''}`}
+                          type="button"
+                          aria-label={option.label}
+                          aria-pressed={brushSize === option.size}
+                          title={
+                            selectedStrokeCount > 0
+                              ? `Apply ${option.label.toLowerCase()} to selection`
+                              : `New strokes use ${option.label.toLowerCase()}`
+                          }
+                          onClick={() => applyBrushSize(option.size)}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              display: 'block',
+                              width: Math.min(18, 4 + option.size),
+                              height: Math.min(18, 4 + option.size),
+                              borderRadius: '50%',
+                              background: 'currentColor',
+                            }}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="style-label-row">
+                      <span className="style-label">Pressure</span>
+                      <span className="style-value">
+                        {Math.round(brushThinning * 100)}
+                      </span>
+                    </div>
+                    <input
+                      className="opacity-input"
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="5"
+                      value={Math.round(brushThinning * 100)}
+                      aria-label="Pressure sensitivity"
+                      onChange={(event) =>
+                        applyBrushThinning(Number(event.target.value) / 100)
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="style-section">
                   <div className="style-label-row">
                     <span className="style-label">Opacity</span>
                     <span className="style-value">{selectedOpacity}</span>
@@ -4478,6 +5249,11 @@ export function WhiteboardPage({
                 <g className="board-freehand-layer">
                   {visibleStrokes.map((stroke) => {
                     const isSelected = selectedIds.includes(stroke.id);
+                    // Pressure ink renders as a filled variable-width
+                    // outline; legacy centerline strokes keep the uniform
+                    // look. Computed once per stroke per render.
+                    const inkD = inkOutlinePath(stroke);
+                    const isOutline = inkD.endsWith('Z');
                     return (
                       <g
                         key={stroke.id}
@@ -4488,8 +5264,8 @@ export function WhiteboardPage({
                         }}
                       >
                         <path
-                          d={smoothPath(stroke.points)}
-                          fill="none"
+                          d={isOutline ? inkD : smoothPath(stroke.points)}
+                          fill={isOutline ? 'transparent' : 'none'}
                           stroke="transparent"
                           strokeWidth="18"
                           style={{
@@ -4497,20 +5273,29 @@ export function WhiteboardPage({
                               activeTool === 'select' ? 'pointer' : 'default',
                           }}
                         />
-                        <path
-                          d={smoothPath(stroke.points)}
-                          fill="none"
-                          stroke={stroke.color}
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        {isSelected && (
+                        {isOutline ? (
+                          <path
+                            d={inkD}
+                            fill={stroke.color}
+                            fillOpacity={stroke.opacity ?? 1}
+                            stroke="none"
+                          />
+                        ) : (
                           <path
                             d={smoothPath(stroke.points)}
                             fill="none"
+                            stroke={stroke.color}
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        )}
+                        {isSelected && (
+                          <path
+                            d={isOutline ? inkD : smoothPath(stroke.points)}
+                            fill="none"
                             stroke="#6965db"
-                            strokeWidth="6"
+                            strokeWidth={isOutline ? 2 : 6}
                             strokeDasharray="4 4"
                             opacity="0.7"
                           />
@@ -4524,6 +5309,7 @@ export function WhiteboardPage({
                     const isSelected = selectedIds.includes(arrow.id);
                     const markerId =
                       arrowMarkerIds.get(arrow.color) ?? 'arrowhead';
+                    const routedD = arrowPath(arrow);
                     return (
                       <g
                         key={arrow.id}
@@ -4533,11 +5319,9 @@ export function WhiteboardPage({
                           handleElementPointerDown(event, arrow.id);
                         }}
                       >
-                        <line
-                          x1={arrow.start.x}
-                          y1={arrow.start.y}
-                          x2={arrow.end.x}
-                          y2={arrow.end.y}
+                        <path
+                          d={routedD}
+                          fill="none"
                           stroke="transparent"
                           strokeWidth="18"
                           style={{
@@ -4546,20 +5330,19 @@ export function WhiteboardPage({
                           }}
                         />
                         <path
-                          d={`M ${arrow.start.x} ${arrow.start.y} L ${arrow.end.x} ${arrow.end.y}`}
+                          d={routedD}
                           fill="none"
                           stroke={arrow.color}
                           strokeWidth="2.5"
                           strokeLinecap="round"
+                          strokeLinejoin="round"
                           markerEnd={`url(#${markerId})`}
                         />
                         {isSelected && (
                           <>
-                            <line
-                              x1={arrow.start.x}
-                              y1={arrow.start.y}
-                              x2={arrow.end.x}
-                              y2={arrow.end.y}
+                            <path
+                              d={routedD}
+                              fill="none"
                               stroke="#6965db"
                               strokeWidth="5"
                               strokeDasharray="4 4"
@@ -4653,8 +5436,15 @@ export function WhiteboardPage({
                         (selectedNodeBounds.minX + selectedNodeBounds.maxX) / 2
                       }
                       cy={selectedNodeBounds.minY - 37}
-                      r="5"
-                    />
+                      r="7"
+                      style={{ cursor: 'grab', pointerEvents: 'all' }}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        handleRotatePointerDown(event);
+                      }}
+                    >
+                      <title>Drag to rotate (Shift snaps to 15°)</title>
+                    </circle>
                     {resizeHandles(selectedNodeBounds).map((handle) => (
                       <rect
                         key={handle.id}

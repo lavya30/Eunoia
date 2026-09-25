@@ -207,3 +207,69 @@ export function resizeHandles(bounds: Aabb): Array<Point & { id: string }> {
     { id: 'w', x: bounds.minX, y: centerY },
   ];
 }
+
+export function degToRad(degrees: number): number {
+  return (degrees * Math.PI) / 180;
+}
+
+/** Normalize degrees into [0, 360). */
+export function normalizeRotation(degrees: number): number {
+  if (!Number.isFinite(degrees)) return 0;
+  return ((degrees % 360) + 360) % 360;
+}
+
+/** Snap degrees to the nearest multiple of `step` (default 15°). */
+export function snapAngle(degrees: number, step = 15): number {
+  return Math.round(degrees / step) * step;
+}
+
+/** Rotate point `p` around `center` by `angleRad` (counter-clockwise positive). */
+export function rotatePoint(p: Point, center: Point, angleRad: number): Point {
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  const dx = p.x - center.x;
+  const dy = p.y - center.y;
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  };
+}
+
+/** Angle in radians of the vector from `center` to `p` (atan2 convention). */
+export function angleOfPoint(p: Point, center: Point): number {
+  return Math.atan2(p.y - center.y, p.x - center.x);
+}
+
+/**
+ * Axis-aligned bounding box of a node after applying its `rotation`
+ * (degrees, clockwise in screen space) around its center.
+ */
+export function rotatedNodeAabb(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  rotation?: number,
+): Aabb {
+  const normalized = normalizeRotation(rotation ?? 0);
+  if (normalized === 0) return aabbFromRect(x, y, width, height);
+  const center = { x: x + width / 2, y: y + height / 2 };
+  const angleRad = degToRad(normalized);
+  const corners = [
+    { x, y },
+    { x: x + width, y },
+    { x: x + width, y: y + height },
+    { x, y: y + height },
+  ].map((corner) => rotatePoint(corner, center, angleRad));
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const c of corners) {
+    if (c.x < minX) minX = c.x;
+    if (c.y < minY) minY = c.y;
+    if (c.x > maxX) maxX = c.x;
+    if (c.y > maxY) maxY = c.y;
+  }
+  return { minX, minY, maxX, maxY };
+}
