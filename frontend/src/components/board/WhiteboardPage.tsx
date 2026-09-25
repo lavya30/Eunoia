@@ -98,7 +98,13 @@ import {
   getTicket,
   ingestTicketDeepLink,
 } from '@/lib/whiteboard/tickets';
+import {
+  clearSession,
+  loadSession,
+  type AuthSession,
+} from '@/lib/whiteboard/auth';
 import { CreateRoomDialog, UnlockDialog } from './RoomDialogs';
+import { RoomSettingsDialog } from './RoomSettingsDialog';
 import { HistoryPanel } from './HistoryPanel';
 import { SearchPalette } from './SearchPalette';
 import './board.css';
@@ -1010,6 +1016,11 @@ export function WhiteboardPage({
     ingestTicketDeepLink();
     return initialRoomId ? getTicket(initialRoomId) : undefined;
   });
+  // Signed-in account, if any. Loaded once per mount; login/logout happen
+  // on other routes which remount this page on return.
+  const [session, setSession] = useState<AuthSession | null>(() =>
+    typeof window === 'undefined' ? null : loadSession(),
+  );
   const [activeTool, setActiveTool] = useState<ToolId>('select');
   const [selectedIds, setSelectedIds] = useState<string[]>(['gateway']);
   const [nodes, setNodes] = useState(INITIAL_NODES);
@@ -1023,6 +1034,11 @@ export function WhiteboardPage({
   const [compileState, setCompileState] = useState<
     'saved' | 'draft' | 'compiled' | 'compiling'
   >('saved');
+  const [engine, setEngine] = useState<'dagre' | 'elk' | 'tala'>(() => {
+    if (typeof window === 'undefined') return 'dagre';
+    const stored = window.localStorage.getItem('eunoia:engine');
+    return stored === 'elk' || stored === 'tala' ? stored : 'dagre';
+  });
   const [persistenceState, setPersistenceState] = useState<
     'loading' | 'saving' | 'saved' | 'error'
   >('loading');
@@ -1082,8 +1098,11 @@ export function WhiteboardPage({
   const lastCompiledCodeRef = useRef<string | null>(null);
   const restoreNoticeRef = useRef(false);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
+  const [showRoomSettings, setShowRoomSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- hydrate and persist an external browser store. */
   useEffect(() => {
@@ -1296,7 +1315,7 @@ export function WhiteboardPage({
   useEffect(() => {
     if (initialRoomId) return;
     let cancelled = false;
-    createRoom({ name: 'Untitled board' })
+    createRoom({ name: 'Untitled board' }, session?.token)
       .then((meta) => {
         if (cancelled) return;
         setRoomMeta(meta);
@@ -3014,6 +3033,16 @@ export function WhiteboardPage({
     [recordHistory],
   );
 
+  const selectEngine = useCallback((next: 'dagre' | 'elk' | 'tala') => {
+    setEngine(next);
+    try {
+      window.localStorage.setItem('eunoia:engine', next);
+    } catch {
+      // Engine preference is best-effort.
+    }
+    setCompileState('draft');
+  }, []);
+
   const compileCode = useCallback(async () => {
     const serverUrl = resolveSyncHttpUrl();
     if (!serverUrl) {
@@ -3041,14 +3070,19 @@ export function WhiteboardPage({
           method: 'POST',
           headers: {
             'content-type': 'application/json',
+            // Room ticket wins when present (locked rooms reject anything
+            // else); otherwise the user token lets PRO accounts compile
+            // without a room or above a room's tier.
             ...(withRoom && roomId && (getTicket(roomId) ?? ticket)
               ? { authorization: `Bearer ${getTicket(roomId) ?? ticket}` }
-              : {}),
+              : session?.token
+                ? { authorization: `Bearer ${session.token}` }
+                : {}),
           },
           body: JSON.stringify(
             withRoom && roomId
-              ? { source, engine: 'dagre', roomId }
-              : { source, engine: 'dagre' },
+              ? { source, engine, roomId }
+              : { source, engine },
           ),
           signal: controller.signal,
         });
@@ -3158,7 +3192,7 @@ export function WhiteboardPage({
       if (compileAbortRef.current === controller)
         compileAbortRef.current = null;
     }
-  }, [code, recordHistory, roomId, ticket]);
+  }, [code, engine, recordHistory, roomId, session, ticket]);
 
   // Auto-compile a short pause after the user stops typing, as promised by
   // the footer copy. Skips when the code already matches the last success.
@@ -3204,9 +3238,9 @@ export function WhiteboardPage({
     document.title = `${boardTitle} – Eunoia`;
   }, [boardTitle]);
 
-  // Close the export menu on outside click / Escape.
+  // Close the header menus on outside click / Escape.
   useEffect(() => {
-    if (!exportMenuOpen) return;
+    if (!exportMenuOpen && !accountMenuOpen) return;
     const onPointerDown = (event: PointerEvent) => {
       if (
         exportMenuRef.current &&
@@ -3215,9 +3249,19 @@ export function WhiteboardPage({
       ) {
         setExportMenuOpen(false);
       }
+      if (
+        accountMenuRef.current &&
+        event.target instanceof Node &&
+        !accountMenuRef.current.contains(event.target)
+      ) {
+        setAccountMenuOpen(false);
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setExportMenuOpen(false);
+      if (event.key === 'Escape') {
+        setExportMenuOpen(false);
+        setAccountMenuOpen(false);
+      }
     };
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
@@ -3225,7 +3269,7 @@ export function WhiteboardPage({
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [exportMenuOpen]);
+  }, [exportMenuOpen, accountMenuOpen]);
 
   if (!roomId) {
     return (
@@ -3299,10 +3343,15 @@ export function WhiteboardPage({
           <button
             className="board-title-control"
             type="button"
+            aria-haspopup="dialog"
             onClick={() => {
-              const newTitle = window.prompt('Rename diagram', boardTitle);
-              const trimmed = newTitle?.trim().slice(0, 60);
-              if (trimmed) setBoardTitle(trimmed);
+              if (roomMeta && !roomId?.startsWith('local-')) {
+                setShowRoomSettings(true);
+              } else {
+                const newTitle = window.prompt('Rename diagram', boardTitle);
+                const trimmed = newTitle?.trim().slice(0, 60);
+                if (trimmed) setBoardTitle(trimmed);
+              }
             }}
           >
             <span className="board-title">{boardTitle}</span>
@@ -3386,6 +3435,91 @@ export function WhiteboardPage({
             {copied ? <Check size={16} /> : <Share2 size={16} />}
             {copied ? 'Link copied' : 'Share room'}
           </button>
+          {session ? (
+            <div ref={accountMenuRef} style={{ position: 'relative' }}>
+              <button
+                className="header-icon-button"
+                type="button"
+                aria-label={`Account: ${session.user.email}`}
+                title={session.user.email}
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => setAccountMenuOpen((prev) => !prev)}
+              >
+                <span
+                  className="presence-avatar"
+                  style={{ backgroundColor: '#7c5cff', marginLeft: 0 }}
+                  aria-hidden="true"
+                >
+                  {initialsForName(session.user.name ?? session.user.email)}
+                </span>
+              </button>
+              {accountMenuOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: 6,
+                    minWidth: 220,
+                    background: '#fff',
+                    border: '1px solid #e3e2ea',
+                    borderRadius: 10,
+                    boxShadow: '0 6px 24px rgba(37,39,71,0.14)',
+                    zIndex: 50,
+                    overflow: 'hidden',
+                    padding: '10px 14px',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: '#35374a',
+                      overflowWrap: 'anywhere',
+                    }}
+                  >
+                    {session.user.name ?? session.user.email}
+                  </div>
+                  {session.user.name ? (
+                    <div style={{ fontSize: 12, opacity: 0.65 }}>
+                      {session.user.email}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearSession();
+                      setSession(null);
+                      setAccountMenuOpen(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      marginTop: 8,
+                      border: 0,
+                      background: 'transparent',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      color: '#e5484d',
+                      padding: 0,
+                    }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <a
+              className="share-button"
+              href={`/login?next=${encodeURIComponent(
+                roomId ? `/board?room=${roomId}` : '/board',
+              )}`}
+            >
+              Sign in
+            </a>
+          )}
           <div ref={exportMenuRef} style={{ position: 'relative' }}>
             <button
               className="header-icon-button"
@@ -4701,6 +4835,20 @@ export function WhiteboardPage({
                 <span className="code-key">⌘</span>
                 <span>Changes compile after a short pause</span>
               </div>
+              <label className="engine-picker">
+                <span className="engine-picker-label">Layout</span>
+                <select
+                  aria-label="Layout engine"
+                  value={engine}
+                  onChange={(event) =>
+                    selectEngine(event.target.value as 'dagre' | 'elk' | 'tala')
+                  }
+                >
+                  <option value="dagre">Dagre</option>
+                  <option value="elk">ELK (Pro)</option>
+                  <option value="tala">Tala (Pro)</option>
+                </select>
+              </label>
               <button
                 className="compile-button"
                 type="button"
@@ -4714,8 +4862,21 @@ export function WhiteboardPage({
           </aside>
         )}
       </main>
+      {showRoomSettings && roomMeta && roomId ? (
+        <RoomSettingsDialog
+          room={roomMeta}
+          ticket={getTicket(roomId) ?? ticket}
+          userToken={session?.token}
+          onUpdated={(meta) => {
+            setRoomMeta(meta);
+            setBoardTitle(meta.name);
+          }}
+          onClose={() => setShowRoomSettings(false)}
+        />
+      ) : null}
       {showCreateRoom ? (
         <CreateRoomDialog
+          userToken={session?.token}
           onCreated={(meta) => {
             setShowCreateRoom(false);
             router.push(`/board?room=${encodeURIComponent(meta.id)}`);

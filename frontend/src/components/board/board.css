@@ -2093,3 +2093,26 @@ circle.canvas-grid {
   opacity: 0.35;
   cursor: default;
 }
+
+.engine-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.engine-picker-label {
+  opacity: 0.65;
+}
+
+.engine-picker select {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  padding: 4px 6px;
+  cursor: pointer;
+}

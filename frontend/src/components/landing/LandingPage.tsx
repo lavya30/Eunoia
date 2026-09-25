@@ -601,7 +601,7 @@ export function LandingPage() {
           <a className="eunoia-nav-github" href="#resources">
             <Github size={16} /> Open core
           </a>
-          <a className="eunoia-sign-in" href="#teams">
+          <a className="eunoia-sign-in" href="/login">
             Sign in
           </a>
           <ShimmerButton type="button" onClick={openBoard}>

@@ -94,6 +94,11 @@ async function request<T>(
   path: string,
   options: {
     ticket?: string;
+    /**
+     * User session token. Only sent when no room ticket is present — a room
+     * ticket always wins because locked rooms reject anything else.
+     */
+    userToken?: string;
     body?: unknown;
     query?: Record<string, string | number | undefined>;
   } = {},
@@ -113,7 +118,9 @@ async function request<T>(
           : {}),
         ...(options.ticket
           ? { authorization: `Bearer ${options.ticket}` }
-          : {}),
+          : options.userToken
+            ? { authorization: `Bearer ${options.userToken}` }
+            : {}),
       },
       body:
         options.body !== undefined ? JSON.stringify(options.body) : undefined,
@@ -181,8 +188,12 @@ export async function createRoom(
     password?: string;
     tier?: RoomTier;
   } = {},
+  userToken?: string,
 ): Promise<RoomMetadata> {
-  return request<RoomMetadata>('POST', '/api/rooms', { body: input });
+  return request<RoomMetadata>('POST', '/api/rooms', {
+    body: input,
+    userToken,
+  });
 }
 
 export async function getRoom(
@@ -227,11 +238,12 @@ export async function updateRoom(
     tier?: RoomTier;
     password?: string | null;
   },
+  userToken?: string,
 ): Promise<RoomMetadata> {
   return request<RoomMetadata>(
     'PATCH',
     `/api/rooms/${encodeURIComponent(roomId)}`,
-    { ticket, body: input },
+    { ticket, body: input, userToken },
   );
 }
 

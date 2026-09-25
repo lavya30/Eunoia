@@ -89,9 +89,11 @@ export function UnlockDialog({
 }
 
 export function CreateRoomDialog({
+  userToken,
   onCreated,
   onClose,
 }: {
+  userToken?: string;
   onCreated: (meta: RoomMetadata) => void;
   onClose: () => void;
 }) {
@@ -112,10 +114,13 @@ export function CreateRoomDialog({
     setError(null);
     try {
       onCreated(
-        await createRoom({
-          name: name.trim() || undefined,
-          password: password || undefined,
-        }),
+        await createRoom(
+          {
+            name: name.trim() || undefined,
+            password: password || undefined,
+          },
+          userToken,
+        ),
       );
     } catch (err) {
       setError(
