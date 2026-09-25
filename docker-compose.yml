@@ -45,8 +45,7 @@ services:
 
   d2-compiler:
     build:
-      context: .
-      dockerfile: services/d2-compiler/Dockerfile
+      context: services/d2-compiler
     ports:
       - "9400:9400"
     healthcheck:

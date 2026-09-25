@@ -12,4 +12,4 @@ COPY --from=build /app/packages/sync-server/dist ./dist
 COPY --from=build /app/packages/sync-server/prisma ./prisma
 COPY --from=build /app/packages/sync-server/package.json ./package.json
 ENV NODE_ENV=production
-CMD ["node", "dist/index.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]

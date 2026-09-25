@@ -32,7 +32,13 @@ export const UnlockRoomSchema = z
 
 export const CompileRequestSchema = z
   .object({
-    source: z.string().min(1).max(900_000),
+    source: z
+      .string()
+      .min(1)
+      .max(900_000)
+      .refine((value) => value.trim().length > 0, {
+        message: "D2 source must not be empty",
+      }),
     engine: LayoutEngineSchema.optional(),
     roomId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
     // Accepted for backwards compatibility, but deliberately ignored by the

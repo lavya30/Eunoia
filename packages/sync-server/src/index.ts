@@ -136,6 +136,11 @@ function getRoomId(req: IncomingMessage): string | undefined {
 
 if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
   const config = loadConfig();
+  if (!config.d2CompilerUrl) {
+    logger.warn(
+      "D2_COMPILER_URL is unset; /api/compile returns placeholder layouts. Start the compiler (docker compose up d2-compiler) and set D2_COMPILER_URL to enable real diagrams.",
+    );
+  }
   const app = createSyncServer(config);
   app.server.listen(config.port, config.host, () => {
     logger.info(

@@ -8,6 +8,8 @@ Node-compatible WebSocket sync server for Eunoia. It serves Yjs `sync` and `awar
 cp .env.example .env
 bun install
 bun --filter ./packages/sync-server prisma:generate
+# When DATABASE_URL points at PostgreSQL, apply migrations once per fresh database:
+bun --filter ./packages/sync-server prisma:deploy
 bun run dev:sync
 ```
 

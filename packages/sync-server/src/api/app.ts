@@ -70,6 +70,57 @@ export function createApiApp(
   const ticketSecret = config.roomTicketSecret;
   if (!ticketSecret) throw new Error("roomTicketSecret is required");
   return new Elysia({ adapter: node() })
+    // Never leak plain-text framework/driver errors (e.g. Prisma's
+    // `Invalid ...` messages): clients parse every response as JSON, so an
+    // unhandled throw must still be a JSON body with a stable shape.
+    .onError(({ code, error, set }) => {
+      if (code === "NOT_FOUND") {
+        set.status = 404;
+        return { error: "Not found", code: "NOT_FOUND" };
+      }
+      if (code === "VALIDATION" || code === "PARSE") {
+        set.status = 400;
+        return {
+          error: "Invalid request",
+          code: "VALIDATION_ERROR",
+          issues: [
+            {
+              path: "",
+              message:
+                error instanceof Error && error.message
+                  ? error.message
+                  : "Malformed request body",
+              code: "custom",
+            },
+          ],
+        };
+      }
+      if (error instanceof CompileRequestError) {
+        set.status = error.status;
+        return {
+          error: error.message,
+          code: error.code,
+          details: error.details,
+        };
+      }
+      const status =
+        typeof set.status === "number" && set.status >= 400 ? set.status : 500;
+      set.status = status;
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Internal server error";
+      // Driver internals stay server-side in production; development keeps
+      // the message so local setup problems (missing tables, DB down) are
+      // diagnosable from the client.
+      return {
+        error:
+          config.nodeEnv !== "production" || status < 500
+            ? message
+            : "Internal server error",
+        code: status < 500 ? "BAD_REQUEST" : "INTERNAL_ERROR",
+      };
+    })
     .onRequest(({ set }) => {
       set.headers["access-control-allow-origin"] = "*";
       set.headers["access-control-allow-headers"] =

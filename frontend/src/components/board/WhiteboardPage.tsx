@@ -2735,22 +2735,60 @@ export function WhiteboardPage() {
       return;
     }
     const source = code;
+    if (!source.trim()) {
+      setCompileState('draft');
+      setBoardError(
+        'Write some D2 code first — there is nothing to compile yet.',
+      );
+      return;
+    }
     compileAbortRef.current?.abort();
     const controller = new AbortController();
     compileAbortRef.current = controller;
     setCompileState('compiling');
     try {
-      const response = await fetch(`${serverUrl}/api/compile`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          source,
-          engine: 'dagre',
-          roomId: ROOM_ID,
-        }),
-        signal: controller.signal,
-      });
-      const payload: unknown = await response.json();
+      const postCompile = async (withRoom: boolean) =>
+        fetch(`${serverUrl}/api/compile`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(
+            withRoom
+              ? { source, engine: 'dagre', roomId: ROOM_ID }
+              : { source, engine: 'dagre' },
+          ),
+          signal: controller.signal,
+        });
+      // Read as text first: error responses are not guaranteed to be JSON
+      // (proxies, gateways, or server crashes can answer plain text/HTML),
+      // and a blind `response.json()` turns those into a cryptic
+      // "Unexpected token ... is not valid JSON" toast.
+      const readPayload = async (res: Response): Promise<unknown> => {
+        const text = await res.text();
+        if (!text.trim()) return null;
+        try {
+          return JSON.parse(text) as unknown;
+        } catch {
+          const snippet = text.trim().slice(0, 160);
+          throw new Error(
+            `D2 compilation failed (${res.status}). The server returned a non-JSON response${snippet ? `: ${snippet}` : '.'}`,
+          );
+        }
+      };
+      let response = await postCompile(true);
+      let payload: unknown = await readPayload(response);
+      if (!response.ok) {
+        const body =
+          payload && typeof payload === 'object'
+            ? (payload as Record<string, unknown>)
+            : null;
+        // The room row may not exist yet (sync auto-creates it on connect),
+        // but `roomId` is only tier gating for Pro engines — retry as plain
+        // COMMUNITY instead of failing the compile.
+        if (response.status === 404 && body?.code === 'ROOM_NOT_FOUND') {
+          response = await postCompile(false);
+          payload = await readPayload(response);
+        }
+      }
       if (!response.ok) {
         const body =
           payload && typeof payload === 'object'
@@ -2764,7 +2802,15 @@ export function WhiteboardPage() {
           body?.code === 'TIER_UPGRADE_REQUIRED'
             ? ' This diagram needs a Pro layout engine or fewer nodes.'
             : '';
-        throw new Error(`${message}${hint}`);
+        const details =
+          body?.code === 'VALIDATION_ERROR' && Array.isArray(body?.issues)
+            ? ` (${(body.issues as Array<Record<string, unknown>>)
+                .map((issue) =>
+                  [issue.path, issue.message].filter(Boolean).join(' '),
+                )
+                .join('; ')})`
+            : '';
+        throw new Error(`${message}${hint}${details}`);
       }
       const diagram = parseCompileResponse(payload);
       if (!diagram) {
@@ -2774,10 +2820,19 @@ export function WhiteboardPage() {
       }
       lastCompiledCodeRef.current = source;
       if (diagram.placeholder) {
-        // No compiler configured: placeholder carries no layout, so there is
-        // nothing to reconcile. Keep the board untouched.
-        setCompileState('compiled');
-        setBoardError(null);
+        // Placeholder carries no layout, so there is nothing to reconcile.
+        // Never report this as a success: the board was left untouched and
+        // the user must know the compiler is not connected.
+        const upstream =
+          payload && typeof payload === 'object'
+            ? (payload as Record<string, unknown>).error
+            : null;
+        setCompileState('draft');
+        setBoardError(
+          typeof upstream === 'string' && upstream
+            ? `Diagram unchanged: ${upstream}`
+            : 'The D2 compiler is not connected, so the board was left unchanged. Start it with `docker compose up d2-compiler` and restart the sync server.',
+        );
         return;
       }
       recordHistory();

@@ -73,6 +73,40 @@ const CompileResponseSchema = z
   })
   .passthrough();
 
+const CompilerErrorSchema = z.object({
+  error: z.string().min(1).max(2000).optional(),
+  code: z.string().max(64).optional(),
+});
+
+/**
+ * Build a client-facing error from a non-2xx compiler response. The Go
+ * compiler answers errors as JSON (`{error, code?}`), and that diagnostic
+ * (e.g. `D2 error: 1:21: ...`) is what the user needs — not a generic
+ * status code. Retryable upstreams (429/5xx) surface as 502.
+ */
+function compilerRequestError(
+  status: number,
+  data: unknown,
+  raw: string,
+): CompileRequestError {
+  const parsed = CompilerErrorSchema.safeParse(data);
+  const detail =
+    parsed.success && parsed.data.error ? parsed.data.error : null;
+  const snippet = raw.trim().slice(0, 300);
+  const message =
+    detail ??
+    (snippet
+      ? `D2 compilation failed (compiler returned ${status}): ${snippet}`
+      : `D2 compilation failed (compiler returned ${status})`);
+  if (status === 429 || status >= 500)
+    return new CompileRequestError(message, 502, "D2_COMPILER_UNAVAILABLE", {
+      status,
+    });
+  const code =
+    parsed.success && parsed.data.code ? parsed.data.code : "D2_COMPILE_FAILED";
+  return new CompileRequestError(message, 400, code, { status });
+}
+
 export function parseEngine(value: unknown): LayoutEngine {
   if (value === undefined) return "dagre";
   if (
@@ -124,16 +158,30 @@ export async function compileD2(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ source: request.source, engine, tier }),
     });
-    if (!response.ok)
-      throw new Error(`D2 compiler returned ${response.status}`);
-    const parsed = CompileResponseSchema.safeParse(await response.json());
+    // Read as text first: upstream proxies/gateways can answer with
+    // non-JSON (or empty) bodies, and `response.json()` would throw a bare
+    // SyntaxError that hides the real status.
+    const raw = await response.text();
+    let data: unknown = null;
+    try {
+      data = raw.trim() ? (JSON.parse(raw) as unknown) : null;
+    } catch {
+      throw new Error(
+        `D2 compiler returned ${response.status} with a non-JSON response`,
+      );
+    }
+    if (!response.ok) throw compilerRequestError(response.status, data, raw);
+    const parsed = CompileResponseSchema.safeParse(data);
     if (!parsed.success)
       throw new Error("D2 compiler returned an invalid response");
     const compiled = parsed.data;
     assertNodeCountAllowed(compiled.nodes.length, tier, nodeLimit);
     return compiled;
   } catch (error) {
-    if (error instanceof TierUpgradeError) throw error;
+    // Client-facing compile failures (tier gating, bad engine, compiler
+    // diagnostics) always propagate so the route can return their
+    // status/code. Only unexpected failures fall back to a placeholder.
+    if (error instanceof CompileRequestError) throw error;
     if (isDevelopment)
       return {
         ...placeholderLayout(engine),

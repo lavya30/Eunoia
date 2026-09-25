@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -48,8 +51,61 @@ export type Config = {
   nodeEnv: "development" | "test" | "production";
 };
 
+/**
+ * Minimal `.env` loader (no dependency). Node/tsx do not auto-load dotenv
+ * files, so bare-metal `bun run dev:sync` (tsx) needs this to pick up
+ * `packages/sync-server/.env`. Real environment variables always win; blank
+ * values are left for the empty-string normalization in `loadConfig`.
+ */
+function loadDotEnv(): void {
+  const candidates = [
+    resolve(process.cwd(), ".env"),
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env"),
+  ];
+  for (const path of candidates) {
+    let text: string;
+    try {
+      if (!existsSync(path)) continue;
+      text = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const body = trimmed.startsWith("export ")
+        ? trimmed.slice("export ".length).trimStart()
+        : trimmed;
+      const eq = body.indexOf("=");
+      if (eq <= 0) continue;
+      const key = body.slice(0, eq).trim();
+      if (!key || process.env[key] !== undefined) continue;
+      let value = body.slice(eq + 1).trim();
+      if (
+        value.length >= 2 &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'")))
+      )
+        value = value.slice(1, -1);
+      process.env[key] = value;
+    }
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = envSchema.parse(env);
+  // Only read dotenv files for the live process environment; explicit env
+  // objects (tests, library use) stay hermetic.
+  if (env === process.env) loadDotEnv();
+  // Treat blank values as unset so that empty assignments in `.env` files
+  // (e.g. `ROOM_TICKET_SECRET=`) behave like missing variables instead of
+  // failing URL / min-length validation.
+  const normalized = Object.fromEntries(
+    Object.entries(env).map(([key, value]) => [
+      key,
+      value === "" ? undefined : value,
+    ]),
+  );
+  const parsed = envSchema.parse(normalized);
   if (parsed.NODE_ENV === "production" && !parsed.DATABASE_URL) {
     throw new Error("DATABASE_URL is required in production");
   }
