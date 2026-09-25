@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ApiError,
   createRoom,
@@ -22,23 +22,32 @@ export function UnlockDialog({
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Guards the unlock round-trip against unmount/room-switch: a late
+  // response for a stale roomId must not store tickets or fire callbacks.
+  const liveRoomRef = useRef(roomId);
+  useEffect(() => {
+    liveRoomRef.current = roomId;
+  }, [roomId]);
 
   const submit = async () => {
     if (busy) return;
+    const attemptRoomId = roomId;
     setBusy(true);
     setError(null);
     try {
-      const result = await unlockRoom(roomId, password || undefined);
+      const result = await unlockRoom(attemptRoomId, password || undefined);
+      if (liveRoomRef.current !== attemptRoomId) return;
       setTicket(result.roomId, result.ticket, result.expiresIn);
       onUnlocked(await getRoom(result.roomId, result.ticket), result.ticket);
     } catch (err) {
+      if (liveRoomRef.current !== attemptRoomId) return;
       setError(
         err instanceof ApiError
           ? err.message
           : 'Could not unlock the room. Try again.',
       );
     } finally {
-      setBusy(false);
+      if (liveRoomRef.current === attemptRoomId) setBusy(false);
     }
   };
 

@@ -3,18 +3,40 @@ import type { Monaco } from '@monaco-editor/react';
 /**
  * Registers the D2 language with Monaco Editor.
  * Includes Monarch tokenizer for syntax highlighting and a custom dark theme.
+ *
+ * Each piece (language, theme, completions) is guarded independently: on a
+ * fresh Monaco instance where one piece already exists (HMR, tests, mocks),
+ * the others must still be defined.
  */
+const registeredProviders = new WeakMap<object, Set<string>>();
+
+function alreadyDone(monaco: Monaco, key: string): boolean {
+  let done = registeredProviders.get(monaco);
+  if (!done) {
+    done = new Set();
+    registeredProviders.set(monaco, done);
+  }
+  if (done.has(key)) return true;
+  done.add(key);
+  return false;
+}
+
 export function registerD2Language(monaco: Monaco) {
-  // Only register once
+  // Only register the language once per Monaco instance.
   if (
-    monaco.languages
+    !alreadyDone(monaco, 'language') &&
+    !monaco.languages
       .getLanguages()
       .some((lang: { id: string }) => lang.id === 'd2')
   ) {
-    return;
+    monaco.languages.register({ id: 'd2' });
   }
 
-  monaco.languages.register({ id: 'd2' });
+  // Hyphenated keys (stroke-width, font-color) complete as a single word
+  // instead of replacing only the fragment after the hyphen.
+  monaco.languages.setLanguageConfiguration('d2', {
+    wordPattern: /(-?\d*\.\d\w*)|([a-zA-Z_][\w\-.]*)|([a-zA-Z_]\w*)/,
+  });
 
   // Monarch tokenizer for D2 syntax
   monaco.languages.setMonarchTokensProvider('d2', {
@@ -210,7 +232,11 @@ export function registerD2Language(monaco: Monaco) {
     },
   });
 
-  // Basic D2 autocompletions
+  // Basic D2 autocompletions (registered once — duplicates would suggest
+  // everything twice).
+  if (alreadyDone(monaco, 'completions')) {
+    return;
+  }
   monaco.languages.registerCompletionItemProvider('d2', {
     provideCompletionItems: (
       model: Parameters<

@@ -23,6 +23,20 @@ export type AuthSession = {
 
 const SESSION_STORAGE_KEY = 'eunoia:auth:v1';
 
+/**
+ * Session storage deliberately uses sessionStorage, not localStorage:
+ * tokens are XSS-readable either way while the page lives, but
+ * sessionStorage dies with the tab instead of persisting indefinitely.
+ */
+function sessionStore(): Storage | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
 function baseUrl(): string {
   const url = resolveSyncHttpUrl();
   if (!url)
@@ -148,7 +162,7 @@ export function saveSession(response: AuthResponse): AuthSession {
     expiresAt: Date.now() + response.expiresIn * 1000,
   };
   try {
-    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    sessionStore()?.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
   } catch {
     // Session persistence is best-effort (private mode, quota).
   }
@@ -156,8 +170,19 @@ export function saveSession(response: AuthResponse): AuthSession {
 }
 
 export function loadSession(): AuthSession | null {
+  let raw: string | null = null;
   try {
-    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    raw = sessionStore()?.getItem(SESSION_STORAGE_KEY) ?? null;
+    // Migrate one generation forward: sessions stored by older versions in
+    // localStorage are honored once, then moved to sessionStorage.
+    if (!raw) {
+      try {
+        raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+        window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      } catch {
+        raw = null;
+      }
+    }
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<AuthSession>;
     if (
@@ -168,23 +193,29 @@ export function loadSession(): AuthSession | null {
       typeof parsed.user.email !== 'string'
     )
       return null;
-    if (typeof parsed.expiresAt === 'number' && parsed.expiresAt <= Date.now()) {
-      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    // Expiry is mandatory: a session without a deadline never authenticates.
+    if (
+      typeof parsed.expiresAt !== 'number' ||
+      parsed.expiresAt <= Date.now()
+    ) {
+      sessionStore()?.removeItem(SESSION_STORAGE_KEY);
       return null;
     }
-    return {
+    const session: AuthSession = {
       token: parsed.token,
       user: {
         id: parsed.user.id,
         email: parsed.user.email,
-        name:
-          typeof parsed.user.name === 'string' ? parsed.user.name : null,
+        name: typeof parsed.user.name === 'string' ? parsed.user.name : null,
       },
-      expiresAt:
-        typeof parsed.expiresAt === 'number'
-          ? parsed.expiresAt
-          : Number.MAX_SAFE_INTEGER,
+      expiresAt: parsed.expiresAt,
     };
+    try {
+      sessionStore()?.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    } catch {
+      // Best-effort.
+    }
+    return session;
   } catch {
     return null;
   }
@@ -192,7 +223,7 @@ export function loadSession(): AuthSession | null {
 
 export function clearSession(): void {
   try {
-    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    sessionStore()?.removeItem(SESSION_STORAGE_KEY);
   } catch {
     // Clearing is best-effort.
   }

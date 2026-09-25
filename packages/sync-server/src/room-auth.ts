@@ -47,35 +47,56 @@ function sign(secret: string, payload: string): Buffer {
 }
 
 /**
- * Stateless room ticket: `v1.<roomB64>.<expiryEpochSec>.<sigB64url>`.
- * Verified without storage; room binding prevents cross-room reuse.
+ * Stateless room ticket: `v1.<roomB64>.<expiryEpochSec>.<passVer>.<sigB64url>`.
+ * Verified without storage; room binding prevents cross-room reuse and the
+ * password version binds the ticket to the current password — rotation or
+ * removal invalidates previously minted tickets. Exactly 5 dot-separated
+ * parts are accepted; anything else is rejected.
  */
 export function issueTicket(
   secret: string,
   roomId: string,
+  passwordVersion: number,
   ttlSec: number,
   nowSec = Math.floor(Date.now() / 1000),
 ): { ticket: string; expiresIn: number } {
   const expiry = nowSec + ttlSec;
-  const payload = `${b64urlEncode(roomId)}.${expiry}`;
+  const payload = `${b64urlEncode(roomId)}.${expiry}.${passwordVersion}`;
   const sig = sign(secret, payload).toString("base64url");
   return { ticket: `v1.${payload}.${sig}`, expiresIn: ttlSec };
 }
 
+/**
+ * Returns the ticket's password version when authentic, unexpired, and
+ * room-bound. Callers compare it against the room's current version.
+ */
 export function verifyTicket(
   secret: string,
   ticket: string,
   roomId: string,
   nowSec = Math.floor(Date.now() / 1000),
-): boolean {
-  const [version, roomB64, expiryRaw, sigB64] = ticket.split(".");
-  if (version !== "v1" || !roomB64 || !expiryRaw || !sigB64) return false;
-  if (b64urlDecode(roomB64) !== roomId) return false;
+): number | null {
+  const parts = ticket.split(".");
+  if (parts.length !== 5) return null;
+  const [version, roomB64, expiryRaw, verRaw, sigB64] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  if (version !== "v1" || !roomB64 || !expiryRaw || !verRaw || !sigB64)
+    return null;
+  if (b64urlDecode(roomB64) !== roomId) return null;
   const expiry = Number(expiryRaw);
-  if (!Number.isInteger(expiry) || expiry <= nowSec) return false;
-  const expected = sign(secret, `${roomB64}.${expiryRaw}`);
+  if (!Number.isInteger(expiry) || expiry <= nowSec) return null;
+  const passVer = Number(verRaw);
+  if (!Number.isInteger(passVer) || passVer < 0) return null;
+  const expected = sign(secret, `${roomB64}.${expiryRaw}.${verRaw}`);
   const actual = Buffer.from(sigB64, "base64url");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected))
+    return null;
+  return passVer;
 }
 
 export type RoomAccess =
@@ -88,20 +109,31 @@ export type RoomAccess =
  * through; locked rooms require a ticket issued by the unlock endpoint.
  * Missing rooms report 'missing' (callers map to 404) so locked rooms are
  * indistinguishable from absent ones without a ticket.
+ *
+ * Both the header and query tickets are tried: callers may carry a user
+ * session in `Authorization` with the room ticket as `?ticket=`, and the
+ * first verifiable, current-version ticket wins.
  */
 export async function authorizeRoom(
   manager: {
     getRoomMetadata(roomId: string): Promise<RoomMetadata | null>;
+    getPasswordVersion(roomId: string): Promise<number | null>;
   },
   roomId: string,
   ticket: string | undefined,
+  queryTicket: string | undefined,
   secret: string,
 ): Promise<RoomAccess> {
   const room = await manager.getRoomMetadata(roomId);
   if (!room) return { status: "missing" };
   if (!room.hasPassword) return { status: "ok", room };
-  if (ticket && verifyTicket(secret, ticket, roomId))
-    return { status: "ok", room };
+  const current = await manager.getPasswordVersion(roomId);
+  if (current === null) return { status: "missing" };
+  for (const candidate of [ticket, queryTicket]) {
+    if (!candidate) continue;
+    if (verifyTicket(secret, candidate, roomId) === current)
+      return { status: "ok", room };
+  }
   return { status: "locked" };
 }
 
@@ -111,8 +143,13 @@ export function extractTicket(
 ): string | undefined {
   const authorization = headers["authorization"];
   if (typeof authorization === "string") {
-    const [scheme, token] = authorization.split(" ");
-    if (scheme?.toLowerCase() === "bearer" && token) return token;
+    const parts = authorization.trim().split(/\s+/);
+    if (
+      parts.length === 2 &&
+      parts[0]?.toLowerCase() === "bearer" &&
+      parts[1]
+    )
+      return parts[1];
   }
   const param = query["ticket"];
   return typeof param === "string" && param ? param : undefined;

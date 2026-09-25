@@ -1008,13 +1008,12 @@ export function WhiteboardPage({
   const [roomStatus, setRoomStatus] = useState<
     'loading' | 'ready' | 'missing' | 'locked' | 'error'
   >(initialRoomId && initialRoomId.startsWith('local-') ? 'ready' : 'loading');
-  // Ingest shared invite tickets (`?ticket=`) before reading the ticket
-  // store. The lazy initializer runs once per mount; ingestion is
-  // idempotent so StrictMode double-invocation is harmless.
-  const [ticket, setTicket] = useState<string | undefined>(() => {
-    if (typeof window === 'undefined') return undefined;
-    ingestTicketDeepLink();
-    return initialRoomId ? getTicket(initialRoomId) : undefined;
+  // Ingest shared invite tickets (`?ticket=`) into the ticket store once
+  // per mount. The store (not React state) is the single source of truth
+  // for tickets — resolvers read it live, so rotation/expiry can never go
+  // stale. Initialization is idempotent, safe under StrictMode remounts.
+  useState(() => {
+    if (typeof window !== 'undefined') ingestTicketDeepLink();
   });
   // Signed-in account, if any. Loaded once per mount; login/logout happen
   // on other routes which remount this page on return.
@@ -1119,6 +1118,12 @@ export function WhiteboardPage({
     canvasViewportRef.current = canvasViewport;
   }, [canvasViewport]);
 
+  const roomIdRef = useRef(roomId);
+
+  useEffect(() => {
+    roomIdRef.current = roomId;
+  }, [roomId]);
+
   useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
@@ -1211,6 +1216,61 @@ export function WhiteboardPage({
     setRedoDepth(futureRef.current.length);
   }, [applySnapshot, snapshot]);
 
+  const pendingRemoteRef = useRef<PersistedBoard | null>(null);
+
+  /**
+   * Merge a validated remote board into local state. During an active
+   * pointer gesture the update is queued and applied on pointer-up so the
+   * canvas is never yanked mid-drag (see flushPendingRemote).
+   */
+  const applyRemoteState = useCallback((clean: PersistedBoard) => {
+    if (interactionRef.current) {
+      pendingRemoteRef.current = clean;
+      return;
+    }
+    // Keep the merge undoable: stash local state first, but only when it
+    // actually differs so idle rooms don't spam the history stacks.
+    const local = boardStateRef.current;
+    if (JSON.stringify(local) !== JSON.stringify(clean)) {
+      // boardStateRef always holds sanitized board states at runtime
+      // (initial React state or validated sync payloads); deep-stashed so
+      // later mutations can't corrupt history.
+      const stash = structuredClone(local) as unknown as BoardSnapshot;
+      historyRef.current = [...historyRef.current, stash].slice(-40);
+      futureRef.current = [];
+      setUndoDepth(historyRef.current.length);
+      setRedoDepth(0);
+    }
+    if (restoreNoticeRef.current) {
+      restoreNoticeRef.current = false;
+      setBoardError(null);
+    }
+    setNodes(clean.nodes);
+    setArrows(clean.arrows);
+    setStrokes(clean.strokes);
+    setCode(clean.code);
+    setPersistenceState('saved');
+  }, []);
+
+  const flushPendingRemote = useCallback(() => {
+    const pending = pendingRemoteRef.current;
+    if (!pending) return;
+    pendingRemoteRef.current = null;
+    applyRemoteState(pending);
+  }, [applyRemoteState]);
+
+  /** Single source of truth for credentials: the stores, never stale state. */
+  const resolveRoomTicket = useCallback(
+    () => (roomId ? getTicket(roomId) : undefined),
+    [roomId],
+  );
+  const resolveUserToken = useCallback(
+    () =>
+      session && session.expiresAt > Date.now() ? session.token : undefined,
+    [session],
+  );
+  const [syncNonce, setSyncNonce] = useState(0);
+
   useEffect(() => {
     if (!canvasRef.current) return;
 
@@ -1231,6 +1291,13 @@ export function WhiteboardPage({
     if (!roomId) return;
     setHasHydrated(false);
     setPersistenceState('loading');
+    // Fresh room, fresh undo: stacks from another room must never leak in.
+    historyRef.current = [];
+    futureRef.current = [];
+    historyRecordedRef.current = false;
+    pendingRemoteRef.current = null;
+    setUndoDepth(0);
+    setRedoDepth(0);
     try {
       const key = storageKeyFor(roomId);
       let raw = window.localStorage.getItem(key);
@@ -1242,7 +1309,8 @@ export function WhiteboardPage({
         const parsed: unknown = JSON.parse(raw);
         const clean = sanitizeBoardState(parsed);
         if (clean) {
-          setNodes(clean.nodes.length > 0 ? clean.nodes : INITIAL_NODES);
+          // Verbatim: an intentionally emptied board must stay empty.
+          setNodes(clean.nodes);
           setArrows(clean.arrows);
           setStrokes(clean.strokes);
           setCode(clean.code);
@@ -1315,7 +1383,7 @@ export function WhiteboardPage({
   useEffect(() => {
     if (initialRoomId) return;
     let cancelled = false;
-    createRoom({ name: 'Untitled board' }, session?.token)
+    createRoom({ name: 'Untitled board' }, resolveUserToken())
       .then((meta) => {
         if (cancelled) return;
         setRoomMeta(meta);
@@ -1340,7 +1408,7 @@ export function WhiteboardPage({
     // Local-only fallback rooms have no server counterpart.
     if (!roomId || roomMeta || roomId.startsWith('local-')) return;
     let cancelled = false;
-    getRoom(roomId, getTicket(roomId) ?? ticket)
+    getRoom(roomId, resolveRoomTicket())
       .then((meta) => {
         if (cancelled) return;
         setRoomMeta(meta);
@@ -1372,7 +1440,7 @@ export function WhiteboardPage({
     const session = createBoardSync({
       roomId,
       serverUrl: resolveSyncServerUrl(),
-      ticket: getTicket(roomId) ?? ticket,
+      ticket: resolveRoomTicket(),
       initialState: boardStateRef.current,
       getInitialState: () => boardStateRef.current,
       onReady: () => setSyncReady(true),
@@ -1390,6 +1458,30 @@ export function WhiteboardPage({
           setBoardError('Board history was restored — resyncing…');
         }
       },
+      onAccessLost: () => {
+        // Credentials are dead (revoked/rotated/deleted room), not a
+        // transient drop. Re-validate over HTTP and land in the right UI.
+        const id = roomId;
+        void getRoom(id)
+          .then(() => {
+            // Open room but sync keeps failing: flaky network or server
+            // restart — recreate the session fresh.
+            setSyncNonce((n) => n + 1);
+          })
+          .catch((error: unknown) => {
+            if (isRoomLocked(error)) {
+              clearTicket(id);
+              setRoomStatus('locked');
+            } else if (isRoomNotFound(error)) {
+              setRoomStatus('missing');
+            } else {
+              setBoardError(
+                'Live sync keeps failing. The board still works locally.',
+              );
+              setSyncNonce((n) => n + 1);
+            }
+          });
+      },
       onState: (state) => {
         const clean = sanitizeBoardState(state);
         if (!clean) {
@@ -1398,31 +1490,7 @@ export function WhiteboardPage({
           );
           return;
         }
-        // Never yank the canvas mid-gesture: the local pointer interaction
-        // wins and its next publish converges the room on the following
-        // remote update.
-        if (interactionRef.current) return;
-        // Keep the merge undoable: stash local state first, but only when it
-        // actually differs so idle rooms don't spam the history stacks.
-        const local = boardStateRef.current;
-        if (JSON.stringify(local) !== JSON.stringify(clean)) {
-          // boardStateRef always holds sanitized board states at runtime
-          // (initial React state or validated sync payloads).
-          const stash = { ...local } as unknown as BoardSnapshot;
-          historyRef.current = [...historyRef.current, stash].slice(-40);
-          futureRef.current = [];
-          setUndoDepth(historyRef.current.length);
-          setRedoDepth(0);
-        }
-        if (restoreNoticeRef.current) {
-          restoreNoticeRef.current = false;
-          setBoardError(null);
-        }
-        setNodes(clean.nodes);
-        setArrows(clean.arrows);
-        setStrokes(clean.strokes);
-        setCode(clean.code);
-        setPersistenceState('saved');
+        applyRemoteState(clean);
       },
     });
     syncRef.current = session;
@@ -1432,7 +1500,14 @@ export function WhiteboardPage({
       session.destroy();
       syncRef.current = null;
     };
-  }, [hasHydrated, roomId, roomStatus, ticket]);
+  }, [
+    applyRemoteState,
+    hasHydrated,
+    roomId,
+    roomStatus,
+    resolveRoomTicket,
+    syncNonce,
+  ]);
 
   useEffect(() => {
     if (!hasHydrated || !syncReady) return;
@@ -2359,6 +2434,7 @@ export function WhiteboardPage({
           ),
         );
         interactionRef.current = null;
+        flushPendingRemote();
         setActiveTool('select');
         historyRecordedRef.current = false;
         if (event.currentTarget.hasPointerCapture(event.pointerId))
@@ -2464,6 +2540,7 @@ export function WhiteboardPage({
           }
         }
         interactionRef.current = null;
+        flushPendingRemote();
         setActiveTool('select');
         historyRecordedRef.current = false;
         if (event.currentTarget.hasPointerCapture(event.pointerId))
@@ -2494,6 +2571,7 @@ export function WhiteboardPage({
       }
 
       interactionRef.current = null;
+      flushPendingRemote();
       setMarquee(null);
       setCreatePreview(null);
       historyRecordedRef.current = false;
@@ -2501,7 +2579,7 @@ export function WhiteboardPage({
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    [canvasViewport],
+    [canvasViewport, flushPendingRemote],
   );
 
   const cancelInteraction = useCallback(() => {
@@ -2528,7 +2606,8 @@ export function WhiteboardPage({
     historyRecordedRef.current = false;
     viewportRectRef.current = null;
     setMarquee(null);
-  }, []);
+    flushPendingRemote();
+  }, [flushPendingRemote]);
 
   const handleCanvasPointerCancel = useCallback(
     (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -2928,7 +3007,7 @@ export function WhiteboardPage({
         return;
       }
       const uploadRoomId = roomId;
-      const uploadTicket = getTicket(uploadRoomId) ?? ticket;
+      const uploadTicket = getTicket(uploadRoomId);
       setBoardError('Uploading image…');
       try {
         const rawHref = await readFileAsDataUrl(file);
@@ -2949,6 +3028,10 @@ export function WhiteboardPage({
           size: bytes.size,
           kind: 'image',
         });
+        // The upload spans several awaits: if the user switched rooms (or
+        // the component unmounted) meanwhile, the node belongs to the room
+        // where the upload started — never the current one.
+        if (roomIdRef.current !== uploadRoomId) return;
         const dimensions = {
           width: width || 400,
           height: height || 300,
@@ -2988,7 +3071,7 @@ export function WhiteboardPage({
         );
       }
     },
-    [camera.x, camera.y, locked, recordHistory, roomId, ticket],
+    [camera.x, camera.y, locked, recordHistory, roomId],
   );
 
   // Stored image URLs can be time-limited presigned links. On load failure,
@@ -3001,7 +3084,7 @@ export function WhiteboardPage({
         return;
       imageRefreshRef.current.add(node.imageId);
       const imageId = node.imageId;
-      void freshImageUrl(roomId, imageId, getTicket(roomId) ?? ticket)
+      void freshImageUrl(roomId, imageId, resolveRoomTicket())
         .then(({ url }) => {
           setNodes((current) =>
             current.map((entry) =>
@@ -3013,7 +3096,7 @@ export function WhiteboardPage({
           // Leave the broken image in place; the user can delete it.
         });
     },
-    [roomId, ticket],
+    [resolveRoomTicket, roomId],
   );
 
   const codeHistoryRef = useRef(0);
@@ -3072,12 +3155,16 @@ export function WhiteboardPage({
             'content-type': 'application/json',
             // Room ticket wins when present (locked rooms reject anything
             // else); otherwise the user token lets PRO accounts compile
-            // without a room or above a room's tier.
-            ...(withRoom && roomId && (getTicket(roomId) ?? ticket)
-              ? { authorization: `Bearer ${getTicket(roomId) ?? ticket}` }
-              : session?.token
-                ? { authorization: `Bearer ${session.token}` }
+            // without a room or above a room's tier. The user token also
+            // rides along as x-user-token so both apply together.
+            ...(withRoom && roomId && resolveRoomTicket()
+              ? { authorization: `Bearer ${resolveRoomTicket()}` }
+              : resolveUserToken()
+                ? { authorization: `Bearer ${resolveUserToken()}` }
                 : {}),
+            ...(resolveUserToken()
+              ? { 'x-user-token': resolveUserToken() as string }
+              : {}),
           },
           body: JSON.stringify(
             withRoom && roomId
@@ -3122,6 +3209,14 @@ export function WhiteboardPage({
           payload && typeof payload === 'object'
             ? (payload as Record<string, unknown>)
             : null;
+        // A dead session must not linger: drop it and point at sign-in.
+        if (response.status === 401 && body?.code === 'INVALID_TOKEN') {
+          clearSession();
+          setSession(null);
+          throw new Error(
+            'Your sign-in expired. Sign in again to use Pro features.',
+          );
+        }
         const message =
           body && typeof body.error === 'string'
             ? body.error
@@ -3192,7 +3287,14 @@ export function WhiteboardPage({
       if (compileAbortRef.current === controller)
         compileAbortRef.current = null;
     }
-  }, [code, engine, recordHistory, roomId, session, ticket]);
+  }, [
+    code,
+    engine,
+    recordHistory,
+    roomId,
+    resolveRoomTicket,
+    resolveUserToken,
+  ]);
 
   // Auto-compile a short pause after the user stops typing, as promised by
   // the footer copy. Skips when the code already matches the last success.
@@ -3308,10 +3410,9 @@ export function WhiteboardPage({
     return (
       <UnlockDialog
         roomId={lockedRoomId}
-        onUnlocked={(meta, nextTicket) => {
-          // Ticket already stored by the dialog; mirror into state so the
-          // sync session reconnects with it immediately.
-          setTicket(nextTicket);
+        onUnlocked={(meta, _nextTicket) => {
+          // Ticket already stored by the dialog; flipping to ready
+          // reconnects the sync session, which reads the store live.
           setRoomMeta(meta);
           setRoomStatus('ready');
         }}
@@ -3514,7 +3615,13 @@ export function WhiteboardPage({
             <a
               className="share-button"
               href={`/login?next=${encodeURIComponent(
-                roomId ? `/board?room=${roomId}` : '/board',
+                roomId
+                  ? `/board?room=${roomId}${
+                      resolveRoomTicket()
+                        ? `&ticket=${resolveRoomTicket()}`
+                        : ''
+                    }`
+                  : '/board',
               )}`}
             >
               Sign in
@@ -3697,10 +3804,7 @@ export function WhiteboardPage({
                       )
                     ) {
                       const doomedRoomId = roomId;
-                      void deleteRoom(
-                        doomedRoomId,
-                        getTicket(doomedRoomId) ?? ticket,
-                      )
+                      void deleteRoom(doomedRoomId, getTicket(doomedRoomId))
                         .then(() => {
                           clearTicket(doomedRoomId);
                           router.push('/board');
@@ -4218,7 +4322,7 @@ export function WhiteboardPage({
               <HistoryPanel
                 key={roomId}
                 roomId={roomId}
-                ticket={getTicket(roomId) ?? ticket}
+                ticket={resolveRoomTicket()}
                 onClose={() => setShowHistory(false)}
               />
             ) : null}
@@ -4865,8 +4969,8 @@ export function WhiteboardPage({
       {showRoomSettings && roomMeta && roomId ? (
         <RoomSettingsDialog
           room={roomMeta}
-          ticket={getTicket(roomId) ?? ticket}
-          userToken={session?.token}
+          ticket={resolveRoomTicket()}
+          userToken={resolveUserToken()}
           onUpdated={(meta) => {
             setRoomMeta(meta);
             setBoardTitle(meta.name);
@@ -4876,7 +4980,7 @@ export function WhiteboardPage({
       ) : null}
       {showCreateRoom ? (
         <CreateRoomDialog
-          userToken={session?.token}
+          userToken={resolveUserToken()}
           onCreated={(meta) => {
             setShowCreateRoom(false);
             router.push(`/board?room=${encodeURIComponent(meta.id)}`);

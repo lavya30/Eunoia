@@ -12,6 +12,8 @@ const IDENTITY_STORAGE_KEY = 'eunoia:identity:v1';
 /** Peers unseen for longer than this are treated as gone (the server does
  *  not prune awareness states on disconnect, so the client must). */
 const PEER_STALE_AFTER_MS = 30_000;
+/** Abnormal closes without a single successful open before giving up. */
+const MAX_NEVER_OPENED_ATTEMPTS = 3;
 
 export type SyncBoardState = {
   nodes: unknown[];
@@ -49,6 +51,13 @@ type SyncSessionOptions = {
   onPeers?: (peers: PeerInfo[]) => void;
   /** Fired with the WebSocket close code whenever the socket closes. */
   onClose?: (code: number) => void;
+  /**
+   * Fired when the socket never opens after repeated abnormal closes —
+   * almost always missing/revoked credentials or a deleted room rather
+   * than a transient drop. The session stops retrying; the host should
+   * re-validate access over HTTP and recreate the session if appropriate.
+   */
+  onAccessLost?: () => void;
 };
 
 type SyncSession = {
@@ -236,6 +245,7 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
   const {
     initialState,
     getInitialState,
+    onAccessLost,
     onClose,
     onError,
     onPeers,
@@ -274,6 +284,7 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
   let initialStateTimer: number | null = null;
   let destroyed = false;
   let attempts = 0;
+  let opened = false;
 
   const send = (message: Uint8Array) => {
     if (socket?.readyState === WebSocket.OPEN) socket.send(message);
@@ -376,6 +387,7 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
 
     socket.onopen = () => {
       attempts = 0;
+      opened = true;
       onStatus('connected');
       send(encodeSyncStep1(doc));
       // Announce ourselves so peers render us without waiting for the
@@ -424,6 +436,15 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
       onClose?.(event.code);
       if (destroyed) return;
       attempts += 1;
+      // HTTP upgrade rejections (401 locked / 404 deleted) surface as
+      // abnormal closes with no usable code in browsers. Retrying the same
+      // credentials forever just spams the server: after repeated failures
+      // without a single open, stop and let the host re-validate access.
+      if (!opened && attempts >= MAX_NEVER_OPENED_ATTEMPTS) {
+        onStatus('error');
+        onAccessLost?.();
+        return;
+      }
       onStatus('reconnecting');
       const delay = Math.min(10_000, 500 * 2 ** Math.min(attempts - 1, 4));
       retryTimer = window.setTimeout(connect, delay);

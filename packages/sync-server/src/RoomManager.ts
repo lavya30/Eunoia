@@ -15,6 +15,8 @@ import { SnapshotWorker } from "./SnapshotWorker.js";
 export class RoomManager {
   private readonly rooms = new Map<string, Room>();
   private readonly loading = new Map<string, Promise<Room>>();
+  private readonly disposePromises = new Map<string, Promise<void>>();
+  private closing = false;
   private readonly idleTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
@@ -27,11 +29,16 @@ export class RoomManager {
   ) {}
 
   async getOrCreate(roomId: string): Promise<Room> {
+    if (this.closing) throw new Error("Server is shutting down");
     const existing = this.rooms.get(roomId);
     if (existing) {
       this.cancelIdle(roomId);
       return existing;
     }
+    // A dispose may be flushing this room's final snapshot; wait for it so
+    // we don't fork a second live Room with a stale doc.
+    const disposing = this.disposePromises.get(roomId);
+    if (disposing) await disposing;
     const loading = this.loading.get(roomId);
     if (loading) return loading;
     const promise = this.loadRoom(roomId);
@@ -88,6 +95,10 @@ export class RoomManager {
     return verifyPassword(password, hash);
   }
 
+  async getPasswordVersion(roomId: string): Promise<number | null> {
+    return this.store.getPasswordVersion(roomId);
+  }
+
   async listRoomSnapshots(
     roomId: string,
     options?: SnapshotListOptions,
@@ -127,7 +138,14 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return;
     this.rooms.delete(roomId);
-    await room.dispose();
+    const disposing = room.dispose();
+    this.disposePromises.set(roomId, disposing);
+    try {
+      await disposing;
+    } finally {
+      if (this.disposePromises.get(roomId) === disposing)
+        this.disposePromises.delete(roomId);
+    }
   }
 
   async deleteRoom(roomId: string): Promise<boolean> {
@@ -139,6 +157,7 @@ export class RoomManager {
   }
 
   async shutdown(): Promise<void> {
+    this.closing = true;
     for (const roomId of [...this.rooms.keys()]) await this.remove(roomId);
     await this.telemetry.close();
     await this.store.close?.();

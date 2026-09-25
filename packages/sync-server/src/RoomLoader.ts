@@ -71,6 +71,8 @@ export interface SnapshotStore {
   updateRoom(roomId: string, updates: RoomUpdate): Promise<RoomMetadata | null>;
   getRoom(roomId: string): Promise<RoomMetadata | null>;
   getPasswordHash(roomId: string): Promise<string | null>;
+  /** Password rotation counter; null when the room does not exist. */
+  getPasswordVersion(roomId: string): Promise<number | null>;
   deleteRoom?(roomId: string): Promise<void>;
   close?(): Promise<void>;
 }
@@ -90,6 +92,7 @@ export type RoomUpdate = {
 export class MemorySnapshotStore implements SnapshotStore {
   readonly rooms = new Map<string, RoomMetadata>();
   private readonly passwordHashes = new Map<string, string>();
+  private readonly passwordVersions = new Map<string, number>();
   private readonly history = new Map<string, StoredSnapshot[]>();
 
   constructor(
@@ -171,15 +174,24 @@ export class MemorySnapshotStore implements SnapshotStore {
     };
     this.rooms.set(roomId, next);
     if (updates.passwordHash !== undefined) {
-      if (updates.passwordHash === null)
+      if (updates.passwordHash === null) {
         this.passwordHashes.delete(roomId);
-      else this.passwordHashes.set(roomId, updates.passwordHash);
+      } else this.passwordHashes.set(roomId, updates.passwordHash);
+      // Every rotation (set or clear) invalidates previously minted tickets.
+      this.passwordVersions.set(
+        roomId,
+        (this.passwordVersions.get(roomId) ?? 0) + 1,
+      );
     }
     return next;
   }
-
   async getPasswordHash(roomId: string): Promise<string | null> {
     return this.passwordHashes.get(roomId) ?? null;
+  }
+
+  async getPasswordVersion(roomId: string): Promise<number | null> {
+    if (!this.rooms.has(roomId)) return null;
+    return this.passwordVersions.get(roomId) ?? 0;
   }
 
   async deleteRoom(roomId: string): Promise<void> {
@@ -272,7 +284,10 @@ export class PrismaSnapshotStore implements SnapshotStore {
     metadata: RoomMetadata,
     passwordHash?: string,
   ): Promise<void> {
-    // Never clobber an existing password on re-ensure.
+    // Never clobber existing metadata on re-ensure: cold loads call this
+    // with defaults, which must not reset a room's name/owner/tier.
+    // (Password is intentionally left alone here too — rotation goes
+    // through updateRoom.)
     await this.prisma.room.upsert({
       where: { id: metadata.id },
       create: {
@@ -282,11 +297,7 @@ export class PrismaSnapshotStore implements SnapshotStore {
         tier: metadata.tier,
         passwordHash,
       },
-      update: {
-        name: metadata.name,
-        ownerId: metadata.ownerId,
-        tier: metadata.tier,
-      },
+      update: {},
     });
   }
 
@@ -321,10 +332,12 @@ export class PrismaSnapshotStore implements SnapshotStore {
         where: { id: roomId },
         data: {
           ...(updates.name !== undefined ? { name: updates.name } : {}),
-          ...(updates.ownerId !== undefined ? { ownerId: updates.ownerId } : {}),
+          ...(updates.ownerId !== undefined
+            ? { ownerId: updates.ownerId }
+            : {}),
           ...(updates.tier !== undefined ? { tier: updates.tier } : {}),
           ...(updates.passwordHash !== undefined
-            ? { passwordHash: updates.passwordHash }
+            ? { passwordHash: updates.passwordHash, passwordVersion: { increment: 1 } }
             : {}),
         },
         select: {
@@ -363,6 +376,14 @@ export class PrismaSnapshotStore implements SnapshotStore {
     return room?.passwordHash ?? null;
   }
 
+  async getPasswordVersion(roomId: string): Promise<number | null> {
+    const room = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: { passwordVersion: true },
+    });
+    return room?.passwordVersion ?? null;
+  }
+
   async deleteRoom(roomId: string): Promise<void> {
     await this.prisma.room.delete({ where: { id: roomId } });
   }
@@ -395,8 +416,17 @@ export async function loadRoomDoc(
   store: SnapshotStore,
 ): Promise<Y.Doc> {
   const doc = new Y.Doc();
-  const snapshot = await store.getLatestSnapshot(roomId);
-  if (snapshot)
-    Y.applyUpdate(doc, decompressSync(snapshot.data), "room-loader");
+  // Newest-first with fallback: a corrupt latest snapshot must not brick
+  // the room — older snapshots still apply cleanly on top of each other
+  // because every snapshot is a full state update.
+  const snapshots = await store.listSnapshots(roomId, { limit: 10 });
+  for (const snapshot of snapshots) {
+    try {
+      Y.applyUpdate(doc, decompressSync(snapshot.data), "room-loader");
+      return doc;
+    } catch {
+      continue;
+    }
+  }
   return doc;
 }

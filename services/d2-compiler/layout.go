@@ -86,7 +86,7 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 	layout, ok := supportedLayouts()[engine]
 	if !ok {
 		writeError(w, http.StatusBadRequest, "INVALID_ENGINE",
-			fmt.Sprintf("Unknown layout engine: %q (supported: dagre, elk, tala)", req.Engine))
+			fmt.Sprintf("Unknown layout engine: %q (supported: dagre, elk, tala)", truncateEngine(req.Engine)))
 		return
 	}
 	if strings.TrimSpace(req.Source) == "" {
@@ -119,7 +119,15 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 		// No RouterResolver: d2lib falls back to the default edge router.
 	}, nil)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "", "D2 error: "+firstLine(err.Error()))
+		// Timeouts/cancellation are server-side failures, not client
+		// errors; anything else is a D2 diagnostic, truncated to fit the
+		// sync server's error schema.
+		if ctx.Err() != nil {
+			writeError(w, http.StatusServiceUnavailable, "D2_COMPILER_UNAVAILABLE",
+				"D2 compilation timed out, retry shortly")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "", "D2 error: "+truncateError(firstLine(err.Error())))
 		return
 	}
 
@@ -195,4 +203,22 @@ func firstLine(message string) string {
 		return strings.TrimSpace(message[:index])
 	}
 	return strings.TrimSpace(message)
+}
+
+// truncateError caps reflected diagnostics to the sync server's error
+// budget; truncateEngine does the same for echoed engine names.
+func truncateError(message string) string {
+	const maxErrorChars = 2000
+	if len(message) > maxErrorChars {
+		return message[:maxErrorChars]
+	}
+	return message
+}
+
+func truncateEngine(engine string) string {
+	const maxEngineChars = 64
+	if len(engine) > maxEngineChars {
+		return engine[:maxEngineChars]
+	}
+	return engine
 }

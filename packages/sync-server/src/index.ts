@@ -19,7 +19,7 @@ import {
   type SnapshotStore,
 } from "./RoomLoader.js";
 import { RoomManager } from "./RoomManager.js";
-import { authorizeRoom } from "./room-auth.js";
+import { authorizeRoom, extractTicket } from "./room-auth.js";
 import { MemoryUserStore, PrismaUserStore, type UserStore } from "./users.js";
 import { WebSocketHandler } from "./WebSocketHandler.js";
 
@@ -37,6 +37,17 @@ export function createSyncServer(
   imageDeps?: Partial<ImageDeps>,
   userStore?: UserStore,
 ): SyncServer {
+  if (
+    config.databaseUrl !== undefined &&
+    !config.databaseUrl.startsWith("postgres")
+  ) {
+    // Anything else (typos, sqlite:/file: URLs the schema doesn't support)
+    // must fail loudly — silently running the in-memory store would lose
+    // every room on restart.
+    throw new Error(
+      "Unsupported DATABASE_URL: only postgresql:// URLs are supported (or leave it unset for in-memory development mode).",
+    );
+  }
   const prisma = config.databaseUrl?.startsWith("postgres")
     ? new PrismaClient({ datasources: { db: { url: config.databaseUrl } } })
     : undefined;
@@ -99,11 +110,22 @@ export function createSyncServer(
       return;
     }
     const url = new URL(req.url ?? "/", "http://localhost");
-    const ticket = url.searchParams.get("ticket") ?? undefined;
-    void authorizeRoom(manager, roomId, ticket, ticketSecret)
+    const queryTicket = url.searchParams.get("ticket") ?? undefined;
+    const ticket = extractTicket(
+      req.headers as Record<string, string | undefined>,
+      { ticket: queryTicket },
+    );
+    void authorizeRoom(manager, roomId, ticket, queryTicket, ticketSecret)
       .then((access) => {
         if (access.status === "locked") {
           socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        if (access.status === "missing") {
+          // Unlike HTTP room creation, the socket never auto-creates rooms:
+          // IDs bypass CreateRoomSchema validation here.
+          socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
           socket.destroy();
           return;
         }

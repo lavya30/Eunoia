@@ -6,6 +6,7 @@ import {
   updateRoom,
   type RoomMetadata,
 } from '@/lib/whiteboard/rooms-api';
+import { clearTicket } from '@/lib/whiteboard/tickets';
 
 export function RoomSettingsDialog({
   room,
@@ -39,6 +40,7 @@ export function RoomSettingsDialog({
     setBusy(true);
     setError(null);
     try {
+      const passwordChanged = clearPassword || password.length > 0;
       onUpdated(
         await updateRoom(
           room.id,
@@ -54,6 +56,10 @@ export function RoomSettingsDialog({
           userToken,
         ),
       );
+      // Rotation invalidates every minted ticket server-side, including the
+      // one in use: drop it so the next sync round trips the unlock dialog
+      // instead of 401-looping.
+      if (passwordChanged) clearTicket(room.id);
       onClose();
     } catch (err) {
       setError(

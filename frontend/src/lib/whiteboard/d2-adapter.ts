@@ -47,7 +47,9 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function sanitizeKey(value: unknown): string | null {
-  const raw = asString(value).trim().slice(0, 180);
+  // Capped so `d2:<key>` node ids survive the 120-char board sanitizer
+  // after reload (prefix + margin).
+  const raw = asString(value).trim().slice(0, 100);
   if (!raw) return null;
   const clean = raw.replace(/[^a-zA-Z0-9 _\-/.]/g, '-');
   return clean || null;
@@ -119,14 +121,14 @@ function readStyle(record: Record<string, unknown>): {
       : null;
   const fillRaw = asString(record.fill ?? style?.fill ?? style?.['fill-color']);
   const strokeRaw = asString(record.stroke ?? style?.stroke);
-  const strokeWidthRaw = asFinite(record.strokeWidth ?? style?.['stroke-width']);
+  const strokeWidthRaw = asFinite(
+    record.strokeWidth ?? style?.['stroke-width'],
+  );
   return {
     fill: fillRaw ? fillRaw.slice(0, 32) : undefined,
     stroke: strokeRaw ? strokeRaw.slice(0, 32) : undefined,
     strokeWidth:
-      strokeWidthRaw === null
-        ? undefined
-        : clamp(strokeWidthRaw, 0.5, 24),
+      strokeWidthRaw === null ? undefined : clamp(strokeWidthRaw, 0.5, 24),
   };
 }
 
@@ -221,10 +223,7 @@ export function parseCompileResponse(payload: unknown): D2ParsedDiagram | null {
   return { nodes, edges, placeholder, engine };
 }
 
-export type D2AnchorResolver = (
-  node: BoardNode,
-  targetPoint: Point,
-) => Point;
+export type D2AnchorResolver = (node: BoardNode, targetPoint: Point) => Point;
 
 export type D2CenterResolver = (node: BoardNode) => Point;
 
@@ -262,7 +261,9 @@ export function reconcileDiagram(
       height: adapted.height,
       tone: adapted.tone,
       shape: adapted.shape,
-      fill: adapted.fill,
+      // Compiler output wins when present, but a recompile that omits a
+      // field must not wipe a manual customization.
+      fill: adapted.fill ?? node.fill,
       stroke: adapted.stroke ?? node.stroke,
       strokeWidth: adapted.strokeWidth ?? node.strokeWidth,
     };
@@ -310,18 +311,29 @@ export function reconcileDiagram(
     }
     const adapted = adaptedEdgeById.get(arrow.id);
     if (!adapted) continue; // Removed from D2 source — delete.
-    const rebound = bindEdge(adapted, nodeById, nodeIdByKey, anchorOf, centerOf);
-    nextArrows.push(
-      rebound
-        ? { ...arrow, ...rebound }
-        : { ...arrow, color: adapted.color },
+    const rebound = bindEdge(
+      adapted,
+      nodeById,
+      nodeIdByKey,
+      anchorOf,
+      centerOf,
     );
+    // A dangling edge (endpoint deleted) is dropped like a deleted node —
+    // keeping stale geometry would leave an unselectable ghost.
+    if (!rebound) continue;
+    nextArrows.push({ ...arrow, ...rebound });
   }
 
   for (const adapted of diagram.edges) {
     const id = `${D2_EDGE_ID_PREFIX}${adapted.key}`;
     if (nextArrows.some((arrow) => arrow.id === id)) continue;
-    const rebound = bindEdge(adapted, nodeById, nodeIdByKey, anchorOf, centerOf);
+    const rebound = bindEdge(
+      adapted,
+      nodeById,
+      nodeIdByKey,
+      anchorOf,
+      centerOf,
+    );
     if (!rebound) continue; // Endpoint missing — skip dangling edges.
     nextArrows.push({ id, color: adapted.color, ...rebound });
   }
@@ -335,7 +347,12 @@ function bindEdge(
   nodeIdByKey: Map<string, string>,
   anchorOf: D2AnchorResolver,
   centerOf: D2CenterResolver,
-): { start: Point; end: Point; startNodeId?: string; endNodeId?: string } | null {
+): {
+  start: Point;
+  end: Point;
+  startNodeId?: string;
+  endNodeId?: string;
+} | null {
   const startId = nodeIdByKey.get(adapted.fromKey);
   const endId = nodeIdByKey.get(adapted.toKey);
   const startNode = startId ? nodeById.get(startId) : undefined;

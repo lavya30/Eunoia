@@ -23,6 +23,13 @@ export class Room {
   awareness: awarenessProtocol.Awareness;
   private _doc: Y.Doc;
   private readonly clients = new Map<string, RoomClient>();
+  /**
+   * Increments on every snapshot restore. Messages from sockets that were
+   * dropped by a restore carry the old generation and are ignored, so
+   * pre-restore writes can't leak back into the restored doc.
+   */
+  private generation = 0;
+  private readonly clientGenerations = new Map<string, number>();
   /** Awareness clientIDs last announced by each socket. Lets disconnects
    *  prune presence instead of leaving ghosts behind. */
   private readonly awarenessOwners = new Map<string, Set<number>>();
@@ -60,6 +67,17 @@ export class Room {
       this.broadcastSyncUpdate(update, origin as RoomClient);
   };
 
+  /**
+   * True when the client belongs to the current doc generation. Messages
+   * from sockets dropped by a restore (or from unknown senders) are ignored.
+   */
+  private isLiveClient(value: unknown): value is RoomClient {
+    return (
+      this.isClient(value) &&
+      this.clientGenerations.get(value.id) === this.generation
+    );
+  }
+
   private readonly handleAwarenessUpdate = (
     {
       added,
@@ -70,6 +88,7 @@ export class Room {
   ): void => {
     const changed = added.concat(updated, removed);
     if (!changed.length || origin === "redis") return;
+    if (origin !== "server-disconnect" && !this.isLiveClient(origin)) return;
     if (this.isClient(origin)) {
       let owned = this.awarenessOwners.get(origin.id);
       if (!owned) {
@@ -95,25 +114,36 @@ export class Room {
   };
 
   /**
-   * Roll the live document back to a historical snapshot. The pre-restore
-   * state is flushed first so it stays recoverable from history, then
-   * connected peers are dropped — they hold newer updates that CRDT merge
-   * would otherwise resurrect. Peers reconnect and resync from scratch.
+   * Roll the live document back to one of its snapshots. The snapshot is
+   * validated into a fresh doc BEFORE live state is touched, so corrupt
+   * data throws without bricking the room. The pre-restore state is flushed
+   * first so it stays recoverable from history, then connected peers are
+   * dropped — they hold newer updates that CRDT merge would otherwise
+   * resurrect. Peers reconnect and resync from scratch.
    */
   async restoreSnapshot(snapshot: StoredSnapshot): Promise<void> {
+    const doc = new Yjs.Doc();
+    try {
+      Yjs.applyUpdate(doc, decompressSync(snapshot.data), "snapshot-restore");
+    } catch {
+      doc.destroy();
+      throw new Error("Snapshot data is corrupt and cannot be restored");
+    }
     await this.snapshotWorker.forceFlush(this._doc);
     const oldDoc = this._doc;
     oldDoc.off("update", this.handleDocUpdate);
     this.awareness.off("update", this.handleAwarenessUpdate);
     this.awareness.destroy();
-
-    const doc = new Yjs.Doc();
-    Yjs.applyUpdate(doc, decompressSync(snapshot.data), "snapshot-restore");
     this._doc = doc;
     this.awareness = new awarenessProtocol.Awareness(doc);
     this.attach();
     oldDoc.destroy();
     this.awarenessOwners.clear();
+    this.snapshotWorker.reset();
+    // Bump the generation before dropping sockets: any straggler message
+    // from a cleared client is ignored from here on.
+    this.generation += 1;
+    this.clientGenerations.clear();
     this.snapshotWorker.schedule(doc);
 
     for (const client of this.clients.values())
@@ -127,6 +157,7 @@ export class Room {
 
   addClient(client: RoomClient): void {
     this.clients.set(client.id, client);
+    this.clientGenerations.set(client.id, this.generation);
     client.send(this.createSyncStep1());
     const states = [...this.awareness.getStates().keys()];
     if (states.length)
@@ -139,6 +170,7 @@ export class Room {
 
   removeClient(clientId: string): void {
     this.clients.delete(clientId);
+    this.clientGenerations.delete(clientId);
     const owned = this.awarenessOwners.get(clientId);
     if (owned && owned.size > 0) {
       this.awarenessOwners.delete(clientId);
@@ -153,6 +185,7 @@ export class Room {
   }
 
   handleBinaryMessage(data: Uint8Array, client: RoomClient): void {
+    if (!this.isLiveClient(client)) return;
     const decoder = decoding.createDecoder(data);
     const messageType = decoding.readVarUint(decoder);
     if (messageType === WS_MESSAGE_SYNC) {
@@ -173,6 +206,7 @@ export class Room {
   }
 
   handleCursor(cursor: CursorTelemetry, source: RoomClient): void {
+    if (!this.isLiveClient(source)) return;
     this.broadcastCursor(cursor, source);
     void this.telemetry?.publish(this.id, cursor);
   }

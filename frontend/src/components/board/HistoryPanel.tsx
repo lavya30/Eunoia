@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ApiError,
   listSnapshots,
@@ -36,6 +36,7 @@ export function HistoryPanel({
   // `null` doubles as the loading state so no effect-time setState is
   // needed; the parent keys this panel by room for a fresh mount.
   const [snapshots, setSnapshots] = useState<SnapshotMeta[] | null>(null);
+  const seqRef = useRef(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [restoringId, setRestoringId] = useState<string | null>(null);
@@ -43,15 +44,28 @@ export function HistoryPanel({
 
   const load = useCallback(
     async (before?: string) => {
+      const seq = (seqRef.current += 1);
       setError(null);
       try {
         const page = await listSnapshots(roomId, ticket, {
           limit: PAGE_SIZE,
           before,
         });
-        setSnapshots((prev) => (before ? [...(prev ?? []), ...page] : page));
+        // Out-of-order resolutions (loadMore vs restore-refresh) must not
+        // clobber newer lists; time cursors can overlap, so dedupe by id.
+        if (seqRef.current !== seq) return;
+        setSnapshots((prev) => {
+          const merged = before ? [...(prev ?? []), ...page] : page;
+          const seen = new Set<string>();
+          return merged.filter((entry) => {
+            if (seen.has(entry.id)) return false;
+            seen.add(entry.id);
+            return true;
+          });
+        });
         setHasMore(page.length === PAGE_SIZE);
       } catch (err) {
+        if (seqRef.current !== seq) return;
         setError(
           err instanceof ApiError ? err.message : 'Could not load history.',
         );

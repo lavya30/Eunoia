@@ -17,18 +17,18 @@ elk, tala — all bundled in-process). The sync server forwards
 
 ## Configuration
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `PORT` | `9400` | Listen port |
-| `MAX_CONCURRENT_COMPILES` | `4` | In-flight compile cap (excess → 503) |
-| `COMPILE_TIMEOUT_SEC` | `15` | Per-compile deadline |
-| `MAX_SOURCE_BYTES` | `512000` | Max D2 source size |
+| Variable                  | Default  | Purpose                              |
+| ------------------------- | -------- | ------------------------------------ |
+| `PORT`                    | `9400`   | Listen port                          |
+| `MAX_CONCURRENT_COMPILES` | `4`      | In-flight compile cap (excess → 503) |
+| `COMPILE_TIMEOUT_SEC`     | `15`     | Per-compile deadline                 |
+| `MAX_SOURCE_BYTES`        | `512000` | Max D2 source size                   |
 
 ## Run
 
 ```sh
 # locally (needs Go 1.24+)
-go run . 
+go run .
 
 # docker
 docker build -t eunoia/d2-compiler ./services/d2-compiler

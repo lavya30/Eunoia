@@ -1,4 +1,11 @@
+import type { Metadata } from 'next';
 import { WhiteboardPage } from '@/components/board/WhiteboardPage';
+
+export const metadata: Metadata = {
+  title: 'Board | Eunoia',
+  description:
+    'Collaborative architecture whiteboard with D2 code-to-diagram compilation.',
+};
 
 export default async function BoardRoute({
   searchParams,
@@ -10,10 +17,15 @@ export default async function BoardRoute({
     typeof params.room === 'string' && params.room.trim()
       ? params.room.trim()
       : null;
-  // Key by room so switching rooms fully remounts with fresh state.
+  const ticket =
+    typeof params.ticket === 'string' && params.ticket.trim()
+      ? params.ticket.trim()
+      : null;
+  // Key by room AND ticket so invite-link rotation remounts with the fresh
+  // credential instead of holding the old room's session.
   return (
     <WhiteboardPage
-      key={initialRoomId ?? 'new'}
+      key={initialRoomId ? `${initialRoomId}::${ticket ?? ''}` : 'new'}
       initialRoomId={initialRoomId}
     />
   );

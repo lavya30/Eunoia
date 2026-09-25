@@ -223,16 +223,35 @@ export class S3R2Client implements R2Client {
         new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
       );
       return { contentType: out.ContentType, size: out.ContentLength };
-    } catch {
-      return null;
+    } catch (error) {
+      // Only absence maps to "not found" — credential, network, and outage
+      // failures must surface as 502s, not phantom 404s that clients retry.
+      if (isR2NotFound(error)) return null;
+      throw error;
     }
   }
 
   async delete(key: string): Promise<void> {
-    await this.client
-      .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
-      .catch(() => undefined);
+    await this.client.send(
+      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
   }
+}
+
+/** True for object-absence failures (as opposed to credential/network errors). */
+export function isR2NotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as {
+    name?: unknown;
+    Code?: unknown;
+    $metadata?: { httpStatusCode?: unknown };
+  };
+  return (
+    candidate.name === "NotFound" ||
+    candidate.name === "NoSuchKey" ||
+    candidate.Code === "NoSuchKey" ||
+    candidate.$metadata?.httpStatusCode === 404
+  );
 }
 
 /** In-memory fake for tests and local dev without R2 credentials. */

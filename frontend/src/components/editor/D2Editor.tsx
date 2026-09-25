@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import { registerD2Language } from './d2Language';
 
@@ -22,6 +22,18 @@ export const D2Editor: React.FC<D2EditorProps> = ({
   onChange,
   readOnly = false,
 }) => {
+  const [failed, setFailed] = useState(false);
+  const mountedRef = useRef(false);
+
+  // If the Monaco CDN never delivers, the spinner would show forever:
+  // degrade to an error with a retry after a grace period.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (!mountedRef.current) setFailed(true);
+    }, 15000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const handleBeforeMount = useCallback((monaco: Monaco) => {
     registerD2Language(monaco);
   }, []);
@@ -33,6 +45,50 @@ export const D2Editor: React.FC<D2EditorProps> = ({
     [onChange],
   );
 
+  if (failed) {
+    return (
+      <div
+        style={{
+          width: '100%',
+          height: '100%',
+          backgroundColor: '#0D0D0D',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          color: '#E4E4E7',
+          fontSize: 13,
+          fontFamily: "'Inter', sans-serif",
+          padding: 24,
+          textAlign: 'center',
+        }}
+        role="alert"
+      >
+        <span>The code editor failed to load.</span>
+        <button
+          type="button"
+          onClick={() => {
+            setFailed(false);
+            window.location.reload();
+          }}
+          style={{
+            border: '1px solid #52525B',
+            background: 'transparent',
+            color: 'inherit',
+            borderRadius: 8,
+            padding: '6px 14px',
+            font: 'inherit',
+            cursor: 'pointer',
+          }}
+        >
+          Reload
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
@@ -42,7 +98,7 @@ export const D2Editor: React.FC<D2EditorProps> = ({
         overflow: 'hidden',
       }}
     >
-      {/* Loading spinner shown while Monaco WASM loads */}
+      {/* Loading spinner shown while Monaco loads */}
       <Editor
         height="100%"
         defaultLanguage="d2"
@@ -51,6 +107,17 @@ export const D2Editor: React.FC<D2EditorProps> = ({
         value={value}
         onChange={handleChange}
         beforeMount={handleBeforeMount}
+        onMount={(_, monaco) => {
+          mountedRef.current = true;
+          // beforeMount should have registered everything, but if the
+          // theme is missing (CDN hiccup, HMR), retry registration instead
+          // of rendering an unthemed editor.
+          try {
+            registerD2Language(monaco);
+          } catch {
+            setFailed(true);
+          }
+        }}
         loading={
           <div
             style={{

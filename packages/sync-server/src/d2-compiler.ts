@@ -90,8 +90,7 @@ function compilerRequestError(
   raw: string,
 ): CompileRequestError {
   const parsed = CompilerErrorSchema.safeParse(data);
-  const detail =
-    parsed.success && parsed.data.error ? parsed.data.error : null;
+  const detail = parsed.success && parsed.data.error ? parsed.data.error : null;
   const snippet = raw.trim().slice(0, 300);
   const message =
     detail ??

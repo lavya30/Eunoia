@@ -35,6 +35,8 @@ describe("WebSocket Yjs sync", () => {
     const serverAddress = app.server.address();
     if (!serverAddress || typeof serverAddress === "string")
       throw new Error("Server did not bind");
+    // The sync socket no longer auto-creates rooms: they must exist first.
+    await app.manager.createRoom({ id: "echo-room", name: "Echo" });
     address = `ws://127.0.0.1:${serverAddress.port}/sync/echo-room`;
   });
 

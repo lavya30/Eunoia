@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { RawData } from "ws";
+import { WebSocket } from "ws";
 import { CursorTelemetrySchema } from "./api/schemas.js";
 import type { RoomManager } from "./RoomManager.js";
 import type { RoomClient } from "./types.js";
@@ -9,6 +10,12 @@ export class WebSocketHandler {
 
   async handle(socket: RoomClient["socket"], roomId: string): Promise<void> {
     const room = await this.manager.getOrCreate(roomId);
+    // The socket may have died while the room was loading: never register
+    // ghosts that pin the room and defeat idle eviction.
+    if (socket.readyState !== WebSocket.OPEN) {
+      this.manager.release(roomId);
+      return;
+    }
     const client: RoomClient = {
       id: randomUUID(),
       socket,

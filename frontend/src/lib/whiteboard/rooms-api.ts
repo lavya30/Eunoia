@@ -121,6 +121,9 @@ async function request<T>(
           : options.userToken
             ? { authorization: `Bearer ${options.userToken}` }
             : {}),
+        // Side channel so locked-room calls can carry a room ticket in
+        // Authorization and a user token together.
+        ...(options.userToken ? { 'x-user-token': options.userToken } : {}),
       },
       body:
         options.body !== undefined ? JSON.stringify(options.body) : undefined,

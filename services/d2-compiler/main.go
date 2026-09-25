@@ -32,7 +32,9 @@ const (
 	defaultMaxConcurrent   = 4
 	defaultTimeoutSec      = 15
 	defaultMaxSourceBytes  = 512_000
-	shutdownDrainTimeout   = 10 * time.Second
+	// Drain must exceed the per-compile timeout or Shutdown aborts
+	// in-flight layouts mid-response.
+	shutdownDrainTimeout   = 30 * time.Second
 	healthcheckCacheHeader = "no-store"
 )
 
@@ -82,6 +84,10 @@ func main() {
 		Addr:              "0.0.0.0:" + port,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		// Writes must outlive the slowest allowed compile.
+		WriteTimeout: time.Duration(timeoutSec)*time.Second + 10*time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	go func() {

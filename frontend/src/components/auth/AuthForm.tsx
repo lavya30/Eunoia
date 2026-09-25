@@ -32,19 +32,22 @@ function sanitizeNext(value: string | null): string {
   return value;
 }
 
-function messageFor(error: unknown, mode: AuthMode): string | null {
+function messageFor(error: unknown, fields: FieldErrors): string | null {
   if (!(error instanceof ApiError)) return 'Something went wrong. Try again.';
   if (error.status === 0) return error.message;
   if (error.code === 'USER_EXISTS')
     return 'That email is already registered. Sign in instead.';
   if (error.code === 'INVALID_CREDENTIALS')
-    return mode === 'login'
-      ? 'Invalid email or password. Check both and try again.'
-      : 'An account with that email already exists, or the password is wrong.';
+    // Only login can produce this (register uses USER_EXISTS instead).
+    return 'Invalid email or password. Check both and try again.';
   if (error.code === 'INVALID_PASSWORD')
     return 'Use a password of at least 8 characters.';
-  if (error.code === 'VALIDATION_ERROR' && error.issues.length > 0)
-    return null; // Surfaced inline on the fields.
+  if (error.code === 'VALIDATION_ERROR' && error.issues.length > 0) {
+    // Surfaced inline on the fields — but only when at least one issue
+    // actually mapped; strict-schema rejections (unrecognized keys) have
+    // no field to attach to and must fall through to the message below.
+    if (Object.keys(fields).length > 0) return null;
+  }
   return error.message || 'Something went wrong. Try again.';
 }
 
@@ -235,8 +238,9 @@ export function AuthForm({
       saveSession(response);
       router.push(destination);
     } catch (error) {
-      setFields(issuesToFields(error));
-      setFormError(messageFor(error, mode));
+      const mapped = issuesToFields(error);
+      setFields(mapped);
+      setFormError(messageFor(error, mapped));
     } finally {
       setPending(false);
     }
@@ -505,16 +509,16 @@ export function AuthForm({
                         </>
                       )}
                     </ShimmerButton>
-                    <span
-                      className="auth-hand-note"
-                      aria-hidden="true"
-                    >
+                    <span className="auth-hand-note" aria-hidden="true">
                       ↙ opens your board, nothing else
                     </span>
                   </div>
                 </form>
 
-                <ul className="auth-trust" aria-label="Why engineers trust Eunoia">
+                <ul
+                  className="auth-trust"
+                  aria-label="Why engineers trust Eunoia"
+                >
                   <li>
                     <CheckIcon /> sub-50ms sync · Yjs CRDTs
                   </li>

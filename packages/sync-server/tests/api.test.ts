@@ -158,13 +158,12 @@ describe("HTTP API", () => {
   });
 
   test("resolves the tier from the room for Pro compiles", async () => {
-    const roomResponse = await fetch(`${baseUrl}/api/rooms`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Pro diagrams", tier: "PRO" }),
+    // HTTP creation caps tiers at the caller's, so PRO fixtures go through
+    // the trusted manager layer (as a DB edit would).
+    const room = await app.manager.createRoom({
+      name: "Pro diagrams",
+      tier: "PRO",
     });
-    expect(roomResponse.status).toBe(201);
-    const room = (await roomResponse.json()) as { id: string };
 
     const compileResponse = await fetch(`${baseUrl}/api/compile`, {
       method: "POST",
@@ -182,6 +181,18 @@ describe("HTTP API", () => {
     };
     expect(payload.engine).toBe("elk");
     expect(payload.placeholder).toBe(true);
+  });
+
+  test("rejects room tiers above the caller's on creation", async () => {
+    const response = await fetch(`${baseUrl}/api/rooms`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Sneaky", tier: "PRO" }),
+    });
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as Record<string, unknown>).code).toBe(
+      "TIER_UPGRADE_REQUIRED",
+    );
   });
 });
 
@@ -839,16 +850,42 @@ describe("Room passwords", () => {
     expect(await wsConnect(lockedId, "forged.ticket.here")).toBe(
       "rejected:401",
     );
+    expect(await wsConnect("no-such-room")).toBe("rejected:404");
   });
 
-  test("tickets are room-bound, expiring, and tamper-evident", async () => {
+  test("accepts sync tickets as Bearer headers", async () => {
+    const outcome: string = await new Promise((resolve) => {
+      const socket = new WebSocket(`${wsBase}/sync/${lockedId}`, {
+        headers: { authorization: `Bearer ${ticket}` },
+      });
+      socket.once("open", () => {
+        socket.close();
+        resolve("open");
+      });
+      socket.once(
+        "unexpected-response",
+        (_request: unknown, response: { statusCode: number }) => {
+          socket.close();
+          resolve(`rejected:${response.statusCode}`);
+        },
+      );
+      socket.once("error", () => resolve("error"));
+      socket.once("close", () => resolve("close"));
+    });
+    expect(outcome).toBe("open");
+  });
+
+  test("tickets bind room, expiry, version, and reject tampering", async () => {
     const secret = "test-secret";
-    const { ticket: issued } = issueTicket(secret, "room-a", 60, 1_000);
-    expect(verifyTicket(secret, issued, "room-a", 1_030)).toBe(true);
-    expect(verifyTicket(secret, issued, "room-b", 1_030)).toBe(false);
-    expect(verifyTicket(secret, issued, "room-a", 1_061)).toBe(false);
-    expect(verifyTicket(secret, `${issued}x`, "room-a", 1_030)).toBe(false);
-    expect(verifyTicket("other-secret", issued, "room-a", 1_030)).toBe(false);
+    const { ticket: issued } = issueTicket(secret, "room-a", 0, 60, 1_000);
+    expect(verifyTicket(secret, issued, "room-a", 1_030)).toBe(0);
+    expect(verifyTicket(secret, issued, "room-b", 1_030)).toBeNull();
+    expect(verifyTicket(secret, issued, "room-a", 1_061)).toBeNull();
+    expect(verifyTicket(secret, `${issued}x`, "room-a", 1_030)).toBeNull();
+    expect(verifyTicket("other-secret", issued, "room-a", 1_030)).toBeNull();
+    expect(verifyTicket(secret, "v1.a.b.c", "room-a", 1_030)).toBeNull();
+    const rotated = issueTicket(secret, "room-a", 1, 60, 1_000).ticket;
+    expect(verifyTicket(secret, rotated, "room-a", 1_030)).toBe(1);
   });
 
   test("passwords hash with unique salts and reject malformed hashes", async () => {
@@ -867,6 +904,8 @@ describe("Room updates", () => {
   let app: SyncServer;
   let baseUrl: string;
   let openId: string;
+  let userToken: string;
+  let userId: string;
 
   const request = (path: string, init?: RequestInit) =>
     fetch(`${baseUrl}${path}`, init);
@@ -880,6 +919,19 @@ describe("Room updates", () => {
       },
       body: JSON.stringify(payload),
     });
+
+  const register = async (email: string) => {
+    const response = await request("/api/auth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "s3cret-pass" }),
+    });
+    expect(response.status).toBe(201);
+    return (await response.json()) as {
+      user: { id: string };
+      token: string;
+    };
+  };
 
   beforeEach(async () => {
     app = createSyncServer(
@@ -913,31 +965,72 @@ describe("Room updates", () => {
       body: JSON.stringify({ name: "Before" }),
     });
     openId = ((await created.json()) as { id: string }).id;
+    const me = await register("owner@example.com");
+    userToken = me.token;
+    userId = me.user.id;
   });
 
   afterEach(async () => app.close());
 
-  test("patches name, owner, and tier", async () => {
-    const response = await patch(`/api/rooms/${openId}`, {
-      name: "After",
-      ownerId: "user-1",
-      tier: "PRO",
-    });
+  test("claims anonymous rooms and patches owned rooms", async () => {
+    const response = await patch(
+      `/api/rooms/${openId}`,
+      { name: "After" },
+      userToken,
+    );
     expect(response.status).toBe(200);
-    const body = (await response.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({
+    expect(await response.json()).toMatchObject({
       id: openId,
       name: "After",
-      ownerId: "user-1",
-      tier: "PRO",
+      ownerId: userId,
+      tier: "COMMUNITY",
       hasPassword: false,
     });
   });
 
+  test("requires login and ownership", async () => {
+    expect((await patch(`/api/rooms/${openId}`, { name: "X" })).status).toBe(
+      401,
+    );
+    const denied = (await (
+      await patch(`/api/rooms/${openId}`, { name: "X" })
+    ).json()) as Record<string, unknown>;
+    expect(denied.code).toBe("AUTH_REQUIRED");
+
+    // Claim as the owner first.
+    expect(
+      (await patch(`/api/rooms/${openId}`, { name: "Mine" }, userToken)).status,
+    ).toBe(200);
+    const stranger = await register("stranger@example.com");
+    const forbidden = await patch(
+      `/api/rooms/${openId}`,
+      { name: "Theirs" },
+      stranger.token,
+    );
+    expect(forbidden.status).toBe(403);
+    expect(((await forbidden.json()) as Record<string, unknown>).code).toBe(
+      "FORBIDDEN",
+    );
+  });
+
+  test("caps tiers at the caller's tier", async () => {
+    const response = await patch(
+      `/api/rooms/${openId}`,
+      { tier: "ENTERPRISE" },
+      userToken,
+    );
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as Record<string, unknown>).code).toBe(
+      "TIER_UPGRADE_REQUIRED",
+    );
+  });
+
   test("sets, replaces, and clears passwords", async () => {
-    const set = await patch(`/api/rooms/${openId}`, {
-      password: "new-secret-pass",
-    });
+    const set = await patch(
+      `/api/rooms/${openId}`,
+      { password: "new-secret-pass" },
+      userToken,
+    );
     expect(set.status).toBe(200);
     expect(((await set.json()) as Record<string, unknown>).hasPassword).toBe(
       true,
@@ -956,29 +1049,107 @@ describe("Room updates", () => {
     const cleared = await patch(
       `/api/rooms/${openId}`,
       { password: null },
-      ticket,
+      // Room ticket alone is not enough: mutation needs the owner token.
+      undefined,
     );
-    expect(cleared.status).toBe(200);
-    expect(((await cleared.json()) as Record<string, unknown>).hasPassword).toBe(
-      false,
+    expect(cleared.status).toBe(401);
+
+    const clearedOwned = await patch(
+      `/api/rooms/${openId}?ticket=${ticket}`,
+      { password: null },
+      userToken,
     );
+    expect(clearedOwned.status).toBe(200);
+    expect(
+      ((await clearedOwned.json()) as Record<string, unknown>).hasPassword,
+    ).toBe(false);
     expect((await request(`/api/rooms/${openId}`)).status).toBe(200);
+    expect(ticket.length).toBeGreaterThan(0);
+  });
+
+  test("rotation invalidates previously minted tickets", async () => {
+    await patch(`/api/rooms/${openId}`, { password: "first-secret" }, userToken);
+    const first = await request(`/api/rooms/${openId}/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "first-secret" }),
+    });
+    const firstTicket = ((await first.json()) as { ticket: string }).ticket;
+    expect(
+      (await request(`/api/rooms/${openId}?ticket=${firstTicket}`)).status,
+    ).toBe(200);
+
+    await patch(
+      `/api/rooms/${openId}?ticket=${firstTicket}`,
+      { password: "second-secret" },
+      userToken,
+    );
+    expect(
+      (await request(`/api/rooms/${openId}?ticket=${firstTicket}`)).status,
+    ).toBe(401);
   });
 
   test("rejects empty updates, short passwords, and missing rooms", async () => {
-    expect((await patch(`/api/rooms/${openId}`, {})).status).toBe(400);
+    expect((await patch(`/api/rooms/${openId}`, {}, userToken)).status).toBe(
+      400,
+    );
 
-    const weak = await patch(`/api/rooms/${openId}`, { password: "short" });
+    const weak = await patch(
+      `/api/rooms/${openId}`,
+      { password: "short" },
+      userToken,
+    );
     expect(weak.status).toBe(400);
     expect(((await weak.json()) as Record<string, unknown>).code).toBe(
       "INVALID_PASSWORD",
     );
 
-    const missing = await patch("/api/rooms/no-such-room", { name: "X" });
+    const missing = await patch(
+      "/api/rooms/no-such-room",
+      { name: "X" },
+      userToken,
+    );
     expect(missing.status).toBe(404);
     expect(((await missing.json()) as Record<string, unknown>).code).toBe(
       "ROOM_NOT_FOUND",
     );
+  });
+
+  test("refuses to mint tickets for open rooms", async () => {
+    const response = await request(`/api/rooms/${openId}/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as Record<string, unknown>).code).toBe(
+      "ROOM_NOT_LOCKED",
+    );
+  });
+
+  test("deletes owned rooms and rejects strangers", async () => {
+    const remove = (id: string, auth?: string) =>
+      request(`/api/rooms/${id}`, {
+        method: "DELETE",
+        headers: auth ? { authorization: `Bearer ${auth}` } : {},
+      });
+    expect((await remove(openId)).status).toBe(401);
+    const stranger = await register("deleter@example.com");
+    // Anonymous rooms are deletable by any signed-in caller.
+    expect((await remove(openId, stranger.token)).status).toBe(204);
+    expect((await request(`/api/rooms/${openId}`)).status).toBe(404);
+
+    const owned = await request("/api/rooms", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${userToken}`,
+      },
+      body: JSON.stringify({ name: "Owned" }),
+    });
+    const ownedId = ((await owned.json()) as { id: string }).id;
+    expect((await remove(ownedId, stranger.token)).status).toBe(403);
+    expect((await remove(ownedId, userToken)).status).toBe(204);
   });
 });
 
@@ -1075,9 +1246,9 @@ describe("User auth", () => {
       password: "s3cret-pass",
     });
     expect(unknownLogin.status).toBe(401);
-    expect(
-      ((await unknownLogin.json()) as Record<string, unknown>).code,
-    ).toBe("INVALID_CREDENTIALS");
+    expect(((await unknownLogin.json()) as Record<string, unknown>).code).toBe(
+      "INVALID_CREDENTIALS",
+    );
 
     const login = await post("/api/auth/login", {
       email: "ada@example.com",
@@ -1106,20 +1277,169 @@ describe("User auth", () => {
       token: string;
     };
 
-    const roomResponse = await post(
-      "/api/rooms",
-      { name: "Owned" },
-      token,
-    );
+    const roomResponse = await post("/api/rooms", { name: "Owned" }, token);
     expect(roomResponse.status).toBe(201);
     const room = (await roomResponse.json()) as Record<string, unknown>;
     expect(room.ownerId).toBe(user.id);
     expect(room.tier).toBe("COMMUNITY");
+
+    // Tiers above the caller's are rejected, and forged owners ignored.
+    const escalate = await post(
+      "/api/rooms",
+      { name: "Sneaky", tier: "ENTERPRISE", ownerId: "victim" },
+      token,
+    );
+    expect(escalate.status).toBe(403);
+    expect(((await escalate.json()) as Record<string, unknown>).code).toBe(
+      "TIER_UPGRADE_REQUIRED",
+    );
 
     // Anonymous creation still defaults as before.
     const anon = await post("/api/rooms", { name: "Anon" });
     expect(((await anon.json()) as Record<string, unknown>).ownerId).toBe(
       "anonymous",
     );
+  });
+});
+
+describe("Persistence safety", () => {
+  let app: SyncServer;
+  let store: MemorySnapshotStore;
+
+  beforeEach(async () => {
+    store = new MemorySnapshotStore();
+    app = createSyncServer(
+      {
+        port: 0,
+        host: "127.0.0.1",
+        nodeEnv: "test",
+        snapshotDebounceMs: 10,
+        roomIdleTimeoutMs: 10,
+        d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
+        roomTicketTtlSec: 86400,
+        userTokenTtlSec: 604800,
+        r2MaxUploadBytes: 10_000_000,
+        r2UrlExpiresInSec: 900,
+      },
+      store,
+    );
+  });
+
+  afterEach(async () => app.close());
+
+  test("rejects non-postgres DATABASE_URL instead of silently going in-memory", () => {
+    expect(() =>
+      createSyncServer(
+        {
+          port: 0,
+          host: "127.0.0.1",
+          nodeEnv: "test",
+          databaseUrl: "file:./dev.db",
+          snapshotDebounceMs: 10,
+          roomIdleTimeoutMs: 10,
+          d2CommunityNodeLimit: 30,
+          snapshotMaxPerRoom: 100,
+          snapshotRetentionDays: 30,
+          roomTicketTtlSec: 86400,
+          userTokenTtlSec: 604800,
+          r2MaxUploadBytes: 10_000_000,
+          r2UrlExpiresInSec: 900,
+        },
+        new MemorySnapshotStore(),
+      ),
+    ).toThrow(/Unsupported DATABASE_URL/);
+  });
+
+  test("corrupt snapshots throw without bricking the live room", async () => {
+    const room = await app.manager.getOrCreate("corrupt-room");
+    room.doc.getMap<string>("m").set("k", "v");
+    await store.saveSnapshot({
+      id: "bad-snapshot",
+      roomId: "corrupt-room",
+      docVersion: "x",
+      data: new Uint8Array([1, 2, 3]),
+      createdAt: new Date(),
+    });
+    const bad = await store.getSnapshot("bad-snapshot");
+    expect(bad).not.toBeNull();
+    await expect(
+      room.restoreSnapshot(bad as StoredSnapshot),
+    ).rejects.toThrow(/corrupt/);
+    // Live state survived: doc content intact, awareness untouched (a fresh
+    // Awareness always carries exactly one self-state).
+    expect(room.doc.getMap<string>("m").get("k")).toBe("v");
+    expect(room.awareness.getStates().size).toBe(1);
+  });
+
+  test("forceFlush drains chained saves before resolving", async () => {
+    const memory = new MemorySnapshotStore();
+    let saves = 0;
+    let releaseGate: (() => void) | null = null;
+    const original = memory.saveSnapshot.bind(memory);
+    memory.saveSnapshot = async (snapshot) => {
+      saves += 1;
+      if (saves === 1)
+        await new Promise<void>((resolve) => {
+          releaseGate = resolve;
+        });
+      return original(snapshot);
+    };
+    const worker = new SnapshotWorker("drain-room", memory, 1000);
+    const doc = new Y.Doc();
+    doc.getMap<string>("m").set("a", "1");
+    worker.schedule(doc);
+    const pending = worker.forceFlush(doc);
+    // Mark dirty again while the first save is gated.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    doc.getMap<string>("m").set("b", "2");
+    worker.schedule(doc);
+    releaseGate?.();
+    await pending;
+    expect(saves).toBe(2);
+    await worker.dispose(doc);
+    doc.destroy();
+  });
+});
+
+const pgUrl = process.env.DATABASE_URL;
+const describePg =
+  pgUrl?.startsWith("postgres") && process.env.RUN_PG_TESTS === "1"
+    ? describe
+    : describe.skip;
+
+describePg("Prisma store safety", () => {
+  test("re-ensure never clobbers existing room metadata", async () => {
+    const { PrismaClient } = await import("@prisma/client");
+    const { PrismaSnapshotStore } = await import("../src/RoomLoader.js");
+    const prisma = new PrismaClient({ datasources: { db: { url: pgUrl } } });
+    try {
+      const prismaStore = new PrismaSnapshotStore(prisma);
+      const id = `pg-ensure-${Date.now()}`;
+      await prismaStore.ensureRoom({
+        id,
+        name: "Real name",
+        ownerId: "user-1",
+        tier: "PRO",
+        hasPassword: false,
+      });
+      // Cold load passes defaults — they must not overwrite.
+      await prismaStore.ensureRoom({
+        id,
+        name: "Untitled room",
+        ownerId: "anonymous",
+        tier: "COMMUNITY",
+        hasPassword: false,
+      });
+      expect(await prismaStore.getRoom(id)).toMatchObject({
+        name: "Real name",
+        ownerId: "user-1",
+        tier: "PRO",
+      });
+      await prismaStore.deleteRoom(id);
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 });

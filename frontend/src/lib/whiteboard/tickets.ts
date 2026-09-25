@@ -11,7 +11,6 @@ type TicketEntry = {
 };
 
 const tickets = new Map<string, TicketEntry>();
-let deepLinkIngested = false;
 
 export function setTicket(
   roomId: string,
@@ -39,24 +38,27 @@ export function clearTicket(roomId: string): void {
 }
 
 /**
- * Ingest `?ticket=` (and `?room=`) deep links once per page load so shared
- * invite URLs like `/board?room=<id>&ticket=<ticket>` unlock automatically.
+ * Ingest `?ticket=` (and `?room=`) deep links so shared invite URLs like
+ * `/board?room=<id>&ticket=<ticket>` unlock automatically. Runs on every
+ * call (cheap) so client-side navigation between invite links works, and
+ * strips `ticket` from the address bar afterwards so it doesn't linger in
+ * history, copies, or referers — the store holds the ticket from here on.
  */
 export function ingestTicketDeepLink(): {
   roomId: string | null;
   ticket: string | null;
 } {
   if (typeof window === 'undefined') return { roomId: null, ticket: null };
-  const params = new URLSearchParams(window.location.search);
-  const roomId = params.get('room');
-  const ticket = params.get('ticket');
-  if (!deepLinkIngested) {
-    deepLinkIngested = true;
-    if (roomId && ticket) {
-      // Unknown TTL for deep-linked tickets; assume the server default (24h)
-      // minus a safety margin.
-      setTicket(roomId, ticket, 23 * 3600);
-    }
+  const url = new URL(window.location.href);
+  const roomId = url.searchParams.get('room');
+  const ticket = url.searchParams.get('ticket');
+  if (roomId && ticket) {
+    // Unknown TTL for deep-linked tickets; assume the server default (24h)
+    // minus a safety margin. An explicit invite link always wins over the
+    // store — a dead link fails closed and access-loss handling clears it.
+    setTicket(roomId, ticket, 23 * 3600);
+    url.searchParams.delete('ticket');
+    window.history.replaceState(null, '', url.toString());
   }
   return { roomId, ticket };
 }
