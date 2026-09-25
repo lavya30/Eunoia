@@ -27,8 +27,8 @@ import {
   ScrollVelocityRow,
 } from '@/components/ui/scroll-based-velocity';
 import React, { useRef, useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { DiaTextReveal } from '@/components/ui/dia-text-reveal';
-import { scrollToSection } from '@/components/providers/smooth-scroll';
 import './landing.css';
 
 /* ─── SVG Icons (Self-Contained & Optimized) ─── */
@@ -551,6 +551,8 @@ function DoodleSection({
 
 export function LandingPage() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const router = useRouter();
+  const openBoard = () => router.push('/board');
 
   return (
     <div className="eunoia-landing">
@@ -602,10 +604,7 @@ export function LandingPage() {
           <a className="eunoia-sign-in" href="#teams">
             Sign in
           </a>
-          <ShimmerButton
-            type="button"
-            onClick={() => scrollToSection('#resources')}
-          >
+          <ShimmerButton type="button" onClick={openBoard}>
             Open workspace
           </ShimmerButton>
           <button className="eunoia-language" type="button">
@@ -670,7 +669,7 @@ export function LandingPage() {
                     type="button"
                     className="px-8 py-3.5 text-[15px]"
                     background="rgba(105,101,219,1)"
-                    onClick={() => scrollToSection('#resources')}
+                    onClick={openBoard}
                   >
                     Open a room <ArrowRight size={16} />
                   </ShimmerButton>
@@ -831,8 +830,8 @@ export function LandingPage() {
             </TextAnimate>
             <BlurFade delay={0.15} inView>
               <div className="eunoia-intro-buttons">
-                <Button href="#resources">Open a room</Button>
-                <Button kind="secondary" href="#resources">
+                <Button href="/board">Open a room</Button>
+                <Button kind="secondary" href="/board">
                   Try D2 workspace
                 </Button>
               </div>
@@ -1095,11 +1094,11 @@ export function LandingPage() {
                   type="button"
                   background="rgba(105,101,219,1)"
                   className="px-8 py-3"
-                  onClick={() => scrollToSection('#teams')}
+                  onClick={openBoard}
                 >
                   Open a room <ArrowRight size={16} />
                 </ShimmerButton>
-                <Button kind="secondary" href="#resources">
+                <Button kind="secondary" href="/board">
                   Try the D2 workspace
                 </Button>
               </div>
@@ -1211,7 +1210,7 @@ export function LandingPage() {
                   Bring rooms, team presence, D2 source, managed history, and
                   dependable exports into the same shared space.
                 </p>
-                <Button href="#resources">Open workspace</Button>
+                <Button href="/board">Open workspace</Button>
               </MagicCard>
             </BlurFade>
           </div>

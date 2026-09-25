@@ -1,6 +1,7 @@
 'use client';
 
 import { D2Editor } from '@/components/editor';
+import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
   Check,
@@ -74,9 +75,32 @@ import {
   createBoardSync,
   resolveSyncHttpUrl,
   resolveSyncServerUrl,
+  type PeerInfo,
   type SyncBoardState,
   type SyncStatus,
 } from '@/lib/whiteboard/sync';
+import {
+  ApiError,
+  confirmImageUpload,
+  createRoom,
+  deleteRoom,
+  freshImageUrl,
+  getRoom,
+  isRoomLocked,
+  isRoomNotFound,
+  requestImageUpload,
+  uploadImageBytes,
+  type RoomMetadata,
+} from '@/lib/whiteboard/rooms-api';
+import {
+  buildInviteLink,
+  clearTicket,
+  getTicket,
+  ingestTicketDeepLink,
+} from '@/lib/whiteboard/tickets';
+import { CreateRoomDialog, UnlockDialog } from './RoomDialogs';
+import { HistoryPanel } from './HistoryPanel';
+import { SearchPalette } from './SearchPalette';
 import './board.css';
 
 type ToolId =
@@ -93,6 +117,7 @@ type BoardSnapshot = {
   nodes: BoardNode[];
   arrows: BoardArrow[];
   strokes: BoardStroke[];
+  code: string;
 };
 
 type Interaction =
@@ -234,8 +259,12 @@ client -> gateway: request
 gateway -> worker: events
 worker -> database: snapshot`;
 
-const ROOM_ID = 'incident-room';
-const BOARD_STORAGE_KEY = `eunoia:board:${ROOM_ID}:v1`;
+const LEGACY_ROOM_ID = 'incident-room';
+const LEGACY_STORAGE_KEY = `eunoia:board:${LEGACY_ROOM_ID}:v1`;
+
+function storageKeyFor(roomId: string): string {
+  return `eunoia:board:${roomId}:v1`;
+}
 
 type PersistedBoard = {
   nodes: BoardNode[];
@@ -562,8 +591,17 @@ function sanitizeNode(raw: unknown): BoardNode | null {
       ? n.shape
       : undefined) as BoardNode['shape'],
     href:
-      typeof n.href === 'string' && n.href.startsWith('data:image/')
+      typeof n.href === 'string' &&
+      (n.href.startsWith('data:image/') ||
+        n.href.startsWith('https://') ||
+        n.href.startsWith('http://'))
         ? n.href.slice(0, 8_000_000)
+        : undefined,
+    imageId:
+      typeof n.imageId === 'string' &&
+      n.imageId.length > 0 &&
+      n.imageId.length <= 120
+        ? n.imageId
         : undefined,
     stroke: typeof n.stroke === 'string' ? n.stroke.slice(0, 32) : undefined,
     fill: typeof n.fill === 'string' ? n.fill.slice(0, 32) : undefined,
@@ -746,20 +784,31 @@ function ToolButton({
 
 function PresenceAvatar({
   initials,
-  tone,
+  color,
+  title,
 }: {
   initials: string;
-  tone: string;
+  color: string;
+  title?: string;
 }) {
-  // Decorative placeholder until real presence is wired via sync awareness.
   return (
     <span
-      className={`presence-avatar presence-avatar--${tone}`}
-      aria-hidden="true"
+      className="presence-avatar"
+      style={{ backgroundColor: color }}
+      aria-hidden={title ? undefined : true}
+      title={title}
     >
       {initials}
     </span>
   );
+}
+
+function initialsForName(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? '?';
+  const second =
+    parts.length > 1 ? (parts[1]?.[0] ?? '') : (parts[0]?.[1] ?? '');
+  return `${first}${second}`.toUpperCase();
 }
 
 function Connector({
@@ -792,6 +841,7 @@ function CanvasNode({
   onPointerDown,
   onDoubleClick,
   onKeySelect,
+  onImageError,
 }: {
   node: BoardNode;
   selected: boolean;
@@ -801,6 +851,7 @@ function CanvasNode({
     event: ReactKeyboardEvent<SVGGElement>,
     node: BoardNode,
   ) => void;
+  onImageError?: (node: BoardNode) => void;
 }) {
   const isNote = node.shape === 'note';
   const isCylinder = node.shape === 'cylinder';
@@ -849,6 +900,7 @@ function CanvasNode({
             height={node.height}
             preserveAspectRatio="none"
             style={{ opacity: node.opacity ?? 1 }}
+            onError={() => onImageError?.(node)}
           />
           <rect
             className="node-image-frame"
@@ -937,7 +989,27 @@ function CanvasNode({
   );
 }
 
-export function WhiteboardPage() {
+export function WhiteboardPage({
+  initialRoomId,
+}: {
+  initialRoomId: string | null;
+}) {
+  const router = useRouter();
+  // The route keys this component by room, so the initial id is fixed per
+  // mount.
+  const [roomId, setRoomId] = useState<string | null>(initialRoomId);
+  const [roomMeta, setRoomMeta] = useState<RoomMetadata | null>(null);
+  const [roomStatus, setRoomStatus] = useState<
+    'loading' | 'ready' | 'missing' | 'locked' | 'error'
+  >(initialRoomId && initialRoomId.startsWith('local-') ? 'ready' : 'loading');
+  // Ingest shared invite tickets (`?ticket=`) before reading the ticket
+  // store. The lazy initializer runs once per mount; ingestion is
+  // idempotent so StrictMode double-invocation is harmless.
+  const [ticket, setTicket] = useState<string | undefined>(() => {
+    if (typeof window === 'undefined') return undefined;
+    ingestTicketDeepLink();
+    return initialRoomId ? getTicket(initialRoomId) : undefined;
+  });
   const [activeTool, setActiveTool] = useState<ToolId>('select');
   const [selectedIds, setSelectedIds] = useState<string[]>(['gateway']);
   const [nodes, setNodes] = useState(INITIAL_NODES);
@@ -957,6 +1029,7 @@ export function WhiteboardPage() {
   const [hasHydrated, setHasHydrated] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('offline');
   const [syncReady, setSyncReady] = useState(false);
+  const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [copied, setCopied] = useState(false);
   const [activeColor, setActiveColor] = useState('#25263a');
   const [locked, setLocked] = useState(false);
@@ -989,6 +1062,7 @@ export function WhiteboardPage() {
   const futureRef = useRef<BoardSnapshot[]>([]);
   const historyRecordedRef = useRef(false);
   const syncRef = useRef<ReturnType<typeof createBoardSync> | null>(null);
+  const cursorBroadcastRef = useRef(0);
   const compileAbortRef = useRef<AbortController | null>(null);
   const copiedTimerRef = useRef<number | null>(null);
   const cameraRef = useRef<Camera>(camera);
@@ -1006,6 +1080,10 @@ export function WhiteboardPage() {
     code,
   });
   const lastCompiledCodeRef = useRef<string | null>(null);
+  const restoreNoticeRef = useRef(false);
+  const [showCreateRoom, setShowCreateRoom] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect -- hydrate and persist an external browser store. */
   useEffect(() => {
@@ -1015,6 +1093,12 @@ export function WhiteboardPage() {
   useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
+
+  const canvasViewportRef = useRef(canvasViewport);
+
+  useEffect(() => {
+    canvasViewportRef.current = canvasViewport;
+  }, [canvasViewport]);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -1054,13 +1138,19 @@ export function WhiteboardPage() {
       nodes,
       arrows,
       strokes,
+      code,
     }),
-    [arrows, nodes, strokes],
+    [arrows, code, nodes, strokes],
   );
+
+  const [undoDepth, setUndoDepth] = useState(0);
+  const [redoDepth, setRedoDepth] = useState(0);
 
   const recordHistory = useCallback(() => {
     historyRef.current = [...historyRef.current, snapshot()].slice(-40);
     futureRef.current = [];
+    setUndoDepth(historyRef.current.length);
+    setRedoDepth(0);
   }, [snapshot]);
 
   const ensureHistory = useCallback(() => {
@@ -1069,17 +1159,27 @@ export function WhiteboardPage() {
     historyRecordedRef.current = true;
   }, [recordHistory]);
 
+  const applySnapshot = useCallback((entry: BoardSnapshot) => {
+    setNodes(entry.nodes);
+    setArrows(entry.arrows);
+    setStrokes(entry.strokes);
+    setCode(entry.code);
+    if (entry.code !== lastCompiledCodeRef.current) {
+      setCompileState('draft');
+    }
+    setSelectedIds([]);
+  }, []);
+
   const undo = useCallback(() => {
     const stack = historyRef.current;
     if (stack.length === 0) return;
     const previous = stack[stack.length - 1];
     historyRef.current = stack.slice(0, -1);
     futureRef.current = [...futureRef.current, snapshot()];
-    setNodes(previous.nodes);
-    setArrows(previous.arrows);
-    setStrokes(previous.strokes);
-    setSelectedIds([]);
-  }, [snapshot]);
+    applySnapshot(previous);
+    setUndoDepth(historyRef.current.length);
+    setRedoDepth(futureRef.current.length);
+  }, [applySnapshot, snapshot]);
 
   const redo = useCallback(() => {
     const stack = futureRef.current;
@@ -1087,11 +1187,10 @@ export function WhiteboardPage() {
     const next = stack[stack.length - 1];
     futureRef.current = stack.slice(0, -1);
     historyRef.current = [...historyRef.current, snapshot()].slice(-40);
-    setNodes(next.nodes);
-    setArrows(next.arrows);
-    setStrokes(next.strokes);
-    setSelectedIds([]);
-  }, [snapshot]);
+    applySnapshot(next);
+    setUndoDepth(historyRef.current.length);
+    setRedoDepth(futureRef.current.length);
+  }, [applySnapshot, snapshot]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -1110,8 +1209,16 @@ export function WhiteboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!roomId) return;
+    setHasHydrated(false);
+    setPersistenceState('loading');
     try {
-      const raw = window.localStorage.getItem(BOARD_STORAGE_KEY);
+      const key = storageKeyFor(roomId);
+      let raw = window.localStorage.getItem(key);
+      // One-time migration from the pre-multi-room hardcoded room key.
+      if (!raw && roomId !== LEGACY_ROOM_ID) {
+        raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+      }
       if (raw) {
         const parsed: unknown = JSON.parse(raw);
         const clean = sanitizeBoardState(parsed);
@@ -1131,16 +1238,16 @@ export function WhiteboardPage() {
     } finally {
       setHasHydrated(true);
     }
-  }, []);
+  }, [roomId]);
 
   useEffect(() => {
-    if (!hasHydrated) return;
+    if (!hasHydrated || !roomId) return;
     setPersistenceState('saving');
     const timeoutId = window.setTimeout(() => {
       const fullPayload: PersistedBoard = { nodes, arrows, strokes, code };
       try {
         window.localStorage.setItem(
-          BOARD_STORAGE_KEY,
+          roomId ? storageKeyFor(roomId) : LEGACY_STORAGE_KEY,
           JSON.stringify(fullPayload),
         );
         setPersistenceState('saved');
@@ -1162,7 +1269,7 @@ export function WhiteboardPage() {
               code,
             };
             window.localStorage.setItem(
-              BOARD_STORAGE_KEY,
+              roomId ? storageKeyFor(roomId) : LEGACY_STORAGE_KEY,
               JSON.stringify(slimPayload),
             );
             setPersistenceState('saved');
@@ -1181,14 +1288,72 @@ export function WhiteboardPage() {
       }
     }, 250);
     return () => window.clearTimeout(timeoutId);
-  }, [arrows, code, hasHydrated, nodes, strokes]);
+  }, [arrows, code, hasHydrated, nodes, roomId, strokes]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // Room bootstrap: auto-create a room when the URL carries none, and
+  // load room metadata (tier, lock state) otherwise.
   useEffect(() => {
-    if (!hasHydrated) return;
+    if (initialRoomId) return;
+    let cancelled = false;
+    createRoom({ name: 'Untitled board' })
+      .then((meta) => {
+        if (cancelled) return;
+        setRoomMeta(meta);
+        setRoomStatus('ready');
+        router.replace(`/board?room=${encodeURIComponent(meta.id)}`);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Server unreachable: fall back to a local-only room so the board
+        // stays usable offline.
+        setRoomId(`local-${Date.now().toString(36)}`);
+        setRoomMeta(null);
+        setRoomStatus('ready');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // Local-only fallback rooms have no server counterpart.
+    if (!roomId || roomMeta || roomId.startsWith('local-')) return;
+    let cancelled = false;
+    getRoom(roomId, getTicket(roomId) ?? ticket)
+      .then((meta) => {
+        if (cancelled) return;
+        setRoomMeta(meta);
+        setRoomStatus('ready');
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        if (isRoomNotFound(error)) setRoomStatus('missing');
+        else if (isRoomLocked(error)) setRoomStatus('locked');
+        else {
+          setRoomMeta(null);
+          setRoomStatus('ready');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId]);
+
+  useEffect(() => {
+    if (
+      !hasHydrated ||
+      !roomId ||
+      roomStatus === 'locked' ||
+      roomStatus === 'missing'
+    )
+      return;
     const session = createBoardSync({
-      roomId: ROOM_ID,
+      roomId,
       serverUrl: resolveSyncServerUrl(),
+      ticket: getTicket(roomId) ?? ticket,
       initialState: boardStateRef.current,
       getInitialState: () => boardStateRef.current,
       onReady: () => setSyncReady(true),
@@ -1197,6 +1362,15 @@ export function WhiteboardPage() {
         if (status === 'offline') setSyncReady(false);
       },
       onError: (message) => setBoardError(message),
+      onPeers: (next) => setPeers(next),
+      onClose: (code) => {
+        // 4100: the server restored a snapshot and dropped us. The session
+        // auto-reconnects and resyncs from scratch; just explain the flash.
+        if (code === 4100) {
+          restoreNoticeRef.current = true;
+          setBoardError('Board history was restored — resyncing…');
+        }
+      },
       onState: (state) => {
         const clean = sanitizeBoardState(state);
         if (!clean) {
@@ -1204,6 +1378,26 @@ export function WhiteboardPage() {
             'The room sent an invalid board state. Local changes were kept.',
           );
           return;
+        }
+        // Never yank the canvas mid-gesture: the local pointer interaction
+        // wins and its next publish converges the room on the following
+        // remote update.
+        if (interactionRef.current) return;
+        // Keep the merge undoable: stash local state first, but only when it
+        // actually differs so idle rooms don't spam the history stacks.
+        const local = boardStateRef.current;
+        if (JSON.stringify(local) !== JSON.stringify(clean)) {
+          // boardStateRef always holds sanitized board states at runtime
+          // (initial React state or validated sync payloads).
+          const stash = { ...local } as unknown as BoardSnapshot;
+          historyRef.current = [...historyRef.current, stash].slice(-40);
+          futureRef.current = [];
+          setUndoDepth(historyRef.current.length);
+          setRedoDepth(0);
+        }
+        if (restoreNoticeRef.current) {
+          restoreNoticeRef.current = false;
+          setBoardError(null);
         }
         setNodes(clean.nodes);
         setArrows(clean.arrows);
@@ -1215,10 +1409,11 @@ export function WhiteboardPage() {
     syncRef.current = session;
     return () => {
       setSyncReady(false);
+      setPeers([]);
       session.destroy();
       syncRef.current = null;
     };
-  }, [hasHydrated]);
+  }, [hasHydrated, roomId, roomStatus, ticket]);
 
   useEffect(() => {
     if (!hasHydrated || !syncReady) return;
@@ -2634,10 +2829,38 @@ export function WhiteboardPage() {
     undo,
   ]);
 
+  // Broadcast our canvas cursor to peers at ~20Hz. Uses refs only so
+  // pointer traffic never re-renders.
+  const broadcastCursor = useCallback(
+    (event: ReactPointerEvent<SVGSVGElement>) => {
+      const now = Date.now();
+      if (now - cursorBroadcastRef.current < 50) return;
+      cursorBroadcastRef.current = now;
+      const session = syncRef.current;
+      if (!session) return;
+      const viewport = canvasViewportRef.current;
+      const screenPoint = pointerToViewportPoint(
+        event,
+        event.currentTarget,
+        viewport,
+      );
+      session.setLocalCursor(
+        screenToWorld(screenPoint, cameraRef.current, viewport),
+      );
+    },
+    [],
+  );
+
+  const clearBroadcastCursor = useCallback(() => {
+    syncRef.current?.setLocalCursor(null);
+  }, []);
+
   const handleShare = useCallback(() => {
     const share = async () => {
       try {
-        await navigator.clipboard.writeText(window.location.href);
+        await navigator.clipboard.writeText(
+          roomId ? buildInviteLink(roomId) : window.location.href,
+        );
         setCopied(true);
         if (copiedTimerRef.current !== null)
           window.clearTimeout(copiedTimerRef.current);
@@ -2652,7 +2875,7 @@ export function WhiteboardPage() {
       }
     };
     void share();
-  }, []);
+  }, [roomId]);
 
   const handleAddImage = useCallback(() => {
     if (locked) return;
@@ -2665,22 +2888,48 @@ export function WhiteboardPage() {
       if (!file) return;
       event.target.value = '';
       if (locked) return;
-      if (!file.type.startsWith('image/')) {
-        setBoardError('Choose a PNG, JPEG, WebP, GIF, or another image file.');
+      const SUPPORTED_TYPES = new Set([
+        'image/png',
+        'image/jpeg',
+        'image/webp',
+        'image/gif',
+      ]);
+      if (!SUPPORTED_TYPES.has(file.type)) {
+        setBoardError('Choose a PNG, JPEG, WebP, or GIF image.');
         return;
       }
       if (file.size > 5_000_000) {
         setBoardError('Images must be 5 MB or smaller.');
         return;
       }
+      if (!roomId || roomId.startsWith('local-')) {
+        setBoardError(
+          'Images need a live room. Reconnect the sync server and reload.',
+        );
+        return;
+      }
+      const uploadRoomId = roomId;
+      const uploadTicket = getTicket(uploadRoomId) ?? ticket;
+      setBoardError('Uploading image…');
       try {
         const rawHref = await readFileAsDataUrl(file);
-        // Downscale large photos before storing: full-resolution data URLs
-        // would blow up localStorage and the Yjs sync payload.
+        // Downscale large photos before upload: smaller PUTs, smaller nodes.
         const { href, width, height } = await downscaleImageToDataUrl(
           rawHref,
           1024,
         );
+        const bytes = await (await fetch(href)).blob();
+        const grant = await requestImageUpload(uploadRoomId, uploadTicket, {
+          contentType: file.type,
+          kind: 'image',
+        });
+        await uploadImageBytes(grant.uploadUrl, bytes, file.type);
+        const stored = await confirmImageUpload(uploadRoomId, uploadTicket, {
+          key: grant.key,
+          contentType: file.type,
+          size: bytes.size,
+          kind: 'image',
+        });
         const dimensions = {
           width: width || 400,
           height: height || 300,
@@ -2702,7 +2951,8 @@ export function WhiteboardPage() {
           height: initHeight,
           tone: 'mint',
           shape: 'image',
-          href,
+          href: stored.url,
+          imageId: stored.id,
         };
         recordHistory();
         setNodes((current) => [...current, node]);
@@ -2711,19 +2961,58 @@ export function WhiteboardPage() {
         setBoardError(null);
       } catch (error) {
         setBoardError(
-          error instanceof Error
-            ? error.message
-            : 'The image could not be imported.',
+          error instanceof ApiError && error.code === 'R2_NOT_CONFIGURED'
+            ? 'Image storage is not configured on the server. Set R2 credentials to enable uploads.'
+            : error instanceof Error
+              ? error.message
+              : 'The image could not be imported.',
         );
       }
     },
-    [camera.x, camera.y, locked, recordHistory],
+    [camera.x, camera.y, locked, recordHistory, roomId, ticket],
   );
 
-  const handleCodeChange = useCallback((value: string) => {
-    setCode(value);
-    setCompileState('draft');
-  }, []);
+  // Stored image URLs can be time-limited presigned links. On load failure,
+  // fetch a fresh URL once per node and patch it in place.
+  const imageRefreshRef = useRef(new Set<string>());
+
+  const handleImageError = useCallback(
+    (node: BoardNode) => {
+      if (!node.imageId || !roomId || imageRefreshRef.current.has(node.imageId))
+        return;
+      imageRefreshRef.current.add(node.imageId);
+      const imageId = node.imageId;
+      void freshImageUrl(roomId, imageId, getTicket(roomId) ?? ticket)
+        .then(({ url }) => {
+          setNodes((current) =>
+            current.map((entry) =>
+              entry.imageId === imageId ? { ...entry, href: url } : entry,
+            ),
+          );
+        })
+        .catch(() => {
+          // Leave the broken image in place; the user can delete it.
+        });
+    },
+    [roomId, ticket],
+  );
+
+  const codeHistoryRef = useRef(0);
+
+  const handleCodeChange = useCallback(
+    (value: string) => {
+      // Snapshot code for undo at most once per few seconds so typing
+      // doesn't flush the canvas history.
+      const now = Date.now();
+      if (now - codeHistoryRef.current > 5000) {
+        codeHistoryRef.current = now;
+        recordHistory();
+      }
+      setCode(value);
+      setCompileState('draft');
+    },
+    [recordHistory],
+  );
 
   const compileCode = useCallback(async () => {
     const serverUrl = resolveSyncHttpUrl();
@@ -2750,10 +3039,15 @@ export function WhiteboardPage() {
       const postCompile = async (withRoom: boolean) =>
         fetch(`${serverUrl}/api/compile`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            ...(withRoom && roomId && (getTicket(roomId) ?? ticket)
+              ? { authorization: `Bearer ${getTicket(roomId) ?? ticket}` }
+              : {}),
+          },
           body: JSON.stringify(
-            withRoom
-              ? { source, engine: 'dagre', roomId: ROOM_ID }
+            withRoom && roomId
+              ? { source, engine: 'dagre', roomId }
               : { source, engine: 'dagre' },
           ),
           signal: controller.signal,
@@ -2864,7 +3158,7 @@ export function WhiteboardPage() {
       if (compileAbortRef.current === controller)
         compileAbortRef.current = null;
     }
-  }, [code, recordHistory]);
+  }, [code, recordHistory, roomId, ticket]);
 
   // Auto-compile a short pause after the user stops typing, as promised by
   // the footer copy. Skips when the code already matches the last success.
@@ -2933,6 +3227,55 @@ export function WhiteboardPage() {
     };
   }, [exportMenuOpen]);
 
+  if (!roomId) {
+    return (
+      <div className="eunoia-board-shell room-gate">
+        <div className="room-gate-card" role="status">
+          <h1>Opening your board…</h1>
+          <p>Setting up a realtime room.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (roomStatus === 'missing') {
+    return (
+      <div className="eunoia-board-shell room-gate">
+        <div className="room-gate-card" role="alert">
+          <h1>Room not found</h1>
+          <p>
+            No room exists with id <code>{roomId}</code>. It may have been
+            deleted.
+          </p>
+          <button
+            type="button"
+            className="compile-button"
+            onClick={() => router.replace('/board')}
+          >
+            Create a new board
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (roomStatus === 'locked' && roomId) {
+    const lockedRoomId = roomId;
+    return (
+      <UnlockDialog
+        roomId={lockedRoomId}
+        onUnlocked={(meta, nextTicket) => {
+          // Ticket already stored by the dialog; mirror into state so the
+          // sync session reconnects with it immediately.
+          setTicket(nextTicket);
+          setRoomMeta(meta);
+          setRoomStatus('ready');
+        }}
+        onCreateNew={() => router.replace('/board')}
+      />
+    );
+  }
+
   return (
     <div className="eunoia-board-shell">
       <input
@@ -2980,7 +3323,10 @@ export function WhiteboardPage() {
                     : 'All changes saved'}
             </span>
           </div>
-          <span className="header-location">workspace / incident-room</span>
+          <span className="header-location">
+            workspace / {roomMeta?.name ?? roomId ?? 'loading'}
+            {roomMeta?.hasPassword ? ' · locked' : ''}
+          </span>
         </div>
 
         <div className="board-header-actions">
@@ -2988,32 +3334,51 @@ export function WhiteboardPage() {
             className="presence-stack"
             role="status"
             aria-label={
-              syncStatus === 'connected'
-                ? 'Live room: connected'
-                : syncStatus === 'offline'
-                  ? 'Local room: changes stay in this browser'
-                  : 'Room: connecting'
+              peers.length > 0
+                ? `Live room: connected with ${peers.length} ${peers.length === 1 ? 'teammate' : 'teammates'} (${peers.map((peer) => peer.user.name).join(', ')})`
+                : syncStatus === 'connected'
+                  ? 'Live room: connected'
+                  : syncStatus === 'offline'
+                    ? 'Local room: changes stay in this browser'
+                    : 'Room: connecting'
             }
             title={
-              syncStatus === 'connected'
-                ? 'Live room: connected'
-                : syncStatus === 'offline'
-                  ? 'Local room'
-                  : 'Connecting…'
+              peers.length > 0
+                ? peers.map((peer) => peer.user.name).join(', ')
+                : syncStatus === 'connected'
+                  ? 'Live room: connected'
+                  : syncStatus === 'offline'
+                    ? 'Local room'
+                    : 'Connecting…'
             }
           >
-            <PresenceAvatar initials="AK" tone="violet" />
-            <PresenceAvatar initials="JO" tone="orange" />
-            <PresenceAvatar initials="MN" tone="blue" />
-            <span className="presence-more" aria-hidden="true">
-              {syncStatus === 'connected' ? '●' : '+2'}
-            </span>
+            {peers.slice(0, 4).map((peer) => (
+              <PresenceAvatar
+                key={peer.clientId}
+                initials={initialsForName(peer.user.name)}
+                color={peer.user.color}
+                title={peer.user.name}
+              />
+            ))}
+            {peers.length > 4 ? (
+              <span className="presence-more" aria-hidden="true">
+                +{peers.length - 4}
+              </span>
+            ) : syncStatus === 'connected' ? (
+              <span
+                className="presence-more presence-more--live"
+                aria-hidden="true"
+              >
+                ●
+              </span>
+            ) : null}
           </div>
           <button
             className="header-icon-button"
             type="button"
             aria-label="Search board"
             title="Search board"
+            onClick={() => setShowSearch((value) => !value)}
           >
             <Search size={17} />
           </button>
@@ -3152,6 +3517,89 @@ export function WhiteboardPage() {
                   }
                 >
                   <Download size={15} /> Export as JSON
+                </button>
+                <div
+                  style={{
+                    height: 1,
+                    background: '#eeedf2',
+                    margin: '0 10px',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExportMenuOpen(false);
+                    setShowCreateRoom(true);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 14px',
+                    border: 0,
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    color: '#35374a',
+                    fontWeight: 600,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = '#f5f4fa')
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = 'transparent')
+                  }
+                >
+                  <Square size={15} /> New board
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExportMenuOpen(false);
+                    if (
+                      window.confirm(
+                        'Delete this board and its history? This cannot be undone.',
+                      )
+                    ) {
+                      const doomedRoomId = roomId;
+                      void deleteRoom(
+                        doomedRoomId,
+                        getTicket(doomedRoomId) ?? ticket,
+                      )
+                        .then(() => {
+                          clearTicket(doomedRoomId);
+                          router.push('/board');
+                        })
+                        .catch((error: unknown) => {
+                          setBoardError(
+                            error instanceof ApiError
+                              ? error.message
+                              : 'Could not delete the board.',
+                          );
+                        });
+                    }
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 14px',
+                    border: 0,
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    color: '#e5484d',
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = '#f5f4fa')
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = 'transparent')
+                  }
+                >
+                  <Minus size={15} /> Delete board
                 </button>
               </div>
             )}
@@ -3595,9 +4043,11 @@ export function WhiteboardPage() {
 
           <div className="stage-toolbar">
             <div className="stage-breadcrumb">
-              <span className="stage-breadcrumb__root">Request flow</span>
+              <span className="stage-breadcrumb__root">
+                {roomMeta?.name ?? 'Board'}
+              </span>
               <ArrowRight size={13} />
-              <span>Architecture map</span>
+              <span>Canvas</span>
             </div>
             <div className="stage-actions">
               <button
@@ -3607,6 +4057,15 @@ export function WhiteboardPage() {
               >
                 <Code2 size={15} />
                 {showCode ? 'Hide D2' : 'Open D2'}
+              </button>
+              <button
+                className="stage-action"
+                type="button"
+                aria-expanded={showHistory}
+                onClick={() => setShowHistory((value) => !value)}
+              >
+                <RotateCcw size={15} />
+                History
               </button>
               <button
                 className="stage-action stage-action--icon"
@@ -3621,6 +4080,30 @@ export function WhiteboardPage() {
           </div>
 
           <div className="canvas-viewport">
+            {showHistory && roomId ? (
+              <HistoryPanel
+                key={roomId}
+                roomId={roomId}
+                ticket={getTicket(roomId) ?? ticket}
+                onClose={() => setShowHistory(false)}
+              />
+            ) : null}
+            {showSearch ? (
+              <SearchPalette
+                nodes={nodes}
+                onClose={() => setShowSearch(false)}
+                onJump={(node) => {
+                  const center = nodeCenter(node);
+                  setCamera((current) => ({
+                    ...current,
+                    x: center.x,
+                    y: center.y,
+                  }));
+                  setSelectedIds([node.id]);
+                  setShowSearch(false);
+                }}
+              />
+            ) : null}
             {boardError && (
               <div className="board-error" role="alert">
                 <span>{boardError}</span>
@@ -3636,7 +4119,7 @@ export function WhiteboardPage() {
             <div className="canvas-caption">
               <div>
                 <span className="canvas-caption__title">
-                  Production request flow
+                  {roomMeta?.name ?? boardTitle}
                 </span>
                 <span className="canvas-caption__meta">
                   {nodes.length} objects · {connectors.length + arrows.length}{' '}
@@ -3662,9 +4145,13 @@ export function WhiteboardPage() {
               aria-label="Architecture whiteboard. Drag empty space to select, drag shapes to move, double-click a shape to edit its label."
               aria-describedby="canvas-hint"
               onPointerDown={handleCanvasPointerDown}
-              onPointerMove={handleCanvasPointerMove}
+              onPointerMove={(event) => {
+                broadcastCursor(event);
+                handleCanvasPointerMove(event);
+              }}
               onPointerUp={handleCanvasPointerUp}
               onPointerCancel={handleCanvasPointerCancel}
+              onPointerLeave={clearBroadcastCursor}
               onDragStart={(event) => event.preventDefault()}
               onContextMenu={(event) => {
                 // Let right-clicks open the native menu; never start a board gesture.
@@ -3892,6 +4379,7 @@ export function WhiteboardPage() {
                     onKeySelect={(event, target) =>
                       handleNodeKeySelect(event, target)
                     }
+                    onImageError={handleImageError}
                   />
                 ))}
               </g>
@@ -3953,6 +4441,32 @@ export function WhiteboardPage() {
                     width={marquee.maxX - marquee.minX}
                     height={marquee.maxY - marquee.minY}
                   />
+                )}
+                {peers.map(
+                  (peer) =>
+                    peer.cursor && (
+                      <g
+                        key={peer.clientId}
+                        className="remote-cursor"
+                        transform={`translate(${peer.cursor.x} ${peer.cursor.y})`}
+                        pointerEvents="none"
+                      >
+                        <path
+                          d="M0 0 L0 16 L4.5 12 L7 18 L9.5 16.8 L7 11 L11.5 11 Z"
+                          fill={peer.user.color}
+                          stroke="#fff"
+                          strokeWidth="1.2"
+                        />
+                        <text
+                          x={13}
+                          y={13}
+                          className="remote-cursor-label"
+                          fill={peer.user.color}
+                        >
+                          {peer.user.name}
+                        </text>
+                      </g>
+                    ),
                 )}
                 {createPreview &&
                   (() => {
@@ -4121,6 +4635,7 @@ export function WhiteboardPage() {
                 aria-label="Undo"
                 title="Undo"
                 onClick={undo}
+                disabled={undoDepth === 0}
               >
                 <Undo2 size={16} />
               </button>
@@ -4129,6 +4644,7 @@ export function WhiteboardPage() {
                 aria-label="Redo"
                 title="Redo"
                 onClick={redo}
+                disabled={redoDepth === 0}
               >
                 <Redo2 size={16} />
               </button>
@@ -4198,6 +4714,15 @@ export function WhiteboardPage() {
           </aside>
         )}
       </main>
+      {showCreateRoom ? (
+        <CreateRoomDialog
+          onCreated={(meta) => {
+            setShowCreateRoom(false);
+            router.push(`/board?room=${encodeURIComponent(meta.id)}`);
+          }}
+          onClose={() => setShowCreateRoom(false)}
+        />
+      ) : null}
     </div>
   );
 }
