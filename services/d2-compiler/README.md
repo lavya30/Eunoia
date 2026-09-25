@@ -1,18 +1,19 @@
 # Eunoia D2 compiler service
 
-Small Go HTTP wrapper around `github.com/d2lang/d2`'s Dagre layout engine.
-The sync server forwards `POST /api/compile` here when `D2_COMPILER_URL`
-is configured.
+Small Go HTTP wrapper around `github.com/d2lang/d2`'s layout engines (dagre,
+elk, tala — all bundled in-process). The sync server forwards
+`POST /api/compile` here when `D2_COMPILER_URL` is configured. Tier gating
+(Community = dagre only, PRO+ = elk/tala) lives in the sync server.
 
 ## API
 
-- `POST /compile` — body `{ "source": "<d2>", "engine": "dagre", "tier": "COMMUNITY" }`
-  returns `{ "nodes": [...], "edges": [...] , "engine": "dagre" }`.
+- `POST /compile` — body `{ "source": "<d2>", "engine": "dagre|elk|tala", "tier": "COMMUNITY" }`
+  returns `{ "nodes": [...], "edges": [...] , "engine": "<engine>" }`.
   Nodes carry `{ key, label, x, y, width, height, shape, style: { fill, stroke }, strokeWidth }`;
   edges carry `{ key, source, target, label, color }`.
   Unknown engines are rejected with `400 { error, code: "INVALID_ENGINE" }`;
-  D2 syntax errors return `400 { error }`. Only `dagre` is supported.
-- `GET /healthz` — `{ "status": "ok", "engine": "dagre" }`.
+  D2 syntax errors return `400 { error }`. Engine defaults to `dagre`.
+- `GET /healthz` — `{ "status": "ok", "engines": ["dagre", "elk", "tala"] }`.
 
 ## Configuration
 

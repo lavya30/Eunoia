@@ -10,7 +10,15 @@ import {
 } from "../images.js";
 import type { RoomMetadata } from "../RoomLoader.js";
 import type { RoomManager } from "../RoomManager.js";
-import { authorizeRoom, extractTicket, issueTicket } from "../room-auth.js";
+import {
+  authorizeRoom,
+  extractTicket,
+  hashPassword,
+  issueTicket,
+  verifyPassword,
+} from "../room-auth.js";
+import { issueUserToken, verifyUserToken } from "../user-auth.js";
+import type { PublicUser, UserStore } from "../users.js";
 import {
   CompileRequestSchema,
   CreateRoomSchema,
@@ -18,8 +26,11 @@ import {
   ImageContentTypeSchema,
   ImageListQuerySchema,
   ImageRequestUploadSchema,
+  LoginUserSchema,
+  RegisterUserSchema,
   SnapshotQuerySchema,
   UnlockRoomSchema,
+  UpdateRoomSchema,
   validationError,
 } from "./schemas.js";
 
@@ -62,10 +73,40 @@ function r2Error(set: { status?: unknown }, error: unknown) {
   };
 }
 
+const TIER_RANK: Record<Tier, number> = {
+  COMMUNITY: 0,
+  PRO: 1,
+  ENTERPRISE: 2,
+};
+
+/** Higher of two tiers — a user's subscription travels into rooms. */
+export function higherTier(a: Tier, b: Tier): Tier {
+  return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
+}
+
+/**
+ * Optional user identity for endpoints that personalize (but don't require)
+ * authentication. Room tickets and garbage both resolve to anonymous.
+ */
+async function requestUser(
+  users: UserStore,
+  headers: Record<string, string | undefined>,
+  secret: string,
+): Promise<PublicUser | null> {
+  const authorization = headers.authorization;
+  if (typeof authorization !== "string") return null;
+  const [scheme, token] = authorization.split(" ");
+  if (scheme?.toLowerCase() !== "bearer" || !token) return null;
+  const userId = verifyUserToken(secret, token);
+  if (!userId) return null;
+  return users.findById(userId);
+}
+
 export function createApiApp(
   manager: RoomManager,
   config: Config,
   images: ImageDeps,
+  users: UserStore,
 ) {
   const ticketSecret = config.roomTicketSecret;
   if (!ticketSecret) throw new Error("roomTicketSecret is required");
@@ -126,13 +167,13 @@ export function createApiApp(
       set.headers["access-control-allow-headers"] =
         "content-type, authorization";
       set.headers["access-control-allow-methods"] =
-        "GET, POST, DELETE, OPTIONS";
+        "GET, POST, PATCH, DELETE, OPTIONS";
     })
     .get("/health", () => ({
       status: "ok",
       activeRooms: manager.activeRoomCount,
     }))
-    .post("/api/rooms", async ({ body, set }) => {
+    .post("/api/rooms", async ({ body, headers, set }) => {
       const parsed = CreateRoomSchema.safeParse(body);
       if (!parsed.success) {
         set.status = 400;
@@ -144,11 +185,18 @@ export function createApiApp(
         return validationError(parsed.error);
       }
       const input = parsed.data;
+      // Authenticated users own their rooms and inherit their tier unless
+      // they explicitly choose otherwise.
+      const user = await requestUser(
+        users,
+        headers as Record<string, string | undefined>,
+        ticketSecret,
+      );
       const room = await manager.createRoom(
         {
           name: input.name,
-          ownerId: input.ownerId,
-          tier: input.tier,
+          ownerId: input.ownerId ?? user?.id ?? "anonymous",
+          tier: input.tier ?? user?.tier ?? "COMMUNITY",
         },
         input.password,
       );
@@ -213,6 +261,103 @@ export function createApiApp(
       set.status = 204;
       return;
     })
+    .patch("/api/rooms/:roomId", async ({ params, body, headers, query, set }) => {
+      const access = await requestAccess(
+        manager,
+        params.roomId,
+        headers as Record<string, string | undefined>,
+        query as Record<string, unknown>,
+        ticketSecret,
+      );
+      if ("body" in access) {
+        set.status = access.status;
+        return access.body;
+      }
+      const parsed = UpdateRoomSchema.safeParse(body);
+      if (!parsed.success) {
+        set.status = 400;
+        if (parsed.error.issues.some((issue) => issue.path[0] === "password"))
+          return {
+            error: "Password must be at least 8 characters",
+            code: "INVALID_PASSWORD",
+          };
+        return validationError(parsed.error);
+      }
+      const input = parsed.data;
+      const updated = await manager.updateRoom(
+        access.room.id,
+        { name: input.name, ownerId: input.ownerId, tier: input.tier },
+        input.password,
+      );
+      if (!updated) {
+        set.status = 404;
+        return { error: "Room not found", code: "ROOM_NOT_FOUND" };
+      }
+      return updated;
+    })
+    .post("/api/auth/register", async ({ body, set }) => {
+      const parsed = RegisterUserSchema.safeParse(body);
+      if (!parsed.success) {
+        set.status = 400;
+        if (parsed.error.issues.some((issue) => issue.path[0] === "password"))
+          return {
+            error: "Password must be at least 8 characters",
+            code: "INVALID_PASSWORD",
+          };
+        return validationError(parsed.error);
+      }
+      const input = parsed.data;
+      const user = await users.createUser({
+        email: input.email,
+        name: input.name,
+        passwordHash: hashPassword(input.password),
+      });
+      if (!user) {
+        set.status = 409;
+        return { error: "Email is already registered", code: "USER_EXISTS" };
+      }
+      const { token, expiresIn } = issueUserToken(
+        ticketSecret,
+        user.id,
+        config.userTokenTtlSec,
+      );
+      set.status = 201;
+      return { user, token, expiresIn };
+    })
+    .post("/api/auth/login", async ({ body, set }) => {
+      const parsed = LoginUserSchema.safeParse(body);
+      if (!parsed.success) {
+        set.status = 400;
+        return validationError(parsed.error);
+      }
+      const input = parsed.data;
+      const user = await users.findByEmail(input.email);
+      const hash = user ? await users.getPasswordHash(user.id) : null;
+      if (!user || !hash || !verifyPassword(input.password, hash)) {
+        // Same response for unknown emails and wrong passwords so accounts
+        // cannot be enumerated.
+        set.status = 401;
+        return { error: "Invalid email or password", code: "INVALID_CREDENTIALS" };
+      }
+      const { token, expiresIn } = issueUserToken(
+        ticketSecret,
+        user.id,
+        config.userTokenTtlSec,
+      );
+      return { user, token, expiresIn };
+    })
+    .get("/api/auth/me", async ({ headers, set }) => {
+      const user = await requestUser(
+        users,
+        headers as Record<string, string | undefined>,
+        ticketSecret,
+      );
+      if (!user) {
+        set.status = 401;
+        return { error: "Invalid or expired token", code: "INVALID_TOKEN" };
+      }
+      return user;
+    })
     .post("/api/compile", async ({ body, headers, query, set }) => {
       const parsed = CompileRequestSchema.safeParse(body);
       if (!parsed.success) {
@@ -235,10 +380,15 @@ export function createApiApp(
       }
       const input = parsed.data;
       const engine = input.engine ?? "dagre";
-      // Tier is resolved server-side: the room's stored tier wins when a
-      // roomId is given, otherwise COMMUNITY. A client-asserted tier in the
-      // body is never trusted. Locked rooms additionally require a ticket.
-      let tier: Tier = "COMMUNITY";
+      // Tier is resolved server-side and never trusted from the client: the
+      // higher of the room's stored tier and the caller's user tier wins,
+      // defaulting to COMMUNITY. Locked rooms additionally require a ticket.
+      const caller = await requestUser(
+        users,
+        headers as Record<string, string | undefined>,
+        ticketSecret,
+      );
+      let tier: Tier = caller?.tier ?? "COMMUNITY";
       if (input.roomId) {
         const access = await requestAccess(
           manager,
@@ -251,7 +401,7 @@ export function createApiApp(
           set.status = access.status;
           return access.body;
         }
-        tier = access.room.tier;
+        tier = higherTier(access.room.tier, tier);
       }
       try {
         return await compileD2(
@@ -404,6 +554,9 @@ export function createApiApp(
         }
         try {
           const publicUrl = r2.publicUrl(input.key);
+          // The stored `url` is only a fallback: without a public base URL
+          // this presigned link expires, so list responses resolve a fresh
+          // URL per item at read time (see the list handler below).
           const url =
             publicUrl ??
             (await r2.presignDownload(input.key, config.r2UrlExpiresInSec)).url;
@@ -448,7 +601,31 @@ export function createApiApp(
           set.status = 400;
           return validationError(parsed.error);
         }
-        return images.imageStore.listImages(room.id, parsed.data.kind);
+        const stored = await images.imageStore.listImages(
+          room.id,
+          parsed.data.kind,
+        );
+        // Stored `url` values may be expired presigned links (see confirm).
+        // Resolve fresh URLs at read time so clients never render dead
+        // images; public URLs are stable and returned as stored.
+        const r2 = images.r2;
+        if (!r2) return stored;
+        return await Promise.all(
+          stored.map(async (image) => {
+            const publicUrl = r2.publicUrl(image.key);
+            if (publicUrl)
+              return publicUrl === image.url ? image : { ...image, url: publicUrl };
+            try {
+              const { url } = await r2.presignDownload(
+                image.key,
+                config.r2UrlExpiresInSec,
+              );
+              return { ...image, url };
+            } catch {
+              return image;
+            }
+          }),
+        );
       },
     )
     .get(

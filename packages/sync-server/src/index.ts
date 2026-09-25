@@ -20,6 +20,7 @@ import {
 } from "./RoomLoader.js";
 import { RoomManager } from "./RoomManager.js";
 import { authorizeRoom } from "./room-auth.js";
+import { MemoryUserStore, PrismaUserStore, type UserStore } from "./users.js";
 import { WebSocketHandler } from "./WebSocketHandler.js";
 
 const logger = pino({ name: "eunoia-sync-server" });
@@ -34,6 +35,7 @@ export function createSyncServer(
   config: Config = loadConfig(),
   store?: SnapshotStore,
   imageDeps?: Partial<ImageDeps>,
+  userStore?: UserStore,
 ): SyncServer {
   const prisma = config.databaseUrl?.startsWith("postgres")
     ? new PrismaClient({ datasources: { db: { url: config.databaseUrl } } })
@@ -62,6 +64,8 @@ export function createSyncServer(
           : null,
   };
   const manager = new RoomManager(config, persistence);
+  const users: UserStore =
+    userStore ?? (prisma ? new PrismaUserStore(prisma) : new MemoryUserStore());
   const handler = new WebSocketHandler(manager);
   const wsServer = new WebSocketServer({ noServer: true });
   let resolvedSecret = config.roomTicketSecret;
@@ -74,7 +78,7 @@ export function createSyncServer(
   const ticketSecret: string = resolvedSecret;
   const apiConfig: Config = { ...config, roomTicketSecret: ticketSecret };
   const server = createServer((req, res) => {
-    void handleApiRequest(req, res, manager, apiConfig, images).catch(
+    void handleApiRequest(req, res, manager, apiConfig, images, users).catch(
       (error) => {
         res.statusCode = 400;
         res.setHeader("content-type", "application/json");

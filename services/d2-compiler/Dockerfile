@@ -4,9 +4,9 @@ ARG GO_VERSION=1.27
 FROM golang:${GO_VERSION}-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/d2-compiler .
+RUN --mount=type=cache,target=/go/pkg/mod CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/d2-compiler .
 
 FROM alpine:3.21
 RUN adduser -D -H -u 10001 compiler

@@ -1,13 +1,14 @@
 // Command d2-compiler is Eunoia's D2 layout microservice.
 //
-// It wraps terrastruct/d2's Dagre layout engine behind a small HTTP API
-// consumed by the sync server (POST /api/compile forwards here):
+// It wraps terrastruct/d2's layout engines behind a small HTTP API consumed
+// by the sync server (POST /api/compile forwards here):
 //
 //	POST /compile  {source, engine, tier} -> {nodes, edges, engine}
-//	GET  /healthz  -> {status, engine}
+//	GET  /healthz  -> {status, engines}
 //
-// Only the "dagre" engine is supported; anything else is rejected with
-// INVALID_ENGINE so tier gating stays authoritative in the sync server.
+// Supported engines are dagre (default), elk, and tala — all bundled
+// in-process via the d2 module. Unknown engines are rejected with
+// INVALID_ENGINE; tier gating stays authoritative in the sync server.
 package main
 
 import (
@@ -84,7 +85,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("d2-compiler listening on :%s (dagre, max %d concurrent, %ds timeout)", port, maxConcurrent, timeoutSec)
+		log.Printf("d2-compiler listening on :%s (dagre, elk, tala; max %d concurrent, %ds timeout)", port, maxConcurrent, timeoutSec)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server error: %v", err)
 		}
@@ -103,7 +104,7 @@ func main() {
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", healthcheckCacheHeader)
-	_, _ = w.Write([]byte(`{"status":"ok","engine":"dagre"}`))
+	_, _ = w.Write([]byte(`{"status":"ok","engines":["dagre","elk","tala"]}`))
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

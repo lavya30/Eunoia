@@ -1,0 +1,14 @@
+# Dependencies are installed inside the image; the host's bun/npm layout
+# (symlinks, .bin) must never overwrite them — it breaks `npx prisma`,
+# `npm run build`, and buildkit layer mounts.
+**/node_modules
+# Build outputs are regenerated in the image.
+**/dist
+# Local-only config and caches.
+**/.env
+.git
+.gitignore
+**/.next
+**/coverage
+# Go build cache (d2-compiler builds from the module proxy).
+**/bin

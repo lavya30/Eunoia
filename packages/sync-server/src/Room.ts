@@ -23,6 +23,9 @@ export class Room {
   awareness: awarenessProtocol.Awareness;
   private _doc: Y.Doc;
   private readonly clients = new Map<string, RoomClient>();
+  /** Awareness clientIDs last announced by each socket. Lets disconnects
+   *  prune presence instead of leaving ghosts behind. */
+  private readonly awarenessOwners = new Map<string, Set<number>>();
   private readonly unsubscribeRedis: Promise<() => Promise<void>>;
 
   constructor(
@@ -67,6 +70,16 @@ export class Room {
   ): void => {
     const changed = added.concat(updated, removed);
     if (!changed.length || origin === "redis") return;
+    if (this.isClient(origin)) {
+      let owned = this.awarenessOwners.get(origin.id);
+      if (!owned) {
+        owned = new Set<number>();
+        this.awarenessOwners.set(origin.id, owned);
+      }
+      for (const clientId of added.concat(updated)) owned.add(clientId);
+      for (const clientId of removed) owned.delete(clientId);
+      if (owned.size === 0) this.awarenessOwners.delete(origin.id);
+    }
     const update = awarenessProtocol.encodeAwarenessUpdate(
       this.awareness,
       changed,
@@ -100,6 +113,7 @@ export class Room {
     this.awareness = new awarenessProtocol.Awareness(doc);
     this.attach();
     oldDoc.destroy();
+    this.awarenessOwners.clear();
     this.snapshotWorker.schedule(doc);
 
     for (const client of this.clients.values())
@@ -125,6 +139,17 @@ export class Room {
 
   removeClient(clientId: string): void {
     this.clients.delete(clientId);
+    const owned = this.awarenessOwners.get(clientId);
+    if (owned && owned.size > 0) {
+      this.awarenessOwners.delete(clientId);
+      // Fires handleAwarenessUpdate, which broadcasts the removal so peers
+      // stop rendering this client's cursor/avatar.
+      awarenessProtocol.removeAwarenessStates(
+        this.awareness,
+        [...owned],
+        "server-disconnect",
+      );
+    }
   }
 
   handleBinaryMessage(data: Uint8Array, client: RoomClient): void {

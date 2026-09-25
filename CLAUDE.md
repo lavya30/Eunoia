@@ -41,7 +41,7 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - Room image uploads via R2 presigned URLs plus metadata-only PostgreSQL records.
 - PostgreSQL persistence through Prisma, with an in-memory store for local development and tests.
 - Optional Redis Pub/Sub for cursor telemetry across server instances.
-- D2 compiler proxy at `POST /api/compile`, with a development placeholder when no compiler service is configured.
+- D2 compiler proxy at `POST /api/compile`, with a development placeholder when no compiler service is configured. The Go compiler (`services/d2-compiler`) bundles dagre, elk, and tala in-process; tier gating stays server-side (`elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes).
 - Runtime input/output validation with Zod at HTTP, WebSocket, and D2 compiler boundaries.
 
 ### HTTP API
@@ -51,6 +51,10 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - `POST /api/rooms/:roomId/unlock` (exchanges the password for an HMAC ticket; locked rooms require it as `Authorization: Bearer` or `?ticket=` on room endpoints and `/sync/:roomId`, which 401s otherwise)
 - `GET /api/rooms/:roomId`
 - `DELETE /api/rooms/:roomId`
+- `PATCH /api/rooms/:roomId` (partial update: `name`, `ownerId`, `tier`, `password` — string replaces, `null` clears, absent leaves alone; short passwords 400 `INVALID_PASSWORD`, empty bodies 400 `VALIDATION_ERROR`)
+- `POST /api/auth/register` (`email`, `password` min 8, optional `name`; 409 `USER_EXISTS`, 201 returns `{ user, token, expiresIn }`)
+- `POST /api/auth/login` (`email`, `password`; wrong/unknown 401 `INVALID_CREDENTIALS` so accounts can't be enumerated)
+- `GET /api/auth/me` (`Authorization: Bearer <user token>`; 401 `INVALID_TOKEN`)
 - `POST /api/compile` (optional `roomId` resolves the tier server-side and requires a ticket on locked rooms; `elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes — violations return 403 `TIER_UPGRADE_REQUIRED`)
 - Room images: `POST /api/rooms/:roomId/images/request-upload`, `POST /api/rooms/:roomId/images/confirm`, `GET /api/rooms/:roomId/images`, `GET /api/rooms/:roomId/images/:imageId/url`, `DELETE /api/rooms/:roomId/images/:imageId` (require R2 — 503 `R2_NOT_CONFIGURED` otherwise)
 - Snapshot history: `GET /api/rooms/:roomId/snapshots` (`limit`, `before`; metadata only), `POST /api/rooms/:roomId/snapshots/:snapshotId/restore` (force-flushes pre-restore state, drops peers with close code 4100 so they reload)
@@ -59,7 +63,7 @@ The WebSocket endpoint can also be addressed as `/api/rooms/:roomId/sync`.
 
 ### Validation
 
-Request schemas live in `packages/sync-server/src/api/schemas.ts`. Use these schemas with `safeParse` at every external boundary instead of trusting TypeScript casts. The schemas currently cover room creation and unlock requests, D2 compile requests, image upload/confirm/list requests, snapshot query parameters, and cursor telemetry.
+Request schemas live in `packages/sync-server/src/api/schemas.ts`. Use these schemas with `safeParse` at every external boundary instead of trusting TypeScript casts. The schemas currently cover room creation/update and unlock requests, user registration/login, D2 compile requests, image upload/confirm/list requests, snapshot query parameters, and cursor telemetry.
 
 Malformed HTTP requests return status 400 with this shape:
 
@@ -75,7 +79,7 @@ Preserve established domain error codes such as `INVALID_PASSWORD` and `INVALID_
 
 ### Configuration
 
-Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `R2_URL_EXPIRES_IN_SEC`, `SNAPSHOT_MAX_PER_ROOM`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_DEBOUNCE_MS`, `ROOM_IDLE_TIMEOUT_MS`, `ROOM_TICKET_SECRET`, and `ROOM_TICKET_TTL_SEC`.
+Copy `packages/sync-server/.env.example` to `.env` when running the server directly. Important settings include `PORT`, `DATABASE_URL`, `REDIS_URL`, `D2_COMPILER_URL`, `D2_COMMUNITY_NODE_LIMIT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`, `R2_MAX_UPLOAD_BYTES`, `R2_URL_EXPIRES_IN_SEC`, `SNAPSHOT_MAX_PER_ROOM`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_DEBOUNCE_MS`, `ROOM_IDLE_TIMEOUT_MS`, `ROOM_TICKET_SECRET`, `ROOM_TICKET_TTL_SEC`, and `USER_TOKEN_TTL_SEC`.
 
 Production requires `DATABASE_URL`. Redis, R2, and the external D2 compiler are optional in development; the server remains usable without them (image endpoints 503 without R2). Without `ROOM_TICKET_SECRET` the server generates an ephemeral secret and warns; tickets then invalidate on restart.
 
@@ -85,7 +89,7 @@ After changing `packages/sync-server/prisma/schema.prisma`, regenerate the clien
 bun run prisma:generate
 ```
 
-Do not assume the `User` model provides authentication or authorization; user-level auth flows are not implemented yet (only room passwords exist).
+User accounts exist (`User` model + `POST /api/auth/register|login`, `GET /api/auth/me` with stateless `u1.*` HMAC session tokens sharing `ROOM_TICKET_SECRET`). Authenticated room creation defaults `ownerId`/`tier` from the user; compiles use the higher of room and caller tier. There are no roles or admin flows — tier changes happen directly in the database.
 
 ### Image storage
 

@@ -10,6 +10,8 @@ import (
 
 	"github.com/d2lang/d2/d2graph"
 	"github.com/d2lang/d2/d2layouts/d2dagrelayout"
+	"github.com/d2lang/d2/d2layouts/d2elklayout"
+	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2lib"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
@@ -52,6 +54,19 @@ type compileResponse struct {
 }
 
 func dagreLayout() string { return "dagre" }
+func elkLayout() string   { return "elk" }
+func talaLayout() string  { return "tala" }
+
+// supportedLayouts maps engine names to their bundled in-process layout
+// implementations. All three ship inside the d2 module — no external
+// binaries or network access required.
+func supportedLayouts() map[string]d2graph.LayoutGraph {
+	return map[string]d2graph.LayoutGraph{
+		dagreLayout(): d2dagrelayout.DefaultLayout,
+		elkLayout():   d2elklayout.DefaultLayout,
+		talaLayout():  d2talalayout.DefaultLayout,
+	}
+}
 
 func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -68,9 +83,10 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 	if engine == "" {
 		engine = dagreLayout()
 	}
-	if engine != dagreLayout() {
+	layout, ok := supportedLayouts()[engine]
+	if !ok {
 		writeError(w, http.StatusBadRequest, "INVALID_ENGINE",
-			fmt.Sprintf("Unknown layout engine: %q (this service supports dagre only)", req.Engine))
+			fmt.Sprintf("Unknown layout engine: %q (supported: dagre, elk, tala)", req.Engine))
 		return
 	}
 	if strings.TrimSpace(req.Source) == "" {
@@ -96,9 +112,9 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 
 	diagram, _, err := d2lib.Compile(ctx, req.Source, &d2lib.CompileOptions{
 		Ruler:  s.ruler,
-		Layout: layoutName(),
+		Layout: layoutName(engine),
 		LayoutResolver: func(string) (d2graph.LayoutGraph, error) {
-			return d2dagrelayout.DefaultLayout, nil
+			return layout, nil
 		},
 		// No RouterResolver: d2lib falls back to the default edge router.
 	}, nil)
@@ -107,7 +123,7 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := compileResponse{Nodes: []nodeJSON{}, Edges: []edgeJSON{}, Engine: dagreLayout()}
+	resp := compileResponse{Nodes: []nodeJSON{}, Edges: []edgeJSON{}, Engine: engine}
 	rootID := diagram.Root.ID
 	for _, shape := range diagram.Shapes {
 		if shape.ID == "" || shape.ID == rootID {
@@ -156,8 +172,8 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func layoutName() *string {
-	name := dagreLayout()
+func layoutName(engine string) *string {
+	name := engine
 	return &name
 }
 

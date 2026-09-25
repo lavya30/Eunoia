@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Config } from "../config.js";
 import type { ImageDeps } from "../images.js";
 import type { RoomManager } from "../RoomManager.js";
+import type { UserStore } from "../users.js";
 import { createApiApp } from "./app.js";
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -13,6 +14,7 @@ export async function handleApiRequest(
   manager: RoomManager,
   config: Config,
   images: ImageDeps,
+  users: UserStore,
 ): Promise<void> {
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
@@ -21,7 +23,10 @@ export async function handleApiRequest(
       "access-control-allow-headers",
       "content-type, authorization",
     );
-    res.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader(
+      "access-control-allow-methods",
+      "GET, POST, PATCH, DELETE, OPTIONS",
+    );
     res.end();
     return;
   }
@@ -45,11 +50,16 @@ export async function handleApiRequest(
     `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`,
     { method: req.method, headers, body },
   );
-  const response = await createApiApp(manager, config, images).handle(request);
+  const response = await createApiApp(manager, config, images, users).handle(
+    request,
+  );
   res.statusCode = response.status;
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader("access-control-allow-headers", "content-type, authorization");
-  res.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader(
+    "access-control-allow-methods",
+    "GET, POST, PATCH, DELETE, OPTIONS",
+  );
   response.headers.forEach((value, key) => {
     res.setHeader(key, value);
   });

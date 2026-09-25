@@ -68,11 +68,24 @@ export interface SnapshotStore {
   ): Promise<StoredSnapshot[]>;
   saveSnapshot(snapshot: StoredSnapshot): Promise<void>;
   ensureRoom(metadata: RoomMetadata, passwordHash?: string): Promise<void>;
+  updateRoom(roomId: string, updates: RoomUpdate): Promise<RoomMetadata | null>;
   getRoom(roomId: string): Promise<RoomMetadata | null>;
   getPasswordHash(roomId: string): Promise<string | null>;
   deleteRoom?(roomId: string): Promise<void>;
   close?(): Promise<void>;
 }
+
+/**
+ * Partial room update. `passwordHash` replaces the stored hash when a
+ * string, clears the password when null, and leaves it untouched when
+ * undefined (so re-updates never clobber a password by accident).
+ */
+export type RoomUpdate = {
+  name?: string;
+  ownerId?: string;
+  tier?: RoomMetadata["tier"];
+  passwordHash?: string | null;
+};
 
 export class MemorySnapshotStore implements SnapshotStore {
   readonly rooms = new Map<string, RoomMetadata>();
@@ -138,6 +151,31 @@ export class MemorySnapshotStore implements SnapshotStore {
 
   async getRoom(roomId: string): Promise<RoomMetadata | null> {
     return this.rooms.get(roomId) ?? null;
+  }
+
+  async updateRoom(
+    roomId: string,
+    updates: RoomUpdate,
+  ): Promise<RoomMetadata | null> {
+    const existing = this.rooms.get(roomId);
+    if (!existing) return null;
+    const next: RoomMetadata = {
+      ...existing,
+      ...(updates.name !== undefined ? { name: updates.name } : {}),
+      ...(updates.ownerId !== undefined ? { ownerId: updates.ownerId } : {}),
+      ...(updates.tier !== undefined ? { tier: updates.tier } : {}),
+      hasPassword:
+        updates.passwordHash === undefined
+          ? existing.hasPassword
+          : updates.passwordHash !== null,
+    };
+    this.rooms.set(roomId, next);
+    if (updates.passwordHash !== undefined) {
+      if (updates.passwordHash === null)
+        this.passwordHashes.delete(roomId);
+      else this.passwordHashes.set(roomId, updates.passwordHash);
+    }
+    return next;
   }
 
   async getPasswordHash(roomId: string): Promise<string | null> {
@@ -272,6 +310,49 @@ export class PrismaSnapshotStore implements SnapshotStore {
           hasPassword: room.passwordHash !== null,
         }
       : null;
+  }
+
+  async updateRoom(
+    roomId: string,
+    updates: RoomUpdate,
+  ): Promise<RoomMetadata | null> {
+    const room = await this.prisma.room
+      .update({
+        where: { id: roomId },
+        data: {
+          ...(updates.name !== undefined ? { name: updates.name } : {}),
+          ...(updates.ownerId !== undefined ? { ownerId: updates.ownerId } : {}),
+          ...(updates.tier !== undefined ? { tier: updates.tier } : {}),
+          ...(updates.passwordHash !== undefined
+            ? { passwordHash: updates.passwordHash }
+            : {}),
+        },
+        select: {
+          id: true,
+          name: true,
+          ownerId: true,
+          tier: true,
+          passwordHash: true,
+        },
+      })
+      .catch((error: unknown) => {
+        // Missing row (P2025). Anything else is a real failure.
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          (error as { code?: string }).code === "P2025"
+        )
+          return null;
+        throw error;
+      });
+    if (!room) return null;
+    return {
+      id: room.id,
+      name: room.name,
+      ownerId: room.ownerId,
+      tier: room.tier,
+      hasPassword: room.passwordHash !== null,
+    };
   }
 
   async getPasswordHash(roomId: string): Promise<string | null> {

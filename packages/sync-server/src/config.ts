@@ -23,6 +23,7 @@ const envSchema = z.object({
   SNAPSHOT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   ROOM_TICKET_SECRET: z.string().min(1).optional(),
   ROOM_TICKET_TTL_SEC: z.coerce.number().int().positive().default(86400),
+  USER_TOKEN_TTL_SEC: z.coerce.number().int().positive().default(604800),
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
@@ -48,6 +49,7 @@ export type Config = {
   snapshotRetentionDays: number;
   roomTicketSecret?: string;
   roomTicketTtlSec: number;
+  userTokenTtlSec: number;
   nodeEnv: "development" | "test" | "production";
 };
 
@@ -130,6 +132,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     snapshotRetentionDays: parsed.SNAPSHOT_RETENTION_DAYS,
     roomTicketSecret: parsed.ROOM_TICKET_SECRET,
     roomTicketTtlSec: parsed.ROOM_TICKET_TTL_SEC,
+    userTokenTtlSec: parsed.USER_TOKEN_TTL_SEC,
     nodeEnv: parsed.NODE_ENV,
   };
 }

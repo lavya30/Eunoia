@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-Next.js 16 (React 19, App Router, TypeScript Strict Mode), Tailwind CSS v4, Three.js with @react-three/fiber and @react-three/drei for 3D, Monaco Editor for D2 code-to-diagram editing.
+Next.js 16 (React 19, App Router, TypeScript Strict Mode), Tailwind CSS v4, SVG canvas with grid-cell spatial culling, Monaco Editor for D2 code-to-diagram editing.
 
 ## Users
 
@@ -20,7 +20,7 @@ Eunoia is a high-performance, real-time collaborative whiteboard engine designed
 
 ## Positioning
 
-60 FPS infinite-canvas performance at 3,000+ shapes via hardware-accelerated multi-layer rendering with RBush spatial culling. Sub-50ms peer synchronization using decentralized CRDTs (Yjs binary delta encoding). First-class D2 code-to-canvas compilation producing fully interactive native vector elements rather than flat SVGs. True server-side persistence with compressed binary snapshots in PostgreSQL, eliminating local-storage limits and browser crash data loss.
+60 FPS infinite-canvas performance at 3,000+ shapes via SVG rendering with grid-cell spatial culling. Sub-50ms peer synchronization using decentralized CRDTs (Yjs binary delta encoding). First-class D2 code-to-canvas compilation producing fully interactive native vector elements rather than flat SVGs. True server-side persistence with compressed binary snapshots in PostgreSQL, eliminating local-storage limits and browser crash data loss.
 
 ## Operating Context
 
@@ -33,7 +33,7 @@ Users work in browser-based whiteboarding sessions accessed via room links. Engi
 - Vector tool suite: geometric shapes, connectors with magnetic snap, pressure-sensitive freehand ink (perfect-freehand), transform gizmos
 - Real-time multiplayer: Yjs CRDTs for state sync, Redis pub/sub for cursor telemetry, per-user local undo/redo stacks
 - D2 code-to-diagram engine: Monaco editor with split-pane layout, debounced compilation pipeline, AST-to-native vector transformation with differential reconciliation
-- Server-side persistence: in-memory Y.Doc buffering with debounced PostgreSQL flush, LZ4/Zstandard compression, crash recovery from latest snapshot
+- Server-side persistence: in-memory Y.Doc buffering with debounced PostgreSQL flush, fflate compression, crash recovery from latest snapshot
 - Layout engines: Dagre (Community), ELK + TALA (Pro)
 - NFR-1: 60 FPS continuous pan and zoom with 3,000+ vector shapes
 - NFR-2: sub-50ms end-to-end peer mutation broadcast
@@ -47,9 +47,9 @@ Product name: Eunoia. Open-core business model with Community Edition (open sour
 
 - PRD.md: Complete product requirements document covering technology stack, features, business model, and roadmap
 - Eunoia_prd.docx: Original PRD document
-- Frontend codebase: Next.js 16 with TypeScript, Tailwind CSS v4, Three.js/@react-three/fiber/@react-three/drei installed, Monaco Editor integrated, D2 language syntax highlighting, SplitPaneEditor component with default D2 sample code
+- Frontend codebase: Next.js 16 with TypeScript, Tailwind CSS v4, Monaco Editor integrated, D2 language syntax highlighting, SplitPaneEditor component with default D2 sample code, landing page plus `/board` whiteboard route with Yjs sync, presence, and R2 image uploads
 - globals.css: Sketch-theme visual direction (dark paper background, Gloria Hallelujah hand-drawn font, Quasand body font, warm accent palette)
-- page.tsx: Placeholder (renders "home" text only)
+- Board persistence: PostgreSQL BYTEA storage for compressed Y.Doc snapshots
 
 ## Product Principles
 

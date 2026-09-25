@@ -63,6 +63,24 @@ export class RoomManager {
     return this.store.getRoom(roomId);
   }
 
+  /**
+   * Partial room update (name / owner / tier / password). `password`
+   * replaces the hash when a string, clears it when null, and leaves it
+   * untouched when undefined. Returns null when the room does not exist.
+   */
+  async updateRoom(
+    roomId: string,
+    updates: { name?: string; ownerId?: string; tier?: RoomMetadata["tier"] },
+    password?: string | null,
+  ): Promise<RoomMetadata | null> {
+    return this.store.updateRoom(roomId, {
+      ...updates,
+      ...(password === undefined
+        ? {}
+        : { passwordHash: password === null ? null : hashPassword(password) }),
+    });
+  }
+
   /** True for open rooms; compares the scrypt hash for locked rooms. */
   async verifyRoomPassword(roomId: string, password: string): Promise<boolean> {
     const hash = await this.store.getPasswordHash(roomId);

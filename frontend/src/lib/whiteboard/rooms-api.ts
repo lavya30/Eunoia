@@ -218,6 +218,23 @@ export async function deleteRoom(
   });
 }
 
+export async function updateRoom(
+  roomId: string,
+  ticket: string | undefined,
+  input: {
+    name?: string;
+    ownerId?: string;
+    tier?: RoomTier;
+    password?: string | null;
+  },
+): Promise<RoomMetadata> {
+  return request<RoomMetadata>(
+    'PATCH',
+    `/api/rooms/${encodeURIComponent(roomId)}`,
+    { ticket, body: input },
+  );
+}
+
 export async function listSnapshots(
   roomId: string,
   ticket: string | undefined,

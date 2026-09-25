@@ -30,6 +30,34 @@ export const UnlockRoomSchema = z
   })
   .strict();
 
+export const RegisterUserSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(MAX_ROOM_ID_LENGTH),
+    password: z.string().min(8).max(MAX_PASSWORD_LENGTH),
+    name: z.string().trim().min(1).max(MAX_TEXT_LENGTH).optional(),
+  })
+  .strict();
+
+export const LoginUserSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(MAX_ROOM_ID_LENGTH),
+    password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
+  })
+  .strict();
+
+export const UpdateRoomSchema = z
+  .object({
+    name: z.string().trim().min(1).max(MAX_TEXT_LENGTH).optional(),
+    ownerId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
+    tier: TierSchema.optional(),
+    // String replaces the password, null clears it, absent leaves it alone.
+    password: z.string().min(8).max(MAX_PASSWORD_LENGTH).nullable().optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one field must be provided",
+  });
+
 export const CompileRequestSchema = z
   .object({
     source: z

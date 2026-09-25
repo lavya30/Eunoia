@@ -42,6 +42,7 @@ describe("HTTP API", () => {
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
         roomTicketTtlSec: 86400,
+        userTokenTtlSec: 604800,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -231,6 +232,7 @@ describe("Room images", () => {
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
         roomTicketTtlSec: 86400,
+        userTokenTtlSec: 604800,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -384,6 +386,7 @@ describe("Room images", () => {
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
         roomTicketTtlSec: 86400,
+        userTokenTtlSec: 604800,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -440,6 +443,7 @@ describe("Snapshot history", () => {
         snapshotMaxPerRoom: 100,
         snapshotRetentionDays: 30,
         roomTicketTtlSec: 86400,
+        userTokenTtlSec: 604800,
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
       },
@@ -729,6 +733,7 @@ describe("Room passwords", () => {
         r2MaxUploadBytes: 10_000_000,
         r2UrlExpiresInSec: 900,
         roomTicketTtlSec: 86400,
+        userTokenTtlSec: 604800,
       },
       new MemorySnapshotStore(),
     );
@@ -855,5 +860,266 @@ describe("Room passwords", () => {
     expect(verifyPassword("s3cret-pass", a)).toBe(true);
     expect(verifyPassword("wrong-pass", a)).toBe(false);
     expect(verifyPassword("s3cret-pass", "garbage")).toBe(false);
+  });
+});
+
+describe("Room updates", () => {
+  let app: SyncServer;
+  let baseUrl: string;
+  let openId: string;
+
+  const request = (path: string, init?: RequestInit) =>
+    fetch(`${baseUrl}${path}`, init);
+
+  const patch = (path: string, payload: unknown, auth?: string) =>
+    request(path, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        ...(auth ? { authorization: `Bearer ${auth}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+  beforeEach(async () => {
+    app = createSyncServer(
+      {
+        port: 0,
+        host: "127.0.0.1",
+        nodeEnv: "test",
+        snapshotDebounceMs: 10,
+        roomIdleTimeoutMs: 10,
+        d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
+        roomTicketTtlSec: 86400,
+        userTokenTtlSec: 604800,
+        r2MaxUploadBytes: 10_000_000,
+        r2UrlExpiresInSec: 900,
+      },
+      new MemorySnapshotStore(),
+    );
+    await new Promise<void>((resolve) =>
+      app.server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = app.server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Server did not bind");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const created = await request("/api/rooms", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Before" }),
+    });
+    openId = ((await created.json()) as { id: string }).id;
+  });
+
+  afterEach(async () => app.close());
+
+  test("patches name, owner, and tier", async () => {
+    const response = await patch(`/api/rooms/${openId}`, {
+      name: "After",
+      ownerId: "user-1",
+      tier: "PRO",
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      id: openId,
+      name: "After",
+      ownerId: "user-1",
+      tier: "PRO",
+      hasPassword: false,
+    });
+  });
+
+  test("sets, replaces, and clears passwords", async () => {
+    const set = await patch(`/api/rooms/${openId}`, {
+      password: "new-secret-pass",
+    });
+    expect(set.status).toBe(200);
+    expect(((await set.json()) as Record<string, unknown>).hasPassword).toBe(
+      true,
+    );
+    // Locked without a ticket now.
+    expect((await request(`/api/rooms/${openId}`)).status).toBe(401);
+
+    const unlock = await request(`/api/rooms/${openId}/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "new-secret-pass" }),
+    });
+    expect(unlock.status).toBe(200);
+    const ticket = ((await unlock.json()) as { ticket: string }).ticket;
+
+    const cleared = await patch(
+      `/api/rooms/${openId}`,
+      { password: null },
+      ticket,
+    );
+    expect(cleared.status).toBe(200);
+    expect(((await cleared.json()) as Record<string, unknown>).hasPassword).toBe(
+      false,
+    );
+    expect((await request(`/api/rooms/${openId}`)).status).toBe(200);
+  });
+
+  test("rejects empty updates, short passwords, and missing rooms", async () => {
+    expect((await patch(`/api/rooms/${openId}`, {})).status).toBe(400);
+
+    const weak = await patch(`/api/rooms/${openId}`, { password: "short" });
+    expect(weak.status).toBe(400);
+    expect(((await weak.json()) as Record<string, unknown>).code).toBe(
+      "INVALID_PASSWORD",
+    );
+
+    const missing = await patch("/api/rooms/no-such-room", { name: "X" });
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as Record<string, unknown>).code).toBe(
+      "ROOM_NOT_FOUND",
+    );
+  });
+});
+
+describe("User auth", () => {
+  let app: SyncServer;
+  let baseUrl: string;
+
+  const post = (path: string, payload: unknown, auth?: string) =>
+    fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(auth ? { authorization: `Bearer ${auth}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+  const get = (path: string, auth?: string) =>
+    fetch(`${baseUrl}${path}`, {
+      headers: auth ? { authorization: `Bearer ${auth}` } : {},
+    });
+
+  beforeEach(async () => {
+    app = createSyncServer(
+      {
+        port: 0,
+        host: "127.0.0.1",
+        nodeEnv: "test",
+        snapshotDebounceMs: 10,
+        roomIdleTimeoutMs: 10,
+        d2CommunityNodeLimit: 30,
+        snapshotMaxPerRoom: 100,
+        snapshotRetentionDays: 30,
+        roomTicketTtlSec: 86400,
+        userTokenTtlSec: 604800,
+        r2MaxUploadBytes: 10_000_000,
+        r2UrlExpiresInSec: 900,
+      },
+      new MemorySnapshotStore(),
+    );
+    await new Promise<void>((resolve) =>
+      app.server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = app.server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Server did not bind");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterEach(async () => app.close());
+
+  test("registers, rejects duplicates, and gates login and me", async () => {
+    const registered = await post("/api/auth/register", {
+      email: "Ada@Example.com",
+      password: "s3cret-pass",
+      name: "Ada",
+    });
+    expect(registered.status).toBe(201);
+    const created = (await registered.json()) as {
+      user: { id: string; email: string; name: string; tier: string };
+      token: string;
+      expiresIn: number;
+    };
+    // Emails normalize; hashes never leak.
+    expect(created.user.email).toBe("ada@example.com");
+    expect(created.user.tier).toBe("COMMUNITY");
+    expect(
+      (created as unknown as Record<string, unknown>).passwordHash,
+    ).toBeUndefined();
+    expect(typeof created.token).toBe("string");
+
+    const duplicate = await post("/api/auth/register", {
+      email: "ada@example.com",
+      password: "other-secret-pass",
+    });
+    expect(duplicate.status).toBe(409);
+    expect(((await duplicate.json()) as Record<string, unknown>).code).toBe(
+      "USER_EXISTS",
+    );
+
+    const weak = await post("/api/auth/register", {
+      email: "new@example.com",
+      password: "short",
+    });
+    expect(weak.status).toBe(400);
+
+    const badLogin = await post("/api/auth/login", {
+      email: "ada@example.com",
+      password: "wrong-pass",
+    });
+    expect(badLogin.status).toBe(401);
+    const unknownLogin = await post("/api/auth/login", {
+      email: "nobody@example.com",
+      password: "s3cret-pass",
+    });
+    expect(unknownLogin.status).toBe(401);
+    expect(
+      ((await unknownLogin.json()) as Record<string, unknown>).code,
+    ).toBe("INVALID_CREDENTIALS");
+
+    const login = await post("/api/auth/login", {
+      email: "ada@example.com",
+      password: "s3cret-pass",
+    });
+    expect(login.status).toBe(200);
+    const session = (await login.json()) as { token: string };
+    expect(typeof session.token).toBe("string");
+
+    const me = await get("/api/auth/me", session.token);
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as Record<string, unknown>).id).toBe(
+      created.user.id,
+    );
+    expect((await get("/api/auth/me")).status).toBe(401);
+    expect((await get("/api/auth/me", "garbage")).status).toBe(401);
+  });
+
+  test("authenticated rooms inherit owner and tier", async () => {
+    const registered = await post("/api/auth/register", {
+      email: "owner@example.com",
+      password: "s3cret-pass",
+    });
+    const { user, token } = (await registered.json()) as {
+      user: { id: string };
+      token: string;
+    };
+
+    const roomResponse = await post(
+      "/api/rooms",
+      { name: "Owned" },
+      token,
+    );
+    expect(roomResponse.status).toBe(201);
+    const room = (await roomResponse.json()) as Record<string, unknown>;
+    expect(room.ownerId).toBe(user.id);
+    expect(room.tier).toBe("COMMUNITY");
+
+    // Anonymous creation still defaults as before.
+    const anon = await post("/api/rooms", { name: "Anon" });
+    expect(((await anon.json()) as Record<string, unknown>).ownerId).toBe(
+      "anonymous",
+    );
   });
 });
