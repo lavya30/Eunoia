@@ -23,6 +23,8 @@ export interface UserStore {
   findByEmail(email: string): Promise<PublicUser | null>;
   findById(id: string): Promise<PublicUser | null>;
   getPasswordHash(userId: string): Promise<string | null>;
+  /** Update the user's subscription tier. Returns null if user not found. */
+  updateTier(userId: string, tier: Tier): Promise<PublicUser | null>;
 }
 
 /** Email identity: lowercase, trimmed. All lookups normalize first. */
@@ -62,6 +64,13 @@ export class MemoryUserStore implements UserStore {
 
   async getPasswordHash(userId: string): Promise<string | null> {
     return this.byId.get(userId)?.passwordHash ?? null;
+  }
+
+  async updateTier(userId: string, tier: Tier): Promise<PublicUser | null> {
+    const row = this.byId.get(userId);
+    if (!row) return null;
+    row.tier = tier;
+    return toPublicUser(row);
   }
 }
 
@@ -107,6 +116,24 @@ export class PrismaUserStore implements UserStore {
       select: { passwordHash: true },
     });
     return row?.passwordHash ?? null;
+  }
+
+  async updateTier(userId: string, tier: Tier): Promise<PublicUser | null> {
+    try {
+      const row = await this.prisma.user.update({
+        where: { id: userId },
+        data: { tier },
+      });
+      return toPublicUser(row);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error as { code?: string }).code === "P2025"
+      )
+        return null;
+      throw error;
+    }
   }
 }
 

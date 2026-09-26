@@ -26,6 +26,13 @@ import { RoomManager } from "./RoomManager.js";
 import { authorizeRoom, extractTicket } from "./room-auth.js";
 import { MemoryUserStore, PrismaUserStore, type UserStore } from "./users.js";
 import { WebSocketHandler } from "./WebSocketHandler.js";
+import {
+  MemoryBillingEventStore,
+  MemoryBillingStore,
+  PrismaBillingEventStore,
+  PrismaBillingStore,
+} from "./billing-store.js";
+import { StubBillingProvider, type BillingDeps } from "./billing.js";
 
 const logger = pino({ name: "eunoia-sync-server" });
 
@@ -41,6 +48,7 @@ export function createSyncServer(
   imageDeps?: Partial<ImageDeps>,
   userStore?: UserStore,
   healthChecks?: HealthChecks,
+  billingDepsOverride?: Partial<BillingDeps>,
 ): SyncServer {
   if (
     config.databaseUrl !== undefined &&
@@ -82,6 +90,19 @@ export function createSyncServer(
   const manager = new RoomManager(config, persistence);
   const users: UserStore =
     userStore ?? (prisma ? new PrismaUserStore(prisma) : new MemoryUserStore());
+  const billing: BillingDeps = {
+    provider:
+      billingDepsOverride?.provider ?? new StubBillingProvider(config),
+    subscriptionStore:
+      billingDepsOverride?.subscriptionStore ??
+      (prisma ? new PrismaBillingStore(prisma) : new MemoryBillingStore()),
+    billingEventStore:
+      billingDepsOverride?.billingEventStore ??
+      (prisma
+        ? new PrismaBillingEventStore(prisma)
+        : new MemoryBillingEventStore()),
+    userStore: billingDepsOverride?.userStore ?? users,
+  };
   const handler = new WebSocketHandler(manager);
   const wsServer = new WebSocketServer({ noServer: true });
   let resolvedSecret = config.roomTicketSecret;
@@ -111,6 +132,7 @@ export function createSyncServer(
   const server = createServer((req, res) => {
     void handleApiRequest(req, res, manager, apiConfig, images, users, {
       apiDeps,
+      billing,
       log: logger,
     }).catch((error) => {
       res.statusCode = 400;

@@ -4437,6 +4437,8 @@ export function WhiteboardPage({
           body && typeof body.error === 'string'
             ? body.error
             : `D2 compilation failed (${response.status}).`;
+        // The banner renders an "Upgrade to Pro" button whenever the
+        // message carries this marker (see the boardError banner below).
         const hint =
           body?.code === 'TIER_UPGRADE_REQUIRED'
             ? ' This diagram needs a Pro layout engine or fewer nodes.'
@@ -5885,6 +5887,26 @@ export function WhiteboardPage({
             {boardError && (
               <div className="board-error" role="alert">
                 <span>{boardError}</span>
+                {boardError.includes('needs a Pro layout engine') ? (
+                  <button
+                    type="button"
+                    onClick={() => router.push('/pricing')}
+                    style={{
+                      marginLeft: 8,
+                      border: 0,
+                      borderRadius: 999,
+                      padding: '4px 12px',
+                      background: '#5b54c7',
+                      color: '#fff',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Upgrade to Pro
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   aria-label="Dismiss message"

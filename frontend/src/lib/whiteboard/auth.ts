@@ -7,6 +7,7 @@ export type AuthUser = {
   id: string;
   email: string;
   name: string | null;
+  tier?: 'COMMUNITY' | 'PRO' | 'ENTERPRISE';
 };
 
 export type AuthResponse = {
@@ -207,6 +208,12 @@ export function loadSession(): AuthSession | null {
         id: parsed.user.id,
         email: parsed.user.email,
         name: typeof parsed.user.name === 'string' ? parsed.user.name : null,
+        tier:
+          parsed.user.tier === 'COMMUNITY' ||
+          parsed.user.tier === 'PRO' ||
+          parsed.user.tier === 'ENTERPRISE'
+            ? parsed.user.tier
+            : undefined,
       },
       expiresAt: parsed.expiresAt,
     };

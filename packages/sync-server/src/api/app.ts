@@ -28,7 +28,9 @@ import {
 } from "../room-auth.js";
 import { issueUserToken, verifyUserToken } from "../user-auth.js";
 import type { PublicUser, UserStore } from "../users.js";
+import type { BillingDeps } from "../billing.js";
 import {
+  CheckoutSchema,
   CompileRequestSchema,
   CreateRoomSchema,
   ImageConfirmSchema,
@@ -171,6 +173,8 @@ export type ApiDeps = {
   startedAt?: number;
   /** Release string for /health and /readyz. Defaults to package version. */
   version?: string;
+  /** Billing provider and stores. */
+  billing?: BillingDeps;
 };
 
 const skippedCheck = async (): Promise<DependencyCheck> => ({
@@ -1052,5 +1056,112 @@ export function createApiApp(
           return { error: "Snapshot not found" };
         },
       )
+      .get("/api/billing/prices", async ({ set }) => {
+        const billing = deps.billing;
+        if (!billing) {
+          set.status = 503;
+          return {
+            error: "Billing is not configured",
+            code: "BILLING_NOT_CONFIGURED",
+          };
+        }
+        return { prices: billing.provider.plans() };
+      })
+      .post("/api/billing/checkout", async ({ body, headers, set }) => {
+        const billing = deps.billing;
+        if (!billing) {
+          set.status = 503;
+          return {
+            error: "Billing is not configured",
+            code: "BILLING_NOT_CONFIGURED",
+          };
+        }
+        const user = await requestUser(
+          users,
+          headers as Record<string, string | undefined>,
+          ticketSecret,
+        );
+        if (!user) {
+          set.status = 401;
+          return { error: "Authentication required", code: "AUTH_REQUIRED" };
+        }
+        const parsed = CheckoutSchema.safeParse(body);
+        if (!parsed.success) {
+          set.status = 400;
+          return validationError(parsed.error);
+        }
+        try {
+          const result = await billing.provider.createCheckoutSession(
+            user.id,
+            parsed.data.priceKey,
+            parsed.data.seats,
+          );
+          return result;
+        } catch (error) {
+          set.status = 500;
+          return {
+            error: error instanceof Error ? error.message : "Checkout failed",
+            code: "CHECKOUT_FAILED",
+          };
+        }
+      })
+      .post("/api/billing/portal", async ({ headers, set }) => {
+        const billing = deps.billing;
+        if (!billing) {
+          set.status = 503;
+          return {
+            error: "Billing is not configured",
+            code: "BILLING_NOT_CONFIGURED",
+          };
+        }
+        const user = await requestUser(
+          users,
+          headers as Record<string, string | undefined>,
+          ticketSecret,
+        );
+        if (!user) {
+          set.status = 401;
+          return { error: "Authentication required", code: "AUTH_REQUIRED" };
+        }
+        const sub = await billing.subscriptionStore.findByUserId(user.id);
+        if (!sub?.customerId) {
+          set.status = 400;
+          return {
+            error: "No active billing subscription",
+            code: "NO_SUBSCRIPTION",
+          };
+        }
+        try {
+          const result = await billing.provider.createPortalSession(sub.customerId);
+          return result;
+        } catch (error) {
+          set.status = 500;
+          return {
+            error: error instanceof Error ? error.message : "Portal session failed",
+            code: "PORTAL_FAILED",
+          };
+        }
+      })
+      .get("/api/billing/subscription", async ({ headers, set }) => {
+        const billing = deps.billing;
+        if (!billing) {
+          set.status = 503;
+          return {
+            error: "Billing is not configured",
+            code: "BILLING_NOT_CONFIGURED",
+          };
+        }
+        const user = await requestUser(
+          users,
+          headers as Record<string, string | undefined>,
+          ticketSecret,
+        );
+        if (!user) {
+          set.status = 401;
+          return { error: "Authentication required", code: "AUTH_REQUIRED" };
+        }
+        const subscription = await billing.subscriptionStore.findByUserId(user.id);
+        return { subscription: subscription ?? null, userTier: user.tier };
+      })
   );
 }

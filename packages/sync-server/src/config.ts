@@ -24,6 +24,12 @@ const envSchema = z.object({
   ROOM_TICKET_SECRET: z.string().min(1).optional(),
   ROOM_TICKET_TTL_SEC: z.coerce.number().int().positive().default(86400),
   USER_TOKEN_TTL_SEC: z.coerce.number().int().positive().default(604800),
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_PRICE_PRO: z.string().optional(),
+  BILLING_SUCCESS_URL: z.string().url().optional(),
+  BILLING_CANCEL_URL: z.string().url().optional(),
+  BILLING_RETURN_URL: z.string().url().optional(),
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
@@ -50,6 +56,12 @@ export type Config = {
   roomTicketSecret?: string;
   roomTicketTtlSec: number;
   userTokenTtlSec: number;
+  stripeSecretKey?: string;
+  stripeWebhookSecret?: string;
+  stripePricePro?: string;
+  billingSuccessUrl?: string;
+  billingCancelUrl?: string;
+  billingReturnUrl?: string;
   nodeEnv: "development" | "test" | "production";
 };
 
@@ -133,6 +145,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     roomTicketSecret: parsed.ROOM_TICKET_SECRET,
     roomTicketTtlSec: parsed.ROOM_TICKET_TTL_SEC,
     userTokenTtlSec: parsed.USER_TOKEN_TTL_SEC,
+    stripeSecretKey: parsed.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: parsed.STRIPE_WEBHOOK_SECRET,
+    stripePricePro: parsed.STRIPE_PRICE_PRO,
+    billingSuccessUrl: parsed.BILLING_SUCCESS_URL,
+    billingCancelUrl: parsed.BILLING_CANCEL_URL,
+    billingReturnUrl: parsed.BILLING_RETURN_URL,
     nodeEnv: parsed.NODE_ENV,
   };
 }

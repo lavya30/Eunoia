@@ -38,6 +38,13 @@ export const RegisterUserSchema = z
   })
   .strict();
 
+export const CheckoutSchema = z
+  .object({
+    priceKey: z.string().trim().min(1).default("pro"),
+    seats: z.coerce.number().int().positive().default(1),
+  })
+  .strict();
+
 export const LoginUserSchema = z
   .object({
     email: z.string().trim().toLowerCase().email().max(MAX_ROOM_ID_LENGTH),

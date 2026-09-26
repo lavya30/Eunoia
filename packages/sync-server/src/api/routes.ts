@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import type { ImageDeps } from "../images.js";
 import type { RoomManager } from "../RoomManager.js";
 import type { UserStore } from "../users.js";
+import { handleBillingWebhook, type BillingDeps } from "../billing.js";
 import { type ApiDeps, createApiApp } from "./app.js";
 
 const MAX_BODY_BYTES = 1_000_000;
@@ -11,6 +12,8 @@ const MAX_BODY_BYTES = 1_000_000;
 export type ApiBridgeOptions = {
   /** Shared per-process API deps (metrics, health, version). */
   apiDeps?: ApiDeps;
+  /** Billing provider and stores for webhooks and subscription endpoints. */
+  billing?: BillingDeps;
   /** When set, every request is logged as one JSON access line. */
   log?: pino.Logger;
 };
@@ -31,7 +34,7 @@ export async function handleApiRequest(
     res.setHeader("access-control-allow-origin", "*");
     res.setHeader(
       "access-control-allow-headers",
-      "content-type, authorization, x-user-token",
+      "content-type, authorization, x-user-token, x-billing-signature, stripe-signature",
     );
     res.setHeader(
       "access-control-allow-methods",
@@ -56,6 +59,61 @@ export async function handleApiRequest(
     chunks.length && req.method !== "GET" && req.method !== "HEAD"
       ? Buffer.concat(chunks)
       : undefined;
+
+  const pathname = req.url?.split("?")[0];
+  if (req.method === "POST" && pathname === "/api/billing/webhook") {
+    if (!options.billing) {
+      res.statusCode = 503;
+      res.setHeader("access-control-allow-origin", "*");
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          error: "Billing is not configured",
+          code: "BILLING_NOT_CONFIGURED",
+        }),
+      );
+      options.log?.info(
+        {
+          method: req.method,
+          path: pathname,
+          status: 503,
+          durationMs: Date.now() - started,
+        },
+        "http request",
+      );
+      return;
+    }
+
+    const sigHeader =
+      req.headers["x-billing-signature"] ?? req.headers["stripe-signature"];
+    const signature = Array.isArray(sigHeader)
+      ? (sigHeader[0] ?? "")
+      : (sigHeader ?? "");
+    const result = await handleBillingWebhook(
+      body ?? new Uint8Array(0),
+      signature,
+      options.billing,
+    );
+    res.statusCode = result.status;
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(result.body));
+    options.log?.info(
+      {
+        method: req.method,
+        path: pathname,
+        status: result.status,
+        durationMs: Date.now() - started,
+      },
+      "http request",
+    );
+    return;
+  }
+
+  const apiDeps: ApiDeps = {
+    ...options.apiDeps,
+    billing: options.billing ?? options.apiDeps?.billing,
+  };
   const request = new Request(
     `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`,
     { method: req.method, headers, body },
@@ -65,7 +123,7 @@ export async function handleApiRequest(
     config,
     images,
     users,
-    options.apiDeps,
+    apiDeps,
   ).handle(request);
   res.statusCode = response.status;
   res.setHeader("access-control-allow-origin", "*");

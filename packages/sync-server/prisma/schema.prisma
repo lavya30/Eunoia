@@ -17,13 +17,14 @@ enum Tier {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String        @id @default(cuid())
+  email        String        @unique
   name         String?
   passwordHash String?
-  tier         Tier     @default(COMMUNITY)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  tier         Tier          @default(COMMUNITY)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  subscription Subscription?
 }
 
 model Room {
@@ -66,4 +67,28 @@ model ImageAsset {
 
   @@index([roomId])
   @@index([roomId, kind])
+}
+
+model Subscription {
+  id            String    @id @default(cuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider      String    @default("stub")
+  customerId    String?
+  providerSubId String?
+  status        String    @default("active")
+  priceKey      String
+  seats         Int       @default(1)
+  periodEnd     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([customerId])
+}
+
+model BillingEvent {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  type      String
+  createdAt DateTime @default(now())
 }
