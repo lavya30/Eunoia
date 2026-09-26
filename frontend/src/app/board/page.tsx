@@ -17,6 +17,9 @@ export default async function BoardRoute({
     typeof params.room === 'string' && params.room.trim()
       ? params.room.trim()
       : null;
+  // The invite ticket travels via ?ticket= but is ingested by WhiteboardPage
+  // itself (ingestTicketDeepLink into the ticket store); the route only
+  // needs it for the remount key so rotation picks up fresh credentials.
   const ticket =
     typeof params.ticket === 'string' && params.ticket.trim()
       ? params.ticket.trim()

@@ -26,7 +26,11 @@ export function verifyUserToken(
   token: string,
   nowSec = Math.floor(Date.now() / 1000),
 ): string | null {
-  const [version, userB64, expiryRaw, sigB64] = token.split(".");
+  // Room tickets require exactly 5 dot-parts; user tokens require exactly
+  // 4 here so trailing garbage (`u1.a.b.c.evil`) can never validate.
+  const parts = token.split(".");
+  if (parts.length !== 4) return null;
+  const [version, userB64, expiryRaw, sigB64] = parts;
   if (version !== "u1" || !userB64 || !expiryRaw || !sigB64) return null;
   let userId: string;
   try {

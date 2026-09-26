@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import pino from "pino";
 import { WebSocketServer } from "ws";
 import type { ApiDeps } from "./api/app.js";
-import { handleApiRequest } from "./api/routes.js";
+import { BodyTooLargeError, handleApiRequest } from "./api/routes.js";
 import type { Config } from "./config.js";
 import { loadConfig } from "./config.js";
 import { defaultHealthChecks, type HealthChecks } from "./health.js";
@@ -104,7 +104,14 @@ export function createSyncServer(
     userStore: billingDepsOverride?.userStore ?? users,
   };
   const handler = new WebSocketHandler(manager);
-  const wsServer = new WebSocketServer({ noServer: true });
+  // Bound inbound frames: without maxPayload a single malicious client can
+  // force multi-hundred-MB Buffer.concat allocations before Yjs ever sees
+  // the bytes (ws default is 100MB). 8MB still fits large initial syncs;
+  // oversize peers are closed with 1009 by ws itself.
+  const wsServer = new WebSocketServer({
+    noServer: true,
+    maxPayload: 8 * 1024 * 1024,
+  });
   let resolvedSecret = config.roomTicketSecret;
   if (!resolvedSecret) {
     resolvedSecret = randomBytes(32).toString("hex");
@@ -135,12 +142,20 @@ export function createSyncServer(
       billing,
       log: logger,
     }).catch((error) => {
-      res.statusCode = 400;
+      // Oversized bodies get their own status: a 400 would look like a
+      // client bug in the payload shape rather than a size limit.
+      const tooLarge = error instanceof BodyTooLargeError;
+      res.statusCode = tooLarge ? 413 : 400;
       res.setHeader("content-type", "application/json");
       res.end(
-        JSON.stringify({
-          error: error instanceof Error ? error.message : "Bad request",
-        }),
+        JSON.stringify(
+          tooLarge
+            ? { error: error.message, code: error.code }
+            : {
+                error: error instanceof Error ? error.message : "Bad request",
+                code: "BAD_REQUEST",
+              },
+        ),
       );
     });
   });
@@ -176,9 +191,14 @@ export function createSyncServer(
         }
         wsServer.handleUpgrade(req, socket, head, (ws) => {
           logger.debug({ roomId }, "ws upgrade accepted");
-          void handler
-            .handle(ws, roomId)
-            .catch(() => ws.close(1011, "Unable to load room"));
+          void handler.handle(ws, roomId).catch(() => {
+            // No client was registered, but getOrCreate may have
+            // materialized the room: release it so a failing room id
+            // cannot pin an empty room until the idle timeout.
+            // (release() is a no-op for rooms that gained clients.)
+            manager.release(roomId);
+            ws.close(1011, "Unable to load room");
+          });
         });
       })
       .catch(() => {
@@ -190,6 +210,9 @@ export function createSyncServer(
 
   const close = async () => {
     await manager.shutdown();
+    // Terminate live sockets first: wsServer.close() only stops accepting,
+    // and idle clients would otherwise hold the shutdown open.
+    for (const client of wsServer.clients) client.terminate();
     await new Promise<void>((resolve) => wsServer.close(() => resolve()));
     if (server.listening)
       await new Promise<void>((resolve, reject) =>

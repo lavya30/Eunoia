@@ -9,6 +9,16 @@ import { type ApiDeps, createApiApp } from "./app.js";
 
 const MAX_BODY_BYTES = 1_000_000;
 
+/** Thrown when a request body exceeds MAX_BODY_BYTES. Carries a stable
+ * code so the server boundary can answer 413 instead of a bare 400. */
+export class BodyTooLargeError extends Error {
+  readonly code = "BODY_TOO_LARGE";
+  constructor(readonly receivedBytes: number) {
+    super(`Request body exceeds the ${MAX_BODY_BYTES} byte limit`);
+    this.name = "BodyTooLargeError";
+  }
+}
+
 export type ApiBridgeOptions = {
   /** Shared per-process API deps (metrics, health, version). */
   apiDeps?: ApiDeps;
@@ -49,11 +59,16 @@ export async function handleApiRequest(
     if (value)
       headers.set(key, Array.isArray(value) ? value.join(", ") : value);
   }
+  // Track length incrementally: re-concatenating per chunk is O(n²) on
+  // large bodies and invites slow-loris memory pressure.
   const chunks: Buffer[] = [];
+  let receivedBytes = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    if (Buffer.concat(chunks).length > MAX_BODY_BYTES)
-      throw new Error("Request body too large");
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    receivedBytes += buf.length;
+    if (receivedBytes > MAX_BODY_BYTES)
+      throw new BodyTooLargeError(receivedBytes);
+    chunks.push(buf);
   }
   const body =
     chunks.length && req.method !== "GET" && req.method !== "HEAD"

@@ -41,7 +41,10 @@ export const RegisterUserSchema = z
 export const CheckoutSchema = z
   .object({
     priceKey: z.string().trim().min(1).default("pro"),
-    seats: z.coerce.number().int().positive().default(1),
+      // Capped: per-seat billing with unbounded quantities is a one-line
+      // API call away from absurd invoices; real seat counts come from
+      // workspaces (not yet built), so 100 is generous headroom.
+      seats: z.coerce.number().int().positive().max(100).default(1),
   })
   .strict();
 

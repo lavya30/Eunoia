@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { loadSession } from '@/lib/whiteboard/auth';
+import { ApiError, loadSession } from '@/lib/whiteboard/auth';
 import {
   fetchSubscription,
   createPortalSession,
@@ -28,6 +28,7 @@ export function BillingPage() {
   const [loading, setLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authFailed, setAuthFailed] = useState(false);
 
   const isCheckoutSuccess =
     searchParams.get('checkout') === 'success' ||
@@ -36,7 +37,9 @@ export function BillingPage() {
   useEffect(() => {
     const currentSession = loadSession();
     if (!currentSession) {
-      router.push('/login?redirect=/billing');
+      // AuthForm honors ?next= (not ?redirect=): a mismatched param drops
+      // the destination and lands the user on /board after sign-in.
+      router.push('/login?next=/billing');
       return;
     }
 
@@ -46,11 +49,17 @@ export function BillingPage() {
         setUserTier(res.userTier || currentSession.user.tier || 'COMMUNITY');
       })
       .catch((err) => {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Failed to load subscription details',
-        );
+        // Expired/revoked tokens must offer a way forward, not a dead end.
+        if (err instanceof ApiError && err.status === 401) {
+          setAuthFailed(true);
+          setError('Your sign-in expired. Sign in again to manage billing.');
+        } else {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Failed to load subscription details',
+          );
+        }
       })
       .finally(() => {
         setLoading(false);
@@ -59,18 +68,30 @@ export function BillingPage() {
 
   const handleManagePortal = async () => {
     const currentSession = loadSession();
-    if (!currentSession) return;
+    if (!currentSession) {
+      router.push('/login?next=/billing');
+      return;
+    }
     setPortalLoading(true);
     setError(null);
     try {
       const res = await createPortalSession(currentSession.token);
       if (res.url) {
         window.location.href = res.url;
+        return;
       }
+      // A missing URL is a failure, not a hang: release the button.
+      setError('The payment portal did not return a link. Try again.');
+      setPortalLoading(false);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Could not open customer portal',
-      );
+      if (err instanceof ApiError && err.status === 401) {
+        setAuthFailed(true);
+        setError('Your sign-in expired. Sign in again to manage billing.');
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'Could not open customer portal',
+        );
+      }
       setPortalLoading(false);
     }
   };
@@ -126,8 +147,16 @@ export function BillingPage() {
         )}
 
         {error && (
-          <div className="mb-8 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
-            {error}
+          <div className="mb-8 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex items-center gap-3 flex-wrap">
+            <span>{error}</span>
+            {authFailed ? (
+              <Link
+                href="/login?next=/billing"
+                className="py-1.5 px-4 rounded-lg bg-[#6965DB] hover:bg-[#5854c7] text-white font-medium text-xs transition-colors"
+              >
+                Sign in
+              </Link>
+            ) : null}
           </div>
         )}
 

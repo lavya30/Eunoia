@@ -37,16 +37,22 @@ async function withTimeout<T>(
   run: () => Promise<T>,
 ): Promise<{ value: T; latencyMs: number }> {
   const started = Date.now();
-  const value = await Promise.race([
-    run(),
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`${label} check timed out`)),
-        CHECK_TIMEOUT_MS,
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const value = await Promise.race([
+      run(),
+      new Promise<never>(
+        (_, reject) =>
+          (timer = setTimeout(
+            () => reject(new Error(`${label} check timed out`)),
+            CHECK_TIMEOUT_MS,
+          )),
       ),
-    ),
-  ]);
-  return { value, latencyMs: Date.now() - started };
+    ]);
+    return { value, latencyMs: Date.now() - started };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function compilerHealthUrl(compilerUrl: string): string {
@@ -152,12 +158,15 @@ export function summarizeReadiness(
 ): Readiness {
   // Persistence is load-bearing: without it every room is ephemeral, so a
   // configured-but-unreachable database takes the server out of rotation.
-  const status =
-    database.status === 'error'
-      ? 'down'
-      : redis.status === 'degraded' || compiler.status === 'degraded'
-        ? 'degraded'
-        : 'ready';
+  // Redis/compiler failures (including unexpected "error" results from
+  // custom check implementations) only ever degrade — sync, persistence,
+  // and placeholder compiles keep working without them.
+  const degraded =
+    redis.status === 'degraded' ||
+    redis.status === 'error' ||
+    compiler.status === 'degraded' ||
+    compiler.status === 'error';
+  const status = database.status === 'error' ? 'down' : degraded ? 'degraded' : 'ready';
   return {
     status,
     version,

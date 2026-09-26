@@ -1,4 +1,5 @@
 import { Redis } from "ioredis";
+import { CursorTelemetrySchema } from "./api/schemas.js";
 import type { CursorTelemetry } from "./types.js";
 
 type CursorListener = (cursor: CursorTelemetry) => void;
@@ -21,8 +22,21 @@ export class RedisTelemetry {
     });
     this.subscriber.on("message", (channel, message) => {
       const roomId = channel.slice("cursor:".length);
+      // Cross-instance data is untrusted: a rogue or outdated producer must
+      // not be able to inject malformed cursors into live rooms.
       try {
-        const cursor = JSON.parse(message) as CursorTelemetry;
+        const parsed = CursorTelemetrySchema.safeParse(JSON.parse(message));
+        if (!parsed.success) return;
+        // The originating server stamps clientId before publishing; a
+        // payload without one is unattributable and must not fan out.
+        // Missing timestamps are filled with receipt time (same rule as
+        // the local WebSocket path in WebSocketHandler).
+        if (typeof parsed.data.clientId !== "string") return;
+        const cursor: CursorTelemetry = {
+          ...parsed.data,
+          clientId: parsed.data.clientId,
+          timestamp: parsed.data.timestamp ?? Date.now(),
+        };
         for (const listener of this.listeners.get(roomId) ?? [])
           listener(cursor);
       } catch {

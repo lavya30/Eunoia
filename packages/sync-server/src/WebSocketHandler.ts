@@ -25,6 +25,29 @@ export class WebSocketHandler {
     };
     room.addClient(client);
 
+    // Heartbeat: dead TCP peers never fire close/error, which would pin
+    // the client (and its room, defeating idle eviction) forever. The ws
+    // client library answers pings automatically; a peer that misses one
+    // full interval is terminated so leave() runs via the close handler.
+    let alive = true;
+    socket.on("pong", () => {
+      alive = true;
+    });
+    const heartbeat = setInterval(() => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        clearInterval(heartbeat);
+        return;
+      }
+      if (!alive) {
+        clearInterval(heartbeat);
+        socket.terminate();
+        return;
+      }
+      alive = false;
+      socket.ping();
+    }, 30_000);
+    if (typeof heartbeat.unref === "function") heartbeat.unref();
+
     socket.on("message", (raw: RawData, isBinary: boolean) => {
       if (isBinary) {
         const bytes =
@@ -66,6 +89,7 @@ export class WebSocketHandler {
     });
 
     const leave = () => {
+      clearInterval(heartbeat);
       room.removeClient(client.id);
       this.manager.release(roomId);
     };

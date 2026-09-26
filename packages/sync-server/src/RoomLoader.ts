@@ -197,6 +197,11 @@ export class MemorySnapshotStore implements SnapshotStore {
   async deleteRoom(roomId: string): Promise<void> {
     this.rooms.delete(roomId);
     this.history.delete(roomId);
+    // Auth state must die with the room: otherwise a recreated room with
+    // the same id inherits the old lock and version, and stale tickets
+    // minted before deletion could replay against it.
+    this.passwordHashes.delete(roomId);
+    this.passwordVersions.delete(roomId);
   }
 }
 

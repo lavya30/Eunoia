@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import type {
   BillingEventStore,
@@ -90,10 +90,14 @@ export class StubBillingProvider implements BillingProvider {
     priceKey: string,
     seats: number,
   ): Promise<CheckoutResult> {
+    // The stub mirrors real-provider validation: unknown prices fail here
+    // (surfaced as 400 by the route) instead of minting dead sessions.
+    // userId/seats ride along in the redirect so dev webhooks can complete
+    // the loop without a real Checkout page in between.
+    const plan = this.plans().find((candidate) => candidate.key === priceKey);
+    if (!plan) throw new Error(`Unknown price: ${priceKey}`);
     const sessionId = `stub_cs_${randomUUID()}`;
-    // In a real provider this would be a Stripe Checkout URL. The stub
-    // returns a success-page redirect so the frontend flow completes.
-    const url = `${this.successUrl}&session_id=${sessionId}`;
+    const url = `${this.successUrl}&session_id=${sessionId}&user=${encodeURIComponent(userId)}&seats=${seats}`;
     return { url, sessionId };
   }
 
@@ -105,7 +109,14 @@ export class StubBillingProvider implements BillingProvider {
     const expected = createHmac("sha256", this.webhookSecret)
       .update(rawBody)
       .digest("hex");
-    return signature === expected;
+    const actual = Buffer.from(signature, "utf8");
+    const expectedBuf = Buffer.from(expected, "utf8");
+    // Constant-time compare: webhook endpoints are unauthenticated, so a
+    // naive === would leak the secret byte-by-byte to timing probes.
+    return (
+      actual.length === expectedBuf.length &&
+      timingSafeEqual(actual, expectedBuf)
+    );
   }
 
   parseEvent(rawBody: Uint8Array): BillingEvent {
@@ -125,7 +136,8 @@ export class StubBillingProvider implements BillingProvider {
       seats: typeof data.seats === "number" ? data.seats : undefined,
       status: typeof data.status === "string" ? data.status : undefined,
       periodEnd:
-        typeof data.periodEnd === "string"
+        typeof data.periodEnd === "string" &&
+        !Number.isNaN(new Date(data.periodEnd).getTime())
           ? new Date(data.periodEnd)
           : undefined,
     };
@@ -197,25 +209,44 @@ export async function handleBillingWebhook(
     return { status: 200, body: { received: true, skipped: "no userId" } };
   }
 
-  const eventStatus = event.status ?? "active";
+  // Never default a missing status to active: a `subscription.updated`
+  // event without a status must not mint PRO. `checkout.completed` carries
+  // no status at all (payment just succeeded), so it upgrades directly.
+  if (event.type === "checkout.completed") {
+    return upgrade(event, userId);
+  }
+
+  const eventStatus = event.status;
+  if (!eventStatus) {
+    return { status: 200, body: { received: true, skipped: "no status" } };
+  }
 
   if (
-    event.type === "checkout.completed" ||
-    (event.type === "subscription.updated" && ACTIVE_STATUSES.has(eventStatus))
+    event.type === "subscription.updated" &&
+    ACTIVE_STATUSES.has(eventStatus)
   ) {
-    // Upgrade: create/update subscription and set user tier to PRO
+    return upgrade(event, userId);
+  }
+
+  // userId is passed explicitly (not closed over): narrowing does not
+  // survive into nested function bodies, and an undefined id here would
+  // write a corrupt subscription row.
+  async function upgrade(evt: BillingEvent, uid: string) {
+    // Upgrade: create/update subscription and set user tier to PRO.
+    // Seats are validated at the API boundary (CheckoutSchema caps them);
+    // the stored value here is a signed-provider assertion, not a claim.
     const upsert: UpsertSubscription = {
-      userId,
+      userId: uid,
       provider: provider.name,
-      customerId: event.customerId,
-      providerSubId: event.subscriptionId,
+      customerId: evt.customerId,
+      providerSubId: evt.subscriptionId,
       status: "active",
-      priceKey: event.priceKey ?? "pro",
-      seats: event.seats ?? 1,
-      periodEnd: event.periodEnd,
+      priceKey: evt.priceKey ?? "pro",
+      seats: evt.seats ?? 1,
+      periodEnd: evt.periodEnd,
     };
     await subscriptionStore.upsertByUserId(upsert);
-    await userStore.updateTier(userId, "PRO" as Tier);
+    await userStore.updateTier(uid, "PRO" as Tier);
     return { status: 200, body: { received: true, action: "upgraded" } };
   }
 

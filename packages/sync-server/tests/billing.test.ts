@@ -195,6 +195,28 @@ describe("Billing Unit & Integration Tests", () => {
       expect(result.body.code).toBe("PARSE_ERROR");
     });
 
+    test("subscription.updated without a status never mints PRO", async () => {
+      const user = await userStore.createUser({
+        email: "dave@example.com",
+        passwordHash: "hash",
+      });
+      const payload = {
+        eventId: "evt_nostatus_1",
+        type: "subscription.updated",
+        userId: user!.id,
+        customerId: "cus_dave",
+      };
+      const { body, signature } = signStubWebhook(payload, "whsec_test");
+      const result = await handleBillingWebhook(body, signature, deps);
+
+      expect(result.status).toBe(200);
+      expect(result.body.skipped).toBe("no status");
+
+      const untouched = await userStore.findById(user!.id);
+      expect(untouched?.tier).toBe("COMMUNITY");
+      expect(await subscriptionStore.findByUserId(user!.id)).toBeNull();
+    });
+
     test("replays of the same event are idempotent", async () => {
       const user = await userStore.createUser({
         email: "carol@example.com",
@@ -419,6 +441,27 @@ describe("Billing Unit & Integration Tests", () => {
       expect(portal.status).toBe(200);
       const portalJson = (await portal.json()) as { url: string };
       expect(portalJson.url).toContain("cus_portal");
+    });
+
+    test("POST /api/billing/checkout rejects unknown prices", async () => {
+      const regRes = await fetch(`${baseUrl}/api/auth/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "badprice@test.com", password: "password123" }),
+      });
+      const regJson = (await regRes.json()) as { token: string };
+      const res = await fetch(`${baseUrl}/api/billing/checkout`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${regJson.token}`,
+        },
+        body: JSON.stringify({ priceKey: "enterprise", seats: 1 }),
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code: string }).code).toBe(
+        "INVALID_PRICE",
+      );
     });
 
     test("POST /api/billing/checkout rejects invalid input", async () => {

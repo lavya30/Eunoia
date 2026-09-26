@@ -226,9 +226,14 @@ export async function unlockRoom(
 export async function deleteRoom(
   roomId: string,
   ticket?: string,
+  userToken?: string,
 ): Promise<void> {
+  // Like updateRoom: the room ticket (if any) travels in Authorization and
+  // the user token alongside in x-user-token, because DELETE requires both
+  // room access AND owner authentication server-side.
   await request<void>('DELETE', `/api/rooms/${encodeURIComponent(roomId)}`, {
     ticket,
+    userToken,
   });
 }
 

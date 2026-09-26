@@ -261,6 +261,8 @@ export function AuthForm({
           <LogoMark />
           <span>Eunoia</span>
         </Link>
+        {/* Skipping sign-in is an explicit choice: the ?next= destination
+            only applies to the sign-in form itself, which honors it. */}
         <a className="auth-topbar-link" href="/board">
           Open a room <ArrowIcon />
         </a>

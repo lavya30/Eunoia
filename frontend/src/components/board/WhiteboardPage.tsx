@@ -1,6 +1,7 @@
 'use client';
 
 import { D2Editor } from '@/components/editor';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
@@ -1842,11 +1843,14 @@ export function WhiteboardPage({
       onAccessLost: () => {
         // Credentials are dead (revoked/rotated/deleted room), not a
         // transient drop. Re-validate over HTTP and land in the right UI.
+        // The live ticket must travel along: without it a locked room with
+        // a still-valid ticket is misclassified as locked and the good
+        // credential gets destroyed below.
         const id = roomId;
-        void getRoom(id)
+        void getRoom(id, getTicket(id))
           .then(() => {
-            // Open room but sync keeps failing: flaky network or server
-            // restart — recreate the session fresh.
+            // Open room (or valid ticket) but sync keeps failing: flaky
+            // network or server restart — recreate the session fresh.
             setSyncNonce((n) => n + 1);
           })
           .catch((error: unknown) => {
@@ -4612,6 +4616,19 @@ export function WhiteboardPage({
     );
   }
 
+  // Don't flash the full board (or an empty canvas) before access is
+  // validated: locked rooms would briefly render behind the gate.
+  if (roomStatus === 'loading') {
+    return (
+      <div className="eunoia-board-shell room-gate">
+        <div className="room-gate-card" role="status">
+          <h1>Opening your board…</h1>
+          <p>Checking room access.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (roomStatus === 'missing') {
     return (
       <div className="eunoia-board-shell room-gate">
@@ -4660,14 +4677,14 @@ export function WhiteboardPage({
       />
       <header className="board-header">
         <div className="board-brand-block">
-          <a className="board-brand" href="#canvas" aria-label="Eunoia home">
+          <Link className="board-brand" href="/" aria-label="Eunoia home">
             <span className="board-brand-mark" aria-hidden="true">
               <span />
               <span />
               <span />
             </span>
             <span>Eunoia</span>
-          </a>
+          </Link>
           <span className="header-divider" aria-hidden="true" />
           <button
             className="board-title-control"
@@ -4815,6 +4832,33 @@ export function WhiteboardPage({
                       {session.user.email}
                     </div>
                   ) : null}
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 12,
+                      marginTop: 8,
+                      fontSize: 13,
+                    }}
+                  >
+                    <a
+                      href="/pricing"
+                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                    >
+                      Plans
+                    </a>
+                    <a
+                      href="/billing"
+                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                    >
+                      Billing
+                    </a>
+                    <a
+                      href="/status"
+                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                    >
+                      Status
+                    </a>
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -5225,16 +5269,34 @@ export function WhiteboardPage({
                       )
                     ) {
                       const doomedRoomId = roomId;
-                      void deleteRoom(doomedRoomId, getTicket(doomedRoomId))
+                      if (!doomedRoomId || doomedRoomId.startsWith('local-')) {
+                        // Local-only rooms have no server counterpart: just
+                        // leave to a fresh board instead of 404ing the API.
+                        router.replace('/board');
+                        return;
+                      }
+                      // DELETE needs room access AND owner auth: thread the
+                      // user token like updateRoom does, and surface the
+                      // sign-in requirement instead of a bare 401 message.
+                      void deleteRoom(
+                        doomedRoomId,
+                        getTicket(doomedRoomId),
+                        resolveUserToken(),
+                      )
                         .then(() => {
                           clearTicket(doomedRoomId);
-                          router.push('/board');
+                          // Replace (not push): Back must not land on the
+                          // just-deleted room's missing state.
+                          router.replace('/board');
                         })
                         .catch((error: unknown) => {
                           setBoardError(
-                            error instanceof ApiError
-                              ? error.message
-                              : 'Could not delete the board.',
+                            error instanceof ApiError &&
+                              error.code === 'AUTH_REQUIRED'
+                              ? 'Sign in to delete this board — only its owner can.'
+                              : error instanceof ApiError
+                                ? error.message
+                                : 'Could not delete the board.',
                           );
                         });
                     }

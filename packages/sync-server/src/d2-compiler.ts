@@ -152,10 +152,13 @@ export async function compileD2(
   }
 
   try {
+    // A hung compiler must not exhaust the request worker pool: bound the
+    // upstream call (the health check already uses the same budget).
     const response = await fetch(compilerUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ source: request.source, engine, tier }),
+      signal: AbortSignal.timeout(15_000),
     });
     // Read as text first: upstream proxies/gateways can answer with
     // non-JSON (or empty) bodies, and `response.json()` would throw a bare

@@ -349,10 +349,13 @@ export function createApiApp(
             details: { tier: input.tier },
           };
         }
+        // Anonymous callers must not be able to claim an arbitrary ownerId
+        // (impersonating another user's rooms for griefing or tier games):
+        // ownership is forced to "anonymous" and claimed later via PATCH.
         const room = await manager.createRoom(
           {
             name: input.name,
-            ownerId: user ? user.id : (input.ownerId ?? "anonymous"),
+            ownerId: user ? user.id : "anonymous",
             tier: input.tier ?? callerTier,
           },
           input.password,
@@ -378,7 +381,7 @@ export function createApiApp(
         const room = await manager.getRoomMetadata(params.roomId);
         if (!room) {
           set.status = 404;
-          return { error: "Room not found" };
+          return { error: "Room not found", code: "ROOM_NOT_FOUND" };
         }
         if (!room.hasPassword) {
           // Open rooms need no ticket — minting one would create a capability
@@ -485,11 +488,23 @@ export function createApiApp(
             };
           }
           // Anonymous rooms are claimed by the first authenticated patch;
-          // only established owners may transfer to someone else.
-          const ownerId =
-            access.room.ownerId === "anonymous"
-              ? ownership.owner.id
-              : (input.ownerId ?? access.room.ownerId);
+          // only established owners may transfer to someone else, and only
+          // to a real user — otherwise rooms could be orphaned to phantom
+          // ids no one can ever administer.
+          let ownerId = access.room.ownerId;
+          if (ownerId === "anonymous") {
+            ownerId = ownership.owner.id;
+          } else if (input.ownerId && input.ownerId !== ownerId) {
+            const target = await users.findById(input.ownerId);
+            if (!target) {
+              set.status = 400;
+              return {
+                error: "Unknown user for owner transfer",
+                code: "INVALID_OWNER",
+              };
+            }
+            ownerId = target.id;
+          }
           const updated = await manager.updateRoom(
             access.room.id,
             { name: input.name, ownerId, tier: input.tier },
@@ -645,6 +660,7 @@ export function createApiApp(
           return {
             error:
               error instanceof Error ? error.message : "D2 compiler failed",
+            code: "D2_COMPILER_UNAVAILABLE",
           };
         }
       })
@@ -878,7 +894,7 @@ export function createApiApp(
           const image = await images.imageStore.getImage(params.imageId);
           if (!image || image.roomId !== params.roomId) {
             set.status = 404;
-            return { error: "Image not found" };
+            return { error: "Image not found", code: "IMAGE_NOT_FOUND" };
           }
           const r2 = images.r2;
           if (!r2) {
@@ -917,7 +933,7 @@ export function createApiApp(
           const image = await images.imageStore.getImage(params.imageId);
           if (!image || image.roomId !== params.roomId) {
             set.status = 404;
-            return { error: "Image not found" };
+            return { error: "Image not found", code: "IMAGE_NOT_FOUND" };
           }
           const r2 = images.r2;
           if (!r2) {
@@ -1045,6 +1061,10 @@ export function createApiApp(
             set.status = access.status;
             return access.body;
           }
+          // Deliberately ticket-gated only (same bar as editing via sync):
+          // open rooms are collaboratively editable by anyone holding the
+          // link, so requiring login here would break anonymous restores.
+          // Locked rooms still require their ticket via requestAccess above.
           if (
             await manager.restoreRoomSnapshot(params.roomId, params.snapshotId)
           )
@@ -1053,7 +1073,7 @@ export function createApiApp(
               restoredAt: new Date().toISOString(),
             };
           set.status = 404;
-          return { error: "Snapshot not found" };
+          return { error: "Snapshot not found", code: "SNAPSHOT_NOT_FOUND" };
         },
       )
       .get("/api/billing/prices", async ({ set }) => {
@@ -1089,6 +1109,19 @@ export function createApiApp(
         if (!parsed.success) {
           set.status = 400;
           return validationError(parsed.error);
+        }
+        // Unknown prices are a client error (400), not a provider outage:
+        // the stub throws `Unknown price: ...`, Stripe would 400 the same
+        // way for a retired price id.
+        const knownPrice = billing.provider
+          .plans()
+          .some((plan) => plan.key === parsed.data.priceKey);
+        if (!knownPrice) {
+          set.status = 400;
+          return {
+            error: `Unknown price: ${parsed.data.priceKey}`,
+            code: "INVALID_PRICE",
+          };
         }
         try {
           const result = await billing.provider.createCheckoutSession(

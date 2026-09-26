@@ -36,13 +36,14 @@ export const AvatarCircles = ({
           />
         </a>
       ))}
+      {/* Plain badge, not a link: href="" reloads the page on click. */}
       {(numPeople ?? 0) > 0 && (
-        <a
-          className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-black text-center text-xs font-medium text-white hover:bg-gray-600 dark:border-gray-800 dark:bg-white dark:text-black"
-          href=""
+        <span
+          className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-black text-center text-xs font-medium text-white dark:border-gray-800 dark:bg-white dark:text-black"
+          aria-label={`Plus ${numPeople} more people`}
         >
           +{numPeople}
-        </a>
+        </span>
       )}
     </div>
   );

@@ -582,9 +582,9 @@ export function LandingPage() {
           className={`eunoia-nav ${menuOpen ? 'eunoia-nav--open' : ''}`}
           aria-label="Main navigation"
         >
-          <a href="#pricing">Plans</a>
+          <a href="/pricing">Plans</a>
           <a href="#teams">Workspaces</a>
-          <a href="#roadmap">Changelog</a>
+          <a href="/status">Status</a>
           <a href="#resources">
             Docs <ChevronDown size={16} />
           </a>
@@ -1238,7 +1238,12 @@ export function LandingPage() {
           <span>Eunoia</span>
         </div>
         <span>Eunoia Architecture Whiteboard</span>
-        <span>Workspace</span>
+        <nav aria-label="Footer" style={{ display: 'flex', gap: 16 }}>
+          <a href="/pricing">Pricing</a>
+          <a href="/billing">Billing</a>
+          <a href="/board">Board</a>
+          <a href="/status">Status</a>
+        </nav>
       </footer>
     </div>
   );

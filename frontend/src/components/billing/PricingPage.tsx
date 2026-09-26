@@ -33,7 +33,8 @@ export function PricingPage() {
   const handleUpgrade = async () => {
     const currentSession = loadSession();
     if (!currentSession) {
-      router.push('/login?redirect=/pricing');
+      // AuthForm honors ?next= (not ?redirect=).
+      router.push('/login?next=/pricing');
       return;
     }
     setLoading(true);
@@ -80,7 +81,7 @@ export function PricingPage() {
             </Link>
           ) : (
             <Link
-              href="/login"
+              href="/login?next=/pricing"
               className="text-white/70 hover:text-white transition-colors"
             >
               Sign In

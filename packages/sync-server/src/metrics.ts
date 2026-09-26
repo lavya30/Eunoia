@@ -3,9 +3,12 @@
 export type HttpStatus = number | string | undefined;
 
 function normalizeStatus(status: HttpStatus): string {
-  return typeof status === 'number' && Number.isFinite(status)
-    ? String(status)
-    : '500';
+  // Elysia leaves `set.status` unset on successful handlers — that means
+  // 200, not 500. Only genuine non-numeric states fall back.
+  if (typeof status === 'number' && Number.isFinite(status))
+    return String(status);
+  if (typeof status === 'string' && status.trim() !== '') return status;
+  return '200';
 }
 
 /**
@@ -20,16 +23,18 @@ export function groupRoute(method: string, pathname: string): string {
   if (pathname === '/api/rooms' && upper === 'POST') return 'POST /api/rooms';
   if (/^\/api\/rooms\/[^/]+\/unlock$/.test(pathname))
     return 'POST /api/rooms/:roomId/unlock';
+  // Specific image actions must precede the generic :imageId pattern —
+  // otherwise request-upload/confirm collapse into it.
+  if (/^\/api\/rooms\/[^/]+\/images\/request-upload$/.test(pathname))
+    return 'POST /api/rooms/:roomId/images/request-upload';
+  if (/^\/api\/rooms\/[^/]+\/images\/confirm$/.test(pathname))
+    return 'POST /api/rooms/:roomId/images/confirm';
   if (/^\/api\/rooms\/[^/]+\/images\/[^/]+\/bytes$/.test(pathname))
     return 'GET /api/rooms/:roomId/images/:imageId/bytes';
   if (/^\/api\/rooms\/[^/]+\/images\/[^/]+\/url$/.test(pathname))
     return 'GET /api/rooms/:roomId/images/:imageId/url';
   if (/^\/api\/rooms\/[^/]+\/images\/[^/]+$/.test(pathname))
     return `${upper} /api/rooms/:roomId/images/:imageId`;
-  if (/^\/api\/rooms\/[^/]+\/images\/request-upload$/.test(pathname))
-    return 'POST /api/rooms/:roomId/images/request-upload';
-  if (/^\/api\/rooms\/[^/]+\/images\/confirm$/.test(pathname))
-    return 'POST /api/rooms/:roomId/images/confirm';
   if (/^\/api\/rooms\/[^/]+\/images$/.test(pathname))
     return 'GET /api/rooms/:roomId/images';
   if (/^\/api\/rooms\/[^/]+\/snapshots\/[^/]+\/restore$/.test(pathname))
