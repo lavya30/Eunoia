@@ -1341,6 +1341,16 @@ export function WhiteboardPage({
   const [session, setSession] = useState<AuthSession | null>(() =>
     typeof window === 'undefined' ? null : loadSession(),
   );
+  // Session storage is client-only (SSR always renders signed-out), so the
+  // account-menu branch below waits for mount to keep hydration identical.
+  // Sync/auth logic keeps using `session` synchronously — only rendering
+  // is gated.
+  const [mounted, setMounted] = useState(false);
+  /* eslint-disable react-hooks/set-state-in-effect -- one-shot hydration gate, not a render loop. */
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
   const [activeTool, setActiveTool] = useState<ToolId>('select');
   const [selectedIds, setSelectedIds] = useState<string[]>(['gateway']);
   const [nodes, setNodes] = useState(INITIAL_NODES);
@@ -4781,7 +4791,7 @@ export function WhiteboardPage({
             {copied ? <Check size={16} /> : <Share2 size={16} />}
             {copied ? 'Link copied' : 'Share room'}
           </button>
-          {session ? (
+          {mounted && session ? (
             <div ref={accountMenuRef} style={{ position: 'relative' }}>
               <button
                 className="header-icon-button"
@@ -4889,7 +4899,9 @@ export function WhiteboardPage({
               href={`/login?next=${encodeURIComponent(
                 roomId
                   ? `/board?room=${roomId}${
-                      resolveRoomTicket()
+                      // Tickets hydrate client-side only; reading them
+                      // during the first render would mismatch SSR HTML.
+                      mounted && resolveRoomTicket()
                         ? `&ticket=${resolveRoomTicket()}`
                         : ''
                     }`

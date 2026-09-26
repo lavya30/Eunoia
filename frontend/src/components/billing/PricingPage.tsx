@@ -14,6 +14,15 @@ import { Check, Sparkles, ArrowRight, ShieldCheck, Zap } from 'lucide-react';
 export function PricingPage() {
   const router = useRouter();
   const [session] = useState(() => loadSession());
+  // Session storage doesn't exist during SSR (server always renders
+  // signed-out). Gate session-dependent UI behind mount so hydration
+  // matches; logic handlers keep reading the session synchronously.
+  const [mounted, setMounted] = useState(false);
+  /* eslint-disable react-hooks/set-state-in-effect -- one-shot hydration gate, not a render loop. */
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
   const [seats, setSeats] = useState(1);
   const [prices, setPrices] = useState<PlanInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -72,7 +81,7 @@ export function PricingPage() {
           </span>
         </Link>
         <div className="flex items-center gap-4 text-sm">
-          {session ? (
+          {mounted && session ? (
             <Link
               href="/billing"
               className="text-white/70 hover:text-white transition-colors"

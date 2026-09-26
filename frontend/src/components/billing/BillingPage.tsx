@@ -23,6 +23,14 @@ export function BillingPage() {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authFailed, setAuthFailed] = useState(false);
+  // See PricingPage: session storage is client-only, so session-derived
+  // rendering waits for mount to keep SSR hydration identical.
+  const [mounted, setMounted] = useState(false);
+  /* eslint-disable react-hooks/set-state-in-effect -- one-shot hydration gate, not a render loop. */
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const isCheckoutSuccess =
     searchParams.get('checkout') === 'success' ||
@@ -214,7 +222,7 @@ export function BillingPage() {
                     </span>
                     <span className="text-sm font-semibold text-white flex items-center gap-2">
                       <User className="w-4 h-4 text-white/60" />{' '}
-                      {session?.user.email}
+                      {mounted ? (session?.user.email ?? '') : ''}
                     </span>
                   </div>
                   <div className="bg-white/5 p-4 rounded-xl border border-white/5">
