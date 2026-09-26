@@ -32,7 +32,7 @@ import {
   PrismaBillingEventStore,
   PrismaBillingStore,
 } from "./billing-store.js";
-import { StubBillingProvider, type BillingDeps } from "./billing.js";
+import { RazorpayBillingProvider, type BillingDeps } from "./billing.js";
 
 const logger = pino({ name: "eunoia-sync-server" });
 
@@ -90,19 +90,26 @@ export function createSyncServer(
   const manager = new RoomManager(config, persistence);
   const users: UserStore =
     userStore ?? (prisma ? new PrismaUserStore(prisma) : new MemoryUserStore());
-  const billing: BillingDeps = {
-    provider:
-      billingDepsOverride?.provider ?? new StubBillingProvider(config),
-    subscriptionStore:
-      billingDepsOverride?.subscriptionStore ??
-      (prisma ? new PrismaBillingStore(prisma) : new MemoryBillingStore()),
-    billingEventStore:
-      billingDepsOverride?.billingEventStore ??
-      (prisma
-        ? new PrismaBillingEventStore(prisma)
-        : new MemoryBillingEventStore()),
-    userStore: billingDepsOverride?.userStore ?? users,
-  };
+  // Billing is live only with Razorpay credentials (same pattern as R2:
+  // unconfigured in dev means the billing endpoints answer 503, and
+  // self-hosted Community Edition keeps DB-managed tiers).
+  const billing: BillingDeps | undefined =
+    billingDepsOverride?.provider ?? config.razorpayKeyId
+      ? {
+          provider:
+            billingDepsOverride?.provider ??
+            new RazorpayBillingProvider(config),
+          subscriptionStore:
+            billingDepsOverride?.subscriptionStore ??
+            (prisma ? new PrismaBillingStore(prisma) : new MemoryBillingStore()),
+          billingEventStore:
+            billingDepsOverride?.billingEventStore ??
+            (prisma
+              ? new PrismaBillingEventStore(prisma)
+              : new MemoryBillingEventStore()),
+          userStore: billingDepsOverride?.userStore ?? users,
+        }
+      : undefined;
   const handler = new WebSocketHandler(manager);
   // Bound inbound frames: without maxPayload a single malicious client can
   // force multi-hundred-MB Buffer.concat allocations before Yjs ever sees

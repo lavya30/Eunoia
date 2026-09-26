@@ -1111,8 +1111,7 @@ export function createApiApp(
           return validationError(parsed.error);
         }
         // Unknown prices are a client error (400), not a provider outage:
-        // the stub throws `Unknown price: ...`, Stripe would 400 the same
-        // way for a retired price id.
+        // retired or mistyped price keys fail here either way.
         const knownPrice = billing.provider
           .plans()
           .some((plan) => plan.key === parsed.data.priceKey);
@@ -1128,6 +1127,7 @@ export function createApiApp(
             user.id,
             parsed.data.priceKey,
             parsed.data.seats,
+            { email: user.email },
           );
           return result;
         } catch (error) {
@@ -1138,7 +1138,10 @@ export function createApiApp(
           };
         }
       })
-      .post("/api/billing/portal", async ({ headers, set }) => {
+      .post("/api/billing/cancel", async ({ headers, set }) => {
+        // Razorpay has no customer portal: cancellation is a server-side
+        // call (at cycle end, so paid access runs out naturally). The
+        // webhook downgrades the tier when the subscription ends.
         const billing = deps.billing;
         if (!billing) {
           set.status = 503;
@@ -1157,7 +1160,7 @@ export function createApiApp(
           return { error: "Authentication required", code: "AUTH_REQUIRED" };
         }
         const sub = await billing.subscriptionStore.findByUserId(user.id);
-        if (!sub?.customerId) {
+        if (!sub?.providerSubId) {
           set.status = 400;
           return {
             error: "No active billing subscription",
@@ -1165,13 +1168,16 @@ export function createApiApp(
           };
         }
         try {
-          const result = await billing.provider.createPortalSession(sub.customerId);
+          const result = await billing.provider.cancelSubscription(
+            sub.providerSubId,
+          );
           return result;
         } catch (error) {
           set.status = 500;
           return {
-            error: error instanceof Error ? error.message : "Portal session failed",
-            code: "PORTAL_FAILED",
+            error:
+              error instanceof Error ? error.message : "Cancel failed",
+            code: "CANCEL_FAILED",
           };
         }
       })

@@ -25,6 +25,10 @@
 | Image endpoints 503 `R2_NOT_CONFIGURED` | R2 env missing | `imageStorage: skipped` in `/readyz` | Set `R2_*` vars; uploads/bytes proxy stay 503 until then |
 | Compile 403 `TIER_UPGRADE_REQUIRED` | Expected tier gating, not an outage | `eunoia_compile_requests_total{outcome="TIER_UPGRADE_REQUIRED"}` | No action; room/user tier works as designed |
 | WS closes 4100 | Snapshot restore dropped peers (expected) | Server logs | Clients resync automatically |
+| Billing endpoints 503 `BILLING_NOT_CONFIGURED` | `RAZORPAY_KEY_ID` unset | Server boot logs | Set `RAZORPAY_KEY_ID/SECRET/WEBHOOK_SECRET/PLAN_PRO`; tiers stay DB-managed until then |
+| Webhook 401 `INVALID_SIGNATURE` spike | Rotated webhook secret or clock/replay issue | Compare dashboard endpoint secret vs `RAZORPAY_WEBHOOK_SECRET` | Update env, restart; replays are idempotent so redelivery is safe |
+| Tier stuck after cancel | `halted` status (failed renewals) is skipped by design; downgrade lands on `cancelled/completed/expired` | Subscription row status | No action until Razorpay ends the subscription; cancel is at cycle end |
+| RBI recurring notes | First mandate charge needs customer 2FA (hosted link handles it); UPI Autopay caps at ₹15,000/cycle — card mandates suit $12 plans | Razorpay dashboard | Nothing to build; pre-debit notifications + eFIRC are Razorpay-side |
 | Rising 5xx in `eunoia_http_requests_total` | App regression | `docker compose logs sync-server` (pino JSON access lines) | Roll back to last good image |
 
 ## Environment knobs

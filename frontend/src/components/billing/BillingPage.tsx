@@ -6,16 +6,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, loadSession } from '@/lib/whiteboard/auth';
 import {
   fetchSubscription,
-  createPortalSession,
+  cancelSubscription,
   SubscriptionData,
 } from '@/lib/whiteboard/billing-api';
-import {
-  CreditCard,
-  CheckCircle2,
-  ExternalLink,
-  ArrowLeft,
-  User,
-} from 'lucide-react';
+import { CreditCard, CheckCircle2, ArrowLeft, User } from 'lucide-react';
 
 export function BillingPage() {
   const router = useRouter();
@@ -26,7 +20,7 @@ export function BillingPage() {
   );
   const [userTier, setUserTier] = useState<string>('COMMUNITY');
   const [loading, setLoading] = useState(true);
-  const [portalLoading, setPortalLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authFailed, setAuthFailed] = useState(false);
 
@@ -66,33 +60,50 @@ export function BillingPage() {
       });
   }, [router]);
 
-  const handleManagePortal = async () => {
+  const reloadSubscription = async (token: string) => {
+    try {
+      const res = await fetchSubscription(token);
+      setSubscription(res.subscription);
+      setUserTier(res.userTier || 'COMMUNITY');
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to load subscription details',
+      );
+    }
+  };
+
+  const handleCancel = async () => {
     const currentSession = loadSession();
     if (!currentSession) {
       router.push('/login?next=/billing');
       return;
     }
-    setPortalLoading(true);
+    // Razorpay has no customer portal: cancellation runs server-side at
+    // the end of the paid cycle, so access lasts out naturally.
+    if (
+      !window.confirm(
+        'Cancel your Pro subscription? Access lasts until the end of the paid period.',
+      )
+    )
+      return;
+    setCancelLoading(true);
     setError(null);
     try {
-      const res = await createPortalSession(currentSession.token);
-      if (res.url) {
-        window.location.href = res.url;
-        return;
-      }
-      // A missing URL is a failure, not a hang: release the button.
-      setError('The payment portal did not return a link. Try again.');
-      setPortalLoading(false);
+      await cancelSubscription(currentSession.token);
+      await reloadSubscription(currentSession.token);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setAuthFailed(true);
         setError('Your sign-in expired. Sign in again to manage billing.');
       } else {
         setError(
-          err instanceof Error ? err.message : 'Could not open customer portal',
+          err instanceof Error ? err.message : 'Could not cancel subscription',
         );
       }
-      setPortalLoading(false);
+    } finally {
+      setCancelLoading(false);
     }
   };
 
@@ -170,8 +181,7 @@ export function BillingPage() {
                   & Billing
                 </h1>
                 <p className="text-sm text-white/60 mt-1">
-                  Manage your subscription tier, seats, and payment portal
-                  details.
+                  Manage your subscription tier, seats, and cancellation.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -247,19 +257,18 @@ export function BillingPage() {
 
                 {/* Actions */}
                 <div className="pt-4 flex flex-wrap items-center gap-4 border-t border-white/10">
-                  {subscription?.customerId ? (
+                  {subscription?.providerSubId ? (
                     <button
                       type="button"
-                      onClick={handleManagePortal}
-                      disabled={portalLoading}
-                      className="py-2.5 px-5 rounded-xl bg-[#6965DB] hover:bg-[#5854c7] text-white font-medium text-sm transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
+                      onClick={handleCancel}
+                      disabled={cancelLoading}
+                      className="py-2.5 px-5 rounded-xl border border-red-500/40 hover:bg-red-500/10 text-red-300 font-medium text-sm transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
                     >
                       <span>
-                        {portalLoading
-                          ? 'Opening Portal...'
-                          : 'Manage Payment & Invoices'}
+                        {cancelLoading
+                          ? 'Cancelling...'
+                          : 'Cancel subscription'}
                       </span>
-                      <ExternalLink className="w-4 h-4" />
                     </button>
                   ) : (
                     <Link

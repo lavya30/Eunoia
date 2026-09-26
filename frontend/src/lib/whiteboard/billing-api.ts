@@ -32,8 +32,8 @@ export type CheckoutSessionResponse = {
   sessionId: string;
 };
 
-export type PortalSessionResponse = {
-  url: string;
+export type CancelSubscriptionResponse = {
+  status: string;
 };
 
 function baseUrl(): string {
@@ -114,18 +114,21 @@ export async function createCheckoutSession(
   return payload as CheckoutSessionResponse;
 }
 
-export async function createPortalSession(
+// Razorpay has no customer portal: cancellation runs server-side (at the
+// end of the paid cycle, so access lasts out). The webhook downgrades the
+// tier when the subscription actually ends.
+export async function cancelSubscription(
   token?: string,
-): Promise<PortalSessionResponse> {
+): Promise<CancelSubscriptionResponse> {
   const authToken = token ?? getSessionToken();
   if (!authToken) {
     throw new ApiError(
       401,
-      'Authentication required for billing portal.',
+      'Authentication required to cancel.',
       'AUTH_REQUIRED',
     );
   }
-  const url = `${baseUrl()}/api/billing/portal`;
+  const url = `${baseUrl()}/api/billing/cancel`;
   let response: Response;
   try {
     response = await fetch(url, {
@@ -140,7 +143,7 @@ export async function createPortalSession(
   const text = await response.text();
   const payload = text.trim() ? safeJson(text) : null;
   if (!response.ok) throw toApiError(response.status, payload, text);
-  return payload as PortalSessionResponse;
+  return payload as CancelSubscriptionResponse;
 }
 
 export async function fetchSubscription(

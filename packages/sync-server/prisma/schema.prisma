@@ -73,7 +73,7 @@ model Subscription {
   id            String    @id @default(cuid())
   userId        String    @unique
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider      String    @default("stub")
+  provider      String    @default("razorpay")
   customerId    String?
   providerSubId String?
   status        String    @default("active")

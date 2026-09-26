@@ -44,7 +44,7 @@ export async function handleApiRequest(
     res.setHeader("access-control-allow-origin", "*");
     res.setHeader(
       "access-control-allow-headers",
-      "content-type, authorization, x-user-token, x-billing-signature, stripe-signature",
+      "content-type, authorization, x-user-token, x-razorpay-signature, x-billing-signature, stripe-signature",
     );
     res.setHeader(
       "access-control-allow-methods",
@@ -99,8 +99,12 @@ export async function handleApiRequest(
       return;
     }
 
+    // Razorpay posts x-razorpay-signature; accept the legacy
+    // x-billing-signature / stripe-signature aliases too.
     const sigHeader =
-      req.headers["x-billing-signature"] ?? req.headers["stripe-signature"];
+      req.headers["x-razorpay-signature"] ??
+      req.headers["x-billing-signature"] ??
+      req.headers["stripe-signature"];
     const signature = Array.isArray(sigHeader)
       ? (sigHeader[0] ?? "")
       : (sigHeader ?? "");
