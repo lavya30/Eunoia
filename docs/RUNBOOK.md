@@ -63,3 +63,19 @@ intervals. Alert on: unreachable, HTTP 503, or `status: "down"` for
    container logs.
 3. Post a retrospective when the error budget (docs/SLO.md) drops below
    50% in a window.
+
+## On-call rotation (template — fill names at Pro launch)
+
+| Week (Mon–Sun) | Primary | Secondary |
+| --- | --- | --- |
+| YYYY-MM-DD | name (contact) | name (contact) |
+
+- **Paging:** `down` (503 `/readyz`) or unreachable ×3 probes → page
+  primary immediately. `degraded` → ticket for business hours. Rising
+  `eunoia_ws_upgrades_total{outcome="locked"}` is usually credential
+  rotation, not an outage — check deploys first.
+- **Handoff:** Monday 09:00 local; outgoing primary posts open incidents +
+  error-budget state in the team channel.
+- **Escalation:** no ack in 15 min → secondary; no ack in 30 min → whole
+  team. SLA credits (when the contract is signed) are computed from the
+  prober history, not from recollection.

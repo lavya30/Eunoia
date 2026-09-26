@@ -66,9 +66,71 @@ function formatUptime(totalSec: number): string {
   return `${minutes}m`;
 }
 
+type ProbeSample = {
+  t: number;
+  /** ready | degraded count as up per the SLO; down/unreachable do not. */
+  up: boolean;
+};
+
+const HISTORY_KEY = 'eunoia:status-history:v1';
+const HISTORY_TTL_MS = 48 * 3600_000;
+const HISTORY_CAP = 2880; // 48h at the 60s probe cadence, safety-bounded.
+
+function loadHistory(): ProbeSample[] {
+  try {
+    const raw = window.localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const cutoff = Date.now() - HISTORY_TTL_MS;
+    return parsed.filter(
+      (sample): sample is ProbeSample =>
+        !!sample &&
+        typeof sample === 'object' &&
+        typeof (sample as ProbeSample).t === 'number' &&
+        typeof (sample as ProbeSample).up === 'boolean' &&
+        (sample as ProbeSample).t >= cutoff,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function appendSample(up: boolean): ProbeSample[] {
+  const next = [...loadHistory(), { t: Date.now(), up }].slice(-HISTORY_CAP);
+  try {
+    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  } catch {
+    // Best-effort (private mode, quota).
+  }
+  return next;
+}
+
+type Incident = { start: number; end: number };
+
+function incidentsFrom(samples: ProbeSample[]): Incident[] {
+  const incidents: Incident[] = [];
+  let open: number | null = null;
+  for (const sample of samples) {
+    if (!sample.up && open === null) open = sample.t;
+    if (sample.up && open !== null) {
+      incidents.push({ start: open, end: sample.t });
+      open = null;
+    }
+  }
+  if (open !== null)
+    incidents.push({ start: open, end: samples[samples.length - 1].t });
+  return incidents.reverse();
+}
+
 export function StatusPage() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
+  // Initialized empty so SSR and first client render match; past
+  // samples load in the mount effect below alongside the first probe.
+  // nowTick follows the same path: wall-clock never runs during render.
+  const [history, setHistory] = useState<ProbeSample[]>([]);
+  const [nowTick, setNowTick] = useState(0);
 
   const load = useCallback(async () => {
     const base = resolveSyncHttpUrl();
@@ -90,6 +152,9 @@ export function StatusPage() {
       const readiness = (await readyRes.json()) as Readiness;
       setState({ kind: 'ready', health, readiness });
       setCheckedAt(new Date());
+      // ready + degraded count as up (SLO); down/unreachable do not.
+      setHistory(appendSample(readiness.status !== 'down'));
+      setNowTick(Date.now());
     } catch (error) {
       setState({
         kind: 'unreachable',
@@ -98,11 +163,15 @@ export function StatusPage() {
             ? error.message
             : 'Could not reach the sync server.',
       });
+      setHistory(appendSample(false));
+      setNowTick(Date.now());
     }
   }, []);
 
   /* eslint-disable react-hooks/set-state-in-effect -- poll external server status on mount and interval. */
   useEffect(() => {
+    setHistory(loadHistory());
+    setNowTick(Date.now());
     void load();
     const timer = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(timer);
@@ -241,6 +310,7 @@ export function StatusPage() {
               <span>Version {state.readiness.version}</span>
               <span>Uptime {formatUptime(state.readiness.uptimeSec)}</span>
             </div>
+            <HistorySection history={history} now={nowTick} />
           </>
         ) : null}
 
@@ -251,6 +321,100 @@ export function StatusPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+function HistorySection({
+  history,
+  now,
+}: {
+  history: ProbeSample[];
+  now: number;
+}) {
+  // Browser-kept probe log (30s cadence while this page is open, 48h cap).
+  // A hosted prober feed replaces this when SLA layer 4 goes live; the
+  // rendering contract (uptime % + incident spans) stays the same.
+  const up =
+    history.length > 0
+      ? (history.filter((sample) => sample.up).length / history.length) * 100
+      : null;
+  const incidents = incidentsFrom(history);
+  const buckets = 48;
+  const strip: boolean[] = [];
+  if (history.length > 0 && now > 0) {
+    const span = HISTORY_TTL_MS / buckets;
+    for (let i = buckets - 1; i >= 0; i -= 1) {
+      const from = now - (i + 1) * span;
+      const to = now - i * span;
+      const bucket = history.filter(
+        (sample) => sample.t >= from && sample.t < to,
+      );
+      strip.push(
+        bucket.length > 0 ? bucket.every((sample) => sample.up) : true,
+      );
+    }
+  }
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          color: '#8a8ca3',
+          marginBottom: 6,
+        }}
+      >
+        Last 48 hours{' '}
+        {up !== null ? `· ${up.toFixed(up >= 99 ? 2 : 1)}% up` : ''}
+      </div>
+      {strip.length > 0 ? (
+        <div
+          role="img"
+          aria-label={`Uptime history: ${up !== null ? up.toFixed(2) : '—'}% up over the last 48 hours`}
+          style={{ display: 'flex', gap: 3 }}
+        >
+          {strip.map((ok, index) => (
+            <span
+              key={`bucket-${index}`}
+              style={{
+                flex: 1,
+                height: 28,
+                borderRadius: 4,
+                background: ok ? '#2f9e6e' : '#e5484d',
+                opacity: ok ? 0.85 : 1,
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <p style={{ fontSize: 12, color: '#6b6d85', margin: 0 }}>
+          History accumulates while this page stays open (30s probes, kept 48h
+          in this browser).
+        </p>
+      )}
+      {incidents.length > 0 ? (
+        <div
+          style={{
+            marginTop: 8,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
+          {incidents.slice(0, 5).map((incident) => (
+            <div
+              key={incident.start}
+              style={{ fontSize: 12, color: '#6b6d85' }}
+            >
+              Outage {new Date(incident.start).toLocaleString()} →{' '}
+              {new Date(incident.end).toLocaleString()}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
