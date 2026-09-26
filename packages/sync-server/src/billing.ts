@@ -283,6 +283,12 @@ export type BillingDeps = {
   subscriptionStore: SubscriptionStore;
   billingEventStore: BillingEventStore;
   userStore: UserStore;
+  recordAudit?: (input: {
+    actorId?: string | null;
+    workspaceId?: string | null;
+    action: string;
+    target?: string | null;
+  }) => Promise<void>;
 };
 
 export type WebhookResult = {
@@ -381,6 +387,11 @@ export async function handleBillingWebhook(
     };
     await subscriptionStore.upsertByUserId(upsert);
     await userStore.updateTier(uid, "PRO" as Tier);
+    await deps.recordAudit?.({
+      actorId: uid,
+      action: "billing.tier.upgraded",
+      target: evt.subscriptionId,
+    });
     return { status: 200, body: { received: true, action: "upgraded" } };
   }
 
@@ -394,6 +405,11 @@ export async function handleBillingWebhook(
       });
     }
     await userStore.updateTier(userId, "COMMUNITY" as Tier);
+    await deps.recordAudit?.({
+      actorId: userId,
+      action: "billing.tier.downgraded",
+      target: event.subscriptionId,
+    });
     return { status: 200, body: { received: true, action: "downgraded" } };
   }
 

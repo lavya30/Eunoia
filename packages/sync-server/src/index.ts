@@ -24,6 +24,8 @@ import {
 } from "./RoomLoader.js";
 import { RoomManager } from "./RoomManager.js";
 import { authorizeRoom, extractTicket } from "./room-auth.js";
+import { verifyUserToken } from "./user-auth.js";
+import { roleAtLeast } from "./workspaces.js";
 import { MemoryUserStore, PrismaUserStore, type UserStore } from "./users.js";
 import { WebSocketHandler } from "./WebSocketHandler.js";
 import {
@@ -33,6 +35,17 @@ import {
   PrismaBillingStore,
 } from "./billing-store.js";
 import { RazorpayBillingProvider, type BillingDeps } from "./billing.js";
+import {
+  MemoryWorkspaceStore,
+  PrismaWorkspaceStore,
+  type WorkspaceStore,
+} from "./workspaces.js";
+import { MemoryAiUsageStore, PrismaAiUsageStore } from "./ai.js";
+import {
+  MemoryAuditStore,
+  PrismaAuditStore,
+  recordAudit,
+} from "./audit.js";
 
 const logger = pino({ name: "eunoia-sync-server" });
 
@@ -49,6 +62,7 @@ export function createSyncServer(
   userStore?: UserStore,
   healthChecks?: HealthChecks,
   billingDepsOverride?: Partial<BillingDeps>,
+  workspaceStore?: WorkspaceStore,
 ): SyncServer {
   if (
     config.databaseUrl !== undefined &&
@@ -93,12 +107,14 @@ export function createSyncServer(
   // Billing is live only with Razorpay credentials (same pattern as R2:
   // unconfigured in dev means the billing endpoints answer 503, and
   // self-hosted Community Edition keeps DB-managed tiers).
+  const audit = prisma ? new PrismaAuditStore(prisma) : new MemoryAuditStore();
   const billing: BillingDeps | undefined =
     billingDepsOverride?.provider ?? config.razorpayKeyId
       ? {
           provider:
             billingDepsOverride?.provider ??
             new RazorpayBillingProvider(config),
+          recordAudit: (input) => recordAudit(audit, input),
           subscriptionStore:
             billingDepsOverride?.subscriptionStore ??
             (prisma ? new PrismaBillingStore(prisma) : new MemoryBillingStore()),
@@ -110,6 +126,11 @@ export function createSyncServer(
           userStore: billingDepsOverride?.userStore ?? users,
         }
       : undefined;
+  const workspaces: WorkspaceStore =
+    workspaceStore ??
+    (prisma ? new PrismaWorkspaceStore(prisma) : new MemoryWorkspaceStore());
+  const aiUsage =
+    prisma ? new PrismaAiUsageStore(prisma) : new MemoryAiUsageStore();
   const handler = new WebSocketHandler(manager);
   // Bound inbound frames: without maxPayload a single malicious client can
   // force multi-hundred-MB Buffer.concat allocations before Yjs ever sees
@@ -133,15 +154,19 @@ export function createSyncServer(
   // so anything created inside createApiApp would reset on every call).
   const startedAt = Date.now();
   const version = appVersion();
+  const metrics = new Metrics();
   const apiDeps: ApiDeps = {
     health: healthChecks ?? defaultHealthChecks(apiConfig, prisma),
-    metrics: new Metrics(),
+    metrics,
     getStats: () => ({
       activeRooms: manager.activeRoomCount,
       wsConnections: wsServer.clients.size,
     }),
     startedAt,
     version,
+    workspaces,
+    aiUsage,
+    audit,
   };
   const server = createServer((req, res) => {
     void handleApiRequest(req, res, manager, apiConfig, images, users, {
@@ -180,9 +205,51 @@ export function createSyncServer(
       req.headers as Record<string, string | undefined>,
       { ticket: queryTicket },
     );
+    const acceptUpgrade = () => {
+      wsServer.handleUpgrade(req, socket, head, (ws) => {
+        logger.debug({ roomId }, "ws upgrade accepted");
+        void handler.handle(ws, roomId).catch(() => {
+          // No client was registered, but getOrCreate may have
+          // materialized the room: release it so a failing room id
+          // cannot pin an empty room until the idle timeout.
+          // (release() is a no-op for rooms that gained clients.)
+          manager.release(roomId);
+          ws.close(1011, "Unable to load room");
+        });
+      });
+    };
+    // Membership fallback for locked workspace rooms (see above).
+    const authorizeWorkspaceSocket = async (
+      targetRoomId: string,
+      userToken: string,
+    ): Promise<boolean> => {
+      const userId = verifyUserToken(ticketSecret, userToken);
+      if (!userId) return false;
+      const room = await manager.getRoomMetadata(targetRoomId);
+      if (!room?.workspaceId) return false;
+      const ws = await workspaces.getWorkspace(room.workspaceId);
+      if (!ws) return false;
+      if (ws.ownerId === userId) return true;
+      const membership = await workspaces.getMembership(
+        room.workspaceId,
+        userId,
+      );
+      return roleAtLeast(membership?.role ?? null, "VIEWER");
+    };
     void authorizeRoom(manager, roomId, ticket, queryTicket, ticketSecret)
-      .then((access) => {
+      .then(async (access) => {
         if (access.status === "locked") {
+          // Workspace members sync without a room ticket: browsers can't
+          // set WS headers, so identity travels as ?userToken= (the same
+          // token used for HTTP). Members at VIEWER+ pass; everyone else
+          // keeps the 401.
+          const userToken = url.searchParams.get("userToken") ?? undefined;
+          if (userToken && (await authorizeWorkspaceSocket(roomId, userToken))) {
+            metrics.incWsUpgrade("member");
+            acceptUpgrade();
+            return;
+          }
+          metrics.incWsUpgrade("locked");
           logger.info({ roomId }, "ws upgrade rejected: locked");
           socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
           socket.destroy();
@@ -191,24 +258,17 @@ export function createSyncServer(
         if (access.status === "missing") {
           // Unlike HTTP room creation, the socket never auto-creates rooms:
           // IDs bypass CreateRoomSchema validation here.
+          metrics.incWsUpgrade("missing");
           logger.info({ roomId }, "ws upgrade rejected: missing room");
           socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
           socket.destroy();
           return;
         }
-        wsServer.handleUpgrade(req, socket, head, (ws) => {
-          logger.debug({ roomId }, "ws upgrade accepted");
-          void handler.handle(ws, roomId).catch(() => {
-            // No client was registered, but getOrCreate may have
-            // materialized the room: release it so a failing room id
-            // cannot pin an empty room until the idle timeout.
-            // (release() is a no-op for rooms that gained clients.)
-            manager.release(roomId);
-            ws.close(1011, "Unable to load room");
-          });
-        });
+        metrics.incWsUpgrade("ok");
+        acceptUpgrade();
       })
       .catch(() => {
+        metrics.incWsUpgrade("error");
         logger.info({ roomId }, "ws upgrade rejected: auth error");
         socket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
         socket.destroy();

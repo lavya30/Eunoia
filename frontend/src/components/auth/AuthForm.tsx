@@ -18,6 +18,7 @@ import {
   saveSession,
   type AuthSession,
 } from '@/lib/whiteboard/auth';
+import { resolveSyncHttpUrl } from '@/lib/whiteboard/sync';
 import './auth.css';
 
 export type AuthMode = 'login' | 'signup';
@@ -131,6 +132,75 @@ function ArrowIcon() {
       <path d="M5 12h14" />
       <path d="m12 5 7 7-7 7" />
     </svg>
+  );
+}
+
+function SsoButton({ next }: { next: string | null }) {
+  const [started, setStarted] = useState(false);
+  const [ssoError, setSsoError] = useState<string | null>(null);
+  const [available, setAvailable] = useState(true);
+
+  const start = async () => {
+    if (started) return;
+    setStarted(true);
+    setSsoError(null);
+    try {
+      const base = resolveSyncHttpUrl();
+      if (!base) throw new Error('Sync server is not configured.');
+      const params = new URLSearchParams();
+      if (next) params.set('next', next);
+      const response = await fetch(
+        `${base}/api/auth/sso/start${params.size > 0 ? `?${params.toString()}` : ''}`,
+      );
+      if (response.status === 503) {
+        // SSO is an enterprise deployment choice, not a product gap on
+        // this host: hide the button instead of showing a dead end.
+        setAvailable(false);
+        return;
+      }
+      if (!response.ok) throw new Error(`Sign-in failed (${response.status}).`);
+      const payload = (await response.json()) as { url?: unknown };
+      if (typeof payload.url !== 'string' || !payload.url)
+        throw new Error('Sign-in failed: no redirect URL.');
+      window.location.href = payload.url;
+    } catch (error) {
+      setSsoError(error instanceof Error ? error.message : 'Sign-in failed.');
+      setStarted(false);
+    }
+  };
+
+  if (!available) return null;
+  return (
+    <div>
+      <button
+        type="button"
+        className="auth-submit"
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          padding: '10px 14px',
+          borderRadius: 10,
+          border: '1px solid #e3e2ea',
+          background: '#fff',
+          cursor: started ? 'wait' : 'pointer',
+          fontSize: 14,
+          fontWeight: 600,
+          color: '#35374a',
+        }}
+        disabled={started}
+        onClick={() => void start()}
+      >
+        {started ? 'Redirecting…' : 'Continue with Google'}
+      </button>
+      {ssoError ? (
+        <p className="auth-form-error" role="alert">
+          {ssoError}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -516,6 +586,10 @@ export function AuthForm({
                     </span>
                   </div>
                 </form>
+
+                <div style={{ marginTop: 12 }}>
+                  <SsoButton next={next} />
+                </div>
 
                 <ul
                   className="auth-trust"

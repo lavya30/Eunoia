@@ -17,6 +17,13 @@ export type NewUser = {
 
 type UserRow = PublicUser & { passwordHash: string | null };
 
+export type OAuthIdentity = {
+  provider: string;
+  subject: string;
+  email: string;
+  name?: string | null;
+};
+
 export interface UserStore {
   /** Returns null when the email is already taken. */
   createUser(input: NewUser): Promise<PublicUser | null>;
@@ -25,6 +32,12 @@ export interface UserStore {
   getPasswordHash(userId: string): Promise<string | null>;
   /** Update the user's subscription tier. Returns null if user not found. */
   updateTier(userId: string, tier: Tier): Promise<PublicUser | null>;
+  /**
+   * SSO link-or-create: returns the user bound to (provider, subject),
+   * creating and/or linking as needed. Same email links to the existing
+   * password account (documented: email equality = same person).
+   */
+  findOrCreateOAuthUser(identity: OAuthIdentity): Promise<PublicUser>;
 }
 
 /** Email identity: lowercase, trimmed. All lookups normalize first. */
@@ -35,6 +48,7 @@ export function normalizeEmail(email: string): string {
 export class MemoryUserStore implements UserStore {
   private readonly byId = new Map<string, UserRow>();
   private readonly idByEmail = new Map<string, string>();
+  private readonly idByOAuth = new Map<string, string>();
 
   async createUser(input: NewUser): Promise<PublicUser | null> {
     const email = normalizeEmail(input.email);
@@ -70,6 +84,33 @@ export class MemoryUserStore implements UserStore {
     const row = this.byId.get(userId);
     if (!row) return null;
     row.tier = tier;
+    return toPublicUser(row);
+  }
+
+  async findOrCreateOAuthUser(
+    identity: OAuthIdentity,
+  ): Promise<PublicUser> {
+    const key = `${identity.provider}:${identity.subject}`;
+    const linked = this.idByOAuth.get(key);
+    if (linked) {
+      const row = this.byId.get(linked);
+      if (row) return toPublicUser(row);
+    }
+    const existing = await this.findByEmail(identity.email);
+    if (existing) {
+      this.idByOAuth.set(key, existing.id);
+      return existing;
+    }
+    const row: UserRow = {
+      id: randomUUID(),
+      email: normalizeEmail(identity.email),
+      name: identity.name ?? null,
+      tier: "COMMUNITY",
+      passwordHash: null,
+    };
+    this.byId.set(row.id, row);
+    this.idByEmail.set(row.email, row.id);
+    this.idByOAuth.set(key, row.id);
     return toPublicUser(row);
   }
 }
@@ -134,6 +175,45 @@ export class PrismaUserStore implements UserStore {
         return null;
       throw error;
     }
+  }
+
+  async findOrCreateOAuthUser(
+    identity: OAuthIdentity,
+  ): Promise<PublicUser> {
+    const linked = await this.prisma.oAuthAccount.findUnique({
+      where: {
+        provider_subject: {
+          provider: identity.provider,
+          subject: identity.subject,
+        },
+      },
+      include: { user: true },
+    });
+    if (linked) return toPublicUser(linked.user);
+    const email = normalizeEmail(identity.email);
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      user = await this.prisma.user.create({
+        data: { email, name: identity.name ?? undefined },
+      });
+    }
+    await this.prisma.oAuthAccount.upsert({
+      where: {
+        provider_subject: {
+          provider: identity.provider,
+          subject: identity.subject,
+        },
+      },
+      update: { userId: user.id },
+      create: {
+        provider: identity.provider,
+        subject: identity.subject,
+        userId: user.id,
+      },
+    });
+    const fresh = await this.prisma.user.findUnique({ where: { id: user.id } });
+    if (!fresh) throw new Error("OAuth user vanished after linking");
+    return toPublicUser(fresh);
   }
 }
 
