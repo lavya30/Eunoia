@@ -1401,9 +1401,10 @@ export function WhiteboardPage({
   const [exportProgress, setExportProgress] = useState<string | null>(null);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiQuota, setAiQuota] = useState<{ used: number; limit: number } | null>(
-    null,
-  );
+  const [aiQuota, setAiQuota] = useState<{
+    used: number;
+    limit: number;
+  } | null>(null);
   // Thumbnail auto-capture guards: one in-flight upload, last uploaded hash.
   const thumbInFlightRef = useRef(false);
   const thumbHashRef = useRef<string | null>(null);
@@ -1461,6 +1462,9 @@ export function WhiteboardPage({
   }, [brushSize, brushThinning]);
   const lastCompiledCodeRef = useRef<string | null>(null);
   const restoreNoticeRef = useRef(false);
+  // Bounded reconnect attempts after access loss (see onAccessLost): reset
+  // whenever a session connects or the room changes.
+  const accessLostRetries = useRef(0);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [showWorkspaces, setShowWorkspaces] = useState(false);
   const [showRoomSettings, setShowRoomSettings] = useState(false);
@@ -1833,6 +1837,10 @@ export function WhiteboardPage({
     if (
       !hasHydrated ||
       !roomId ||
+      // Local-only rooms have no server counterpart: syncing them just
+      // 404s the upgrade forever, and onAccessLost would then misfile
+      // them as missing server rooms.
+      roomId.startsWith('local-') ||
       roomStatus === 'locked' ||
       roomStatus === 'missing'
     )
@@ -1846,7 +1854,10 @@ export function WhiteboardPage({
       userToken: resolveUserToken(),
       initialState: boardStateRef.current,
       getInitialState: () => boardStateRef.current,
-      onReady: () => setSyncReady(true),
+      onReady: () => {
+        accessLostRetries.current = 0;
+        setSyncReady(true);
+      },
       onStatus: (status) => {
         setSyncStatus(status);
         if (status === 'offline') setSyncReady(false);
@@ -1871,8 +1882,19 @@ export function WhiteboardPage({
         void getRoom(id, getTicket(id))
           .then(() => {
             // Open room (or valid ticket) but sync keeps failing: flaky
-            // network or server restart — recreate the session fresh.
-            setSyncNonce((n) => n + 1);
+            // network or server restart — recreate the session fresh, with
+            // a bounded backoff so a hard-down backend can't storm it.
+            accessLostRetries.current += 1;
+            if (accessLostRetries.current > 5) {
+              setBoardError(
+                'Live sync keeps failing. The board still works locally.',
+              );
+              return;
+            }
+            const delayMs = Math.min(30, 2 ** accessLostRetries.current) * 1000;
+            window.setTimeout(() => {
+              if (roomIdRef.current === id) setSyncNonce((n) => n + 1);
+            }, delayMs);
           })
           .catch((error: unknown) => {
             if (isRoomLocked(error)) {
@@ -1884,7 +1906,6 @@ export function WhiteboardPage({
               setBoardError(
                 'Live sync keeps failing. The board still works locally.',
               );
-              setSyncNonce((n) => n + 1);
             }
           });
       },
@@ -4558,9 +4579,7 @@ export function WhiteboardPage({
     setAiBusy(true);
     setBoardError(null);
     try {
-      const { generateDiagram } = await import(
-        '@/lib/whiteboard/ai-api'
-      );
+      const { generateDiagram } = await import('@/lib/whiteboard/ai-api');
       const result = await generateDiagram(prompt, {
         roomId: roomId ?? undefined,
         ticket: roomId ? getTicket(roomId) : undefined,
@@ -4572,7 +4591,10 @@ export function WhiteboardPage({
     } catch (error) {
       if (error instanceof ApiError && error.code === 'AUTH_REQUIRED') {
         setBoardError('Sign in to generate diagrams with AI.');
-      } else if (error instanceof ApiError && error.code === 'AI_NOT_CONFIGURED') {
+      } else if (
+        error instanceof ApiError &&
+        error.code === 'AI_NOT_CONFIGURED'
+      ) {
         setBoardError(
           'AI generation is not configured on this server. Set AI_API_KEY to enable it.',
         );
