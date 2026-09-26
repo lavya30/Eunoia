@@ -3,12 +3,20 @@ import { Elysia } from "elysia";
 import type { Config } from "../config.js";
 import { CompileRequestError, compileD2, type Tier } from "../d2-compiler.js";
 import {
+  type DependencyCheck,
+  type HealthChecks,
+  imageStorageCheck,
+  summarizeReadiness,
+} from "../health.js";
+import {
   buildImageKey,
   isR2NotFound,
   type ImageDeps,
   keyBelongsToRoom,
   type ObjectHead,
 } from "../images.js";
+import { Metrics } from "../metrics.js";
+import { appVersion } from "../version.js";
 import type { RoomMetadata } from "../RoomLoader.js";
 import type { RoomManager } from "../RoomManager.js";
 import {
@@ -152,14 +160,44 @@ async function requireOwnership(
   return { owner: caller, claimed: room.ownerId === "anonymous" };
 }
 
+export type ApiDeps = {
+  /** Dependency probes for /readyz. Defaults to all-skipped (no deps). */
+  health?: HealthChecks;
+  /** Request/compile counters for /metrics. Defaults to a fresh instance. */
+  metrics?: Metrics;
+  /** Live gauges for /metrics. Defaults to the room manager + zero sockets. */
+  getStats?: () => { activeRooms: number; wsConnections: number };
+  /** Process start for uptime reporting. Defaults to now. */
+  startedAt?: number;
+  /** Release string for /health and /readyz. Defaults to package version. */
+  version?: string;
+};
+
+const skippedCheck = async (): Promise<DependencyCheck> => ({
+  status: "skipped",
+});
+
 export function createApiApp(
   manager: RoomManager,
   config: Config,
   images: ImageDeps,
   users: UserStore,
+  deps: ApiDeps = {},
 ) {
   const ticketSecret = config.roomTicketSecret;
   if (!ticketSecret) throw new Error("roomTicketSecret is required");
+  const health: HealthChecks = deps.health ?? {
+    checkDatabase: skippedCheck,
+    checkRedis: skippedCheck,
+    checkCompiler: skippedCheck,
+  };
+  const metrics = deps.metrics ?? new Metrics();
+  const startedAt = deps.startedAt ?? Date.now();
+  const version = deps.version ?? appVersion();
+  const getStats = deps.getStats ?? (() => ({
+    activeRooms: manager.activeRoomCount,
+    wsConnections: 0,
+  }));
   return (
     new Elysia({ adapter: node() })
       // Never leak plain-text framework/driver errors (e.g. Prisma's
@@ -222,10 +260,61 @@ export function createApiApp(
         set.headers["access-control-allow-methods"] =
           "GET, POST, PATCH, DELETE, OPTIONS";
       })
+      .onAfterResponse(({ request, set }) => {
+        // Single counting point for every response, including errors:
+        // route templates keep label cardinality bounded.
+        try {
+          metrics.incHttp(
+            request.method,
+            new URL(request.url).pathname,
+            set.status,
+          );
+        } catch {
+          // Metrics must never break responses (e.g. malformed URLs).
+        }
+      })
       .get("/health", () => ({
         status: "ok",
+        version,
+        uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         activeRooms: manager.activeRoomCount,
       }))
+      .get("/readyz", async ({ set }) => {
+        // Readiness for orchestrators and external probers: every check is
+        // bounded and never throws, so this endpoint always answers.
+        const [database, redis, compiler] = await Promise.all([
+          health.checkDatabase().catch(
+            (): DependencyCheck => ({ status: "error", detail: "check failed" }),
+          ),
+          health.checkRedis().catch(
+            (): DependencyCheck => ({ status: "error", detail: "check failed" }),
+          ),
+          health.checkCompiler().catch(
+            (): DependencyCheck => ({ status: "error", detail: "check failed" }),
+          ),
+        ]);
+        const readiness = summarizeReadiness(
+          database,
+          redis,
+          compiler,
+          imageStorageCheck(config),
+          version,
+          (Date.now() - startedAt) / 1000,
+        );
+        // A down database takes the server out of rotation; degraded deps
+        // (Redis, compiler) stay routable by design.
+        if (readiness.status === "down") set.status = 503;
+        return readiness;
+      })
+      .get("/metrics", ({ set }) => {
+        const stats = getStats();
+        set.headers["content-type"] = "text/plain; version=0.0.4";
+        return metrics.render({
+          activeRooms: stats.activeRooms,
+          wsConnections: stats.wsConnections,
+          uptimeSec: (Date.now() - startedAt) / 1000,
+        });
+      })
       .post("/api/rooms", async ({ body, headers, set }) => {
         const parsed = CreateRoomSchema.safeParse(body);
         if (!parsed.success) {
@@ -521,7 +610,7 @@ export function createApiApp(
           tier = higherTier(access.room.tier, tier);
         }
         try {
-          return await compileD2(
+          const result = await compileD2(
             { source: input.source, engine },
             {
               compilerUrl: config.d2CompilerUrl,
@@ -530,8 +619,16 @@ export function createApiApp(
               nodeLimit: config.d2CommunityNodeLimit,
             },
           );
+          metrics.incCompile(
+            engine,
+            "placeholder" in result && result.placeholder
+              ? "placeholder"
+              : "success",
+          );
+          return result;
         } catch (error) {
           if (error instanceof CompileRequestError) {
+            metrics.incCompile(engine, error.code);
             set.status = error.status;
             return {
               error: error.message,
@@ -539,6 +636,7 @@ export function createApiApp(
               details: error.details,
             };
           }
+          metrics.incCompile(engine, "error");
           set.status = 502;
           return {
             error:

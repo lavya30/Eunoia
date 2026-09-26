@@ -46,7 +46,9 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 
 ### HTTP API
 
-- `GET /health`
+- `GET /health` (liveness: `status`, `version`, `uptimeSec`, `activeRooms`)
+- `GET /readyz` (readiness: `ready|degraded|down` + per-dependency checks for PostgreSQL, Redis, D2 compiler, R2; 503 only when `down`)
+- `GET /metrics` (Prometheus text: HTTP counts by route/status, compile counts by engine/outcome, room/socket gauges, uptime, RSS)
 - `POST /api/rooms` (optional `password`, min 8 chars, stored as scrypt hash)
 - `POST /api/rooms/:roomId/unlock` (exchanges the password for an HMAC ticket; locked rooms require it as `Authorization: Bearer` or `?ticket=` on room endpoints and `/sync/:roomId`, which 401s otherwise)
 - `GET /api/rooms/:roomId`

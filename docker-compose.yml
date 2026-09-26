@@ -21,6 +21,12 @@ services:
       - "6379:6379"
     volumes:
       - eunoia-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
   sync-server:
     build:
@@ -35,6 +41,19 @@ services:
       D2_COMPILER_URL: http://d2-compiler:9400/compile
     ports:
       - "3001:3001"
+    healthcheck:
+      # Readiness (not just liveness): fails when postgres is reachable in
+      # config but down, so orchestrators stop routing until recovery.
+      test:
+        [
+          "CMD-SHELL",
+          'wget -qO- http://127.0.0.1:3001/readyz | grep -Eq ''"status":"(ready|degraded)"''',
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy

@@ -24,3 +24,19 @@ Snapshots accumulate per room and are pruned on every save to the newest `SNAPSH
 Rooms accept an optional password (`POST /api/rooms` with `password`, minimum 8 characters, stored as scrypt hash). Locked rooms require an access ticket on every room-scoped endpoint and the sync socket: `POST /api/rooms/:roomId/unlock` exchanges the password for a stateless HMAC ticket (24h by default via `ROOM_TICKET_TTL_SEC`), sent as `Authorization: Bearer` (or `?ticket=`, or `?ticket=` on the `/sync/:roomId` upgrade, which rejects with 401 otherwise). Without `ROOM_TICKET_SECRET` the server generates an ephemeral secret and warns. Open rooms behave exactly as before.
 
 The implementation targets the available Node 20 runtime and uses only Node-compatible APIs. Node 22+ remains the production target from the PRD.
+
+## Observability
+
+- `GET /health` is cheap liveness (`status`, `version`, `uptimeSec`,
+  `activeRooms`); Docker `HEALTHCHECK` and compose poll it.
+- `GET /readyz` reports `ready|degraded|down` with per-dependency checks
+  (PostgreSQL, Redis, D2 compiler, R2). Only `down` (configured but
+  unreachable PostgreSQL) returns 503; degraded Redis/compiler stay
+  routable by design. Compose gates the sync-server on it.
+- `GET /metrics` serves Prometheus text: per-route HTTP counts, compile
+  counts by engine/outcome, room/socket gauges, uptime, RSS.
+- Every HTTP request logs one JSON access line (method, path, status,
+  duration); WebSocket upgrade rejections log the room and reason.
+- The frontend `/status` route renders these checks as a public status
+  page (30s refresh). SLOs, probing setup, and incident playbooks live in
+  `docs/SLO.md` and `docs/RUNBOOK.md`.

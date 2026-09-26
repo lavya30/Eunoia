@@ -1,11 +1,19 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type pino from "pino";
 import type { Config } from "../config.js";
 import type { ImageDeps } from "../images.js";
 import type { RoomManager } from "../RoomManager.js";
 import type { UserStore } from "../users.js";
-import { createApiApp } from "./app.js";
+import { type ApiDeps, createApiApp } from "./app.js";
 
 const MAX_BODY_BYTES = 1_000_000;
+
+export type ApiBridgeOptions = {
+  /** Shared per-process API deps (metrics, health, version). */
+  apiDeps?: ApiDeps;
+  /** When set, every request is logged as one JSON access line. */
+  log?: pino.Logger;
+};
 
 /** Bridges Node's HTTP server to Elysia's standard Request/Response handler. */
 export async function handleApiRequest(
@@ -15,7 +23,9 @@ export async function handleApiRequest(
   config: Config,
   images: ImageDeps,
   users: UserStore,
+  options: ApiBridgeOptions = {},
 ): Promise<void> {
+  const started = Date.now();
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
     res.setHeader("access-control-allow-origin", "*");
@@ -50,9 +60,13 @@ export async function handleApiRequest(
     `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`,
     { method: req.method, headers, body },
   );
-  const response = await createApiApp(manager, config, images, users).handle(
-    request,
-  );
+  const response = await createApiApp(
+    manager,
+    config,
+    images,
+    users,
+    options.apiDeps,
+  ).handle(request);
   res.statusCode = response.status;
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader(
@@ -67,4 +81,13 @@ export async function handleApiRequest(
     res.setHeader(key, value);
   });
   res.end(Buffer.from(await response.arrayBuffer()));
+  options.log?.info(
+    {
+      method: req.method,
+      path: req.url?.split("?")[0],
+      status: response.status,
+      durationMs: Date.now() - started,
+    },
+    "http request",
+  );
 }

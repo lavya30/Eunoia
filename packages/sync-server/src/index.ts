@@ -3,9 +3,13 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { PrismaClient } from "@prisma/client";
 import pino from "pino";
 import { WebSocketServer } from "ws";
+import type { ApiDeps } from "./api/app.js";
 import { handleApiRequest } from "./api/routes.js";
 import type { Config } from "./config.js";
 import { loadConfig } from "./config.js";
+import { defaultHealthChecks, type HealthChecks } from "./health.js";
+import { Metrics } from "./metrics.js";
+import { appVersion } from "./version.js";
 import {
   type ImageDeps,
   MemoryImageStore,
@@ -36,6 +40,7 @@ export function createSyncServer(
   store?: SnapshotStore,
   imageDeps?: Partial<ImageDeps>,
   userStore?: UserStore,
+  healthChecks?: HealthChecks,
 ): SyncServer {
   if (
     config.databaseUrl !== undefined &&
@@ -88,18 +93,34 @@ export function createSyncServer(
   }
   const ticketSecret: string = resolvedSecret;
   const apiConfig: Config = { ...config, roomTicketSecret: ticketSecret };
+  // Shared per-process API state: one metrics registry and one start time
+  // across requests (the HTTP bridge builds a fresh Elysia app per request,
+  // so anything created inside createApiApp would reset on every call).
+  const startedAt = Date.now();
+  const version = appVersion();
+  const apiDeps: ApiDeps = {
+    health: healthChecks ?? defaultHealthChecks(apiConfig, prisma),
+    metrics: new Metrics(),
+    getStats: () => ({
+      activeRooms: manager.activeRoomCount,
+      wsConnections: wsServer.clients.size,
+    }),
+    startedAt,
+    version,
+  };
   const server = createServer((req, res) => {
-    void handleApiRequest(req, res, manager, apiConfig, images, users).catch(
-      (error) => {
-        res.statusCode = 400;
-        res.setHeader("content-type", "application/json");
-        res.end(
-          JSON.stringify({
-            error: error instanceof Error ? error.message : "Bad request",
-          }),
-        );
-      },
-    );
+    void handleApiRequest(req, res, manager, apiConfig, images, users, {
+      apiDeps,
+      log: logger,
+    }).catch((error) => {
+      res.statusCode = 400;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          error: error instanceof Error ? error.message : "Bad request",
+        }),
+      );
+    });
   });
 
   server.on("upgrade", (req, socket, head) => {
@@ -118,6 +139,7 @@ export function createSyncServer(
     void authorizeRoom(manager, roomId, ticket, queryTicket, ticketSecret)
       .then((access) => {
         if (access.status === "locked") {
+          logger.info({ roomId }, "ws upgrade rejected: locked");
           socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
           socket.destroy();
           return;
@@ -125,17 +147,20 @@ export function createSyncServer(
         if (access.status === "missing") {
           // Unlike HTTP room creation, the socket never auto-creates rooms:
           // IDs bypass CreateRoomSchema validation here.
+          logger.info({ roomId }, "ws upgrade rejected: missing room");
           socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
           socket.destroy();
           return;
         }
         wsServer.handleUpgrade(req, socket, head, (ws) => {
+          logger.debug({ roomId }, "ws upgrade accepted");
           void handler
             .handle(ws, roomId)
             .catch(() => ws.close(1011, "Unable to load room"));
         });
       })
       .catch(() => {
+        logger.info({ roomId }, "ws upgrade rejected: auth error");
         socket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
         socket.destroy();
       });
@@ -170,6 +195,7 @@ if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
   const app = createSyncServer(config);
   app.server.listen(config.port, config.host, () => {
     logger.info(
+      { version: appVersion() },
       `Eunoia sync server listening on ${config.host}:${config.port}`,
     );
   });
