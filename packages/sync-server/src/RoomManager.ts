@@ -60,6 +60,8 @@ export class RoomManager {
       name: input?.name ?? "Untitled room",
       ownerId: input?.ownerId ?? "anonymous",
       tier: input?.tier ?? "COMMUNITY",
+      workspaceId: input?.workspaceId ?? null,
+      folderId: input?.folderId ?? null,
       hasPassword: passwordHash !== undefined,
     };
     await this.store.ensureRoom(metadata, passwordHash);
@@ -77,7 +79,13 @@ export class RoomManager {
    */
   async updateRoom(
     roomId: string,
-    updates: { name?: string; ownerId?: string; tier?: RoomMetadata["tier"] },
+    updates: {
+      name?: string;
+      ownerId?: string;
+      tier?: RoomMetadata["tier"];
+      workspaceId?: string | null;
+      folderId?: string | null;
+    },
     password?: string | null,
   ): Promise<RoomMetadata | null> {
     return this.store.updateRoom(roomId, {
@@ -97,6 +105,13 @@ export class RoomManager {
 
   async getPasswordVersion(roomId: string): Promise<number | null> {
     return this.store.getPasswordVersion(roomId);
+  }
+
+  async listRooms(filter?: {
+    workspaceId?: string | null;
+    ownerId?: string;
+  }): Promise<RoomMetadata[]> {
+    return this.store.listRooms(filter);
   }
 
   async listRoomSnapshots(
@@ -179,6 +194,8 @@ export class RoomManager {
       name: "Untitled room",
       ownerId: "anonymous",
       tier: "COMMUNITY",
+      workspaceId: null,
+      folderId: null,
       hasPassword: false,
     });
     const doc = await loadRoomDoc(roomId, this.store);

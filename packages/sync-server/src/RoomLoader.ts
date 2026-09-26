@@ -57,6 +57,14 @@ export type RoomMetadata = {
   ownerId: string;
   tier: "COMMUNITY" | "PRO" | "ENTERPRISE";
   hasPassword: boolean;
+  /** Null for personal rooms outside any workspace. */
+  workspaceId: string | null;
+  folderId: string | null;
+};
+
+export type RoomFilter = {
+  workspaceId?: string | null;
+  ownerId?: string;
 };
 
 export interface SnapshotStore {
@@ -70,6 +78,7 @@ export interface SnapshotStore {
   ensureRoom(metadata: RoomMetadata, passwordHash?: string): Promise<void>;
   updateRoom(roomId: string, updates: RoomUpdate): Promise<RoomMetadata | null>;
   getRoom(roomId: string): Promise<RoomMetadata | null>;
+  listRooms(filter?: RoomFilter): Promise<RoomMetadata[]>;
   getPasswordHash(roomId: string): Promise<string | null>;
   /** Password rotation counter; null when the room does not exist. */
   getPasswordVersion(roomId: string): Promise<number | null>;
@@ -87,6 +96,8 @@ export type RoomUpdate = {
   ownerId?: string;
   tier?: RoomMetadata["tier"];
   passwordHash?: string | null;
+  workspaceId?: string | null;
+  folderId?: string | null;
 };
 
 export class MemorySnapshotStore implements SnapshotStore {
@@ -156,6 +167,17 @@ export class MemorySnapshotStore implements SnapshotStore {
     return this.rooms.get(roomId) ?? null;
   }
 
+  async listRooms(filter: RoomFilter = {}): Promise<RoomMetadata[]> {
+    // Insertion order (Map preserves it); the Prisma store sorts by
+    // updatedAt for real recency.
+    return [...this.rooms.values()].filter(
+      (room) =>
+        (filter.workspaceId === undefined ||
+          room.workspaceId === filter.workspaceId) &&
+        (filter.ownerId === undefined || room.ownerId === filter.ownerId),
+    );
+  }
+
   async updateRoom(
     roomId: string,
     updates: RoomUpdate,
@@ -167,6 +189,12 @@ export class MemorySnapshotStore implements SnapshotStore {
       ...(updates.name !== undefined ? { name: updates.name } : {}),
       ...(updates.ownerId !== undefined ? { ownerId: updates.ownerId } : {}),
       ...(updates.tier !== undefined ? { tier: updates.tier } : {}),
+      ...(updates.workspaceId !== undefined
+        ? { workspaceId: updates.workspaceId }
+        : {}),
+      ...(updates.folderId !== undefined
+        ? { folderId: updates.folderId }
+        : {}),
       hasPassword:
         updates.passwordHash === undefined
           ? existing.hasPassword
@@ -300,6 +328,8 @@ export class PrismaSnapshotStore implements SnapshotStore {
         name: metadata.name,
         ownerId: metadata.ownerId,
         tier: metadata.tier,
+        workspaceId: metadata.workspaceId,
+        folderId: metadata.folderId,
         passwordHash,
       },
       update: {},
@@ -314,6 +344,8 @@ export class PrismaSnapshotStore implements SnapshotStore {
         name: true,
         ownerId: true,
         tier: true,
+        workspaceId: true,
+        folderId: true,
         passwordHash: true,
       },
     });
@@ -323,9 +355,42 @@ export class PrismaSnapshotStore implements SnapshotStore {
           name: room.name,
           ownerId: room.ownerId,
           tier: room.tier,
+          workspaceId: room.workspaceId,
+          folderId: room.folderId,
           hasPassword: room.passwordHash !== null,
         }
       : null;
+  }
+
+  async listRooms(filter: RoomFilter = {}): Promise<RoomMetadata[]> {
+    const rows = await this.prisma.room.findMany({
+      where: {
+        ...(filter.workspaceId !== undefined
+          ? { workspaceId: filter.workspaceId }
+          : {}),
+        ...(filter.ownerId !== undefined ? { ownerId: filter.ownerId } : {}),
+      },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        ownerId: true,
+        tier: true,
+        workspaceId: true,
+        folderId: true,
+        passwordHash: true,
+      },
+    });
+    // Never leak hashes through listings; expose lock state only.
+    return rows.map((room) => ({
+      id: room.id,
+      name: room.name,
+      ownerId: room.ownerId,
+      tier: room.tier,
+      workspaceId: room.workspaceId,
+      folderId: room.folderId,
+      hasPassword: room.passwordHash !== null,
+    }));
   }
 
   async updateRoom(
@@ -341,6 +406,12 @@ export class PrismaSnapshotStore implements SnapshotStore {
             ? { ownerId: updates.ownerId }
             : {}),
           ...(updates.tier !== undefined ? { tier: updates.tier } : {}),
+          ...(updates.workspaceId !== undefined
+            ? { workspaceId: updates.workspaceId }
+            : {}),
+          ...(updates.folderId !== undefined
+            ? { folderId: updates.folderId }
+            : {}),
           ...(updates.passwordHash !== undefined
             ? {
                 passwordHash: updates.passwordHash,
@@ -353,6 +424,8 @@ export class PrismaSnapshotStore implements SnapshotStore {
           name: true,
           ownerId: true,
           tier: true,
+          workspaceId: true,
+          folderId: true,
           passwordHash: true,
         },
       })
@@ -372,6 +445,8 @@ export class PrismaSnapshotStore implements SnapshotStore {
       name: room.name,
       ownerId: room.ownerId,
       tier: room.tier,
+      workspaceId: room.workspaceId,
+      folderId: room.folderId,
       hasPassword: room.passwordHash !== null,
     };
   }

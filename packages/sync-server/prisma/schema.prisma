@@ -17,14 +17,15 @@ enum Tier {
 }
 
 model User {
-  id           String        @id @default(cuid())
-  email        String        @unique
-  name         String?
-  passwordHash String?
-  tier         Tier          @default(COMMUNITY)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  subscription Subscription?
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String?
+  passwordHash  String?
+  tier          Tier           @default(COMMUNITY)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscription  Subscription?
+  oauthAccounts OAuthAccount[]
 }
 
 model Room {
@@ -34,12 +35,91 @@ model Room {
   tier            Tier         @default(COMMUNITY)
   passwordHash    String?
   passwordVersion Int          @default(0)
+  workspaceId     String?
+  workspace       Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  folderId        String?
+  folder          Folder?      @relation(fields: [folderId], references: [id], onDelete: SetNull)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   snapshots       Snapshot[]
   imageAssets     ImageAsset[]
 
   @@index([ownerId])
+  @@index([workspaceId])
+  @@index([folderId])
+}
+
+enum WorkspaceRole {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+model Workspace {
+  id          String       @id @default(cuid())
+  name        String
+  ownerId     String
+  tier        Tier         @default(COMMUNITY)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+  folders     Folder[]
+  rooms       Room[]
+
+  @@index([ownerId])
+}
+
+model Folder {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  createdAt   DateTime  @default(now())
+  rooms       Room[]
+
+  @@index([workspaceId])
+}
+
+model Membership {
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  role        WorkspaceRole @default(VIEWER)
+  createdAt   DateTime      @default(now())
+
+  @@id([workspaceId, userId])
+  @@index([userId])
+}
+
+model OAuthAccount {
+  provider  String
+  subject   String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([provider, subject])
+  @@index([userId])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  actorId     String?
+  workspaceId String?
+  action      String
+  target      String?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([actorId])
+}
+
+model AiUsage {
+  userId String
+  month  String
+  count  Int    @default(0)
+
+  @@id([userId, month])
 }
 
 model Snapshot {
