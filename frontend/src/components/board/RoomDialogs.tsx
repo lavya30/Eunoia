@@ -5,10 +5,12 @@ import {
   ApiError,
   createRoom,
   getRoom,
+  listImages,
   unlockRoom,
   type RoomMetadata,
 } from '@/lib/whiteboard/rooms-api';
-import { setTicket } from '@/lib/whiteboard/tickets';
+import { getTicket, setTicket } from '@/lib/whiteboard/tickets';
+import type { RecentRoom } from '@/lib/whiteboard/recent-rooms';
 
 export function UnlockDialog({
   roomId,
@@ -97,14 +99,120 @@ export function UnlockDialog({
   );
 }
 
+function RecentRoomRow({
+  room,
+  current,
+  onOpen,
+}: {
+  room: RecentRoom;
+  current: boolean;
+  onOpen: (roomId: string) => void;
+}) {
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    listImages(room.id, getTicket(room.id), 'thumbnail')
+      .then((items) => {
+        if (!cancelled) setThumbUrl(items[0]?.url ?? null);
+      })
+      .catch(() => {
+        // Locked/unreachable rooms simply show the placeholder tile.
+        if (!cancelled) setThumbUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [room.id]);
+  return (
+    <button
+      type="button"
+      disabled={current}
+      onClick={() => onOpen(room.id)}
+      className="recent-room-row"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        width: '100%',
+        padding: '8px 10px',
+        border: 0,
+        borderRadius: 10,
+        background: current ? '#f5f4fa' : 'transparent',
+        cursor: current ? 'default' : 'pointer',
+        textAlign: 'left',
+      }}
+      onMouseEnter={(e) => {
+        if (!current) e.currentTarget.style.background = '#f5f4fa';
+      }}
+      onMouseLeave={(e) => {
+        if (!current) e.currentTarget.style.background = 'transparent';
+      }}
+    >
+      {thumbUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={thumbUrl}
+          alt=""
+          width={72}
+          height={44}
+          loading="lazy"
+          style={{
+            width: 72,
+            height: 44,
+            objectFit: 'cover',
+            borderRadius: 8,
+            border: '1px solid #e3e2ea',
+            background: '#fff',
+            flexShrink: 0,
+          }}
+        />
+      ) : (
+        <span
+          aria-hidden
+          style={{
+            width: 72,
+            height: 44,
+            borderRadius: 8,
+            border: '1px dashed #d5d3e3',
+            background:
+              'linear-gradient(135deg, #f6f4ff 0%, #eef4ff 60%, #fdf6e8 100%)',
+            flexShrink: 0,
+          }}
+        />
+      )}
+      <span
+        style={{
+          minWidth: 0,
+          flex: 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          fontSize: 13,
+          color: '#35374a',
+          fontWeight: 600,
+        }}
+      >
+        {room.name}
+        {current ? ' (current)' : ''}
+      </span>
+    </button>
+  );
+}
+
 export function CreateRoomDialog({
   userToken,
   onCreated,
   onClose,
+  recentRooms = [],
+  currentRoomId = null,
+  onOpenRoom,
 }: {
   userToken?: string;
   onCreated: (meta: RoomMetadata) => void;
   onClose: () => void;
+  recentRooms?: RecentRoom[];
+  currentRoomId?: string | null;
+  onOpenRoom?: (roomId: string) => void;
 }) {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
@@ -192,6 +300,35 @@ export function CreateRoomDialog({
             Cancel
           </button>
         </form>
+        {recentRooms.length > 0 && onOpenRoom ? (
+          <div style={{ marginTop: 16 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                color: '#8a8ca3',
+                marginBottom: 6,
+              }}
+            >
+              Recent boards
+            </div>
+            <div
+              style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+              role="list"
+            >
+              {recentRooms.map((room) => (
+                <RecentRoomRow
+                  key={room.id}
+                  room={room}
+                  current={room.id === currentRoomId}
+                  onOpen={onOpenRoom}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

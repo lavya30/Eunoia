@@ -132,6 +132,14 @@ import {
 } from '@/lib/whiteboard/export/pipeline';
 import { embedRemoteImages } from '@/lib/whiteboard/export/embed-images';
 import { isProTier } from '@/lib/whiteboard/export/tier';
+import {
+  THUMB_CAPTURE_DEBOUNCE_MS,
+  captureThumbnailBlob,
+  pruneOldThumbnails,
+  thumbnailContentHash,
+  uploadThumbnail,
+} from '@/lib/whiteboard/export/thumbnail';
+import { getRecentRooms, recordRoomVisit } from '@/lib/whiteboard/recent-rooms';
 import './board.css';
 
 type ToolId =
@@ -1378,6 +1386,9 @@ export function WhiteboardPage({
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [exportProgress, setExportProgress] = useState<string | null>(null);
+  // Thumbnail auto-capture guards: one in-flight upload, last uploaded hash.
+  const thumbInFlightRef = useRef(false);
+  const thumbHashRef = useRef<string | null>(null);
   const [boardTitle, setBoardTitle] = useState('Request flow');
   const canvasRef = useRef<SVGSVGElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -1886,6 +1897,60 @@ export function WhiteboardPage({
     }, 120);
     return () => window.clearTimeout(timeoutId);
   }, [arrows, code, hasHydrated, nodes, strokes, syncReady]);
+
+  // Track server-room visits for the board switcher's recent list. The
+  // switcher dialog reads the list lazily on open, so no state sync here.
+  useEffect(() => {
+    if (!roomId || roomId.startsWith('local-') || roomStatus !== 'ready')
+      return;
+    recordRoomVisit({ id: roomId, name: roomMeta?.name });
+  }, [roomId, roomMeta, roomStatus]);
+
+  // Thumbnail auto-capture: idle-delayed after the last mutation, following
+  // the sync publish pulse. Best-effort and silent — a missing preview must
+  // never interrupt drawing, and R2-off servers simply skip capture.
+  useEffect(() => {
+    if (
+      !hasHydrated ||
+      !syncReady ||
+      !roomId ||
+      roomId.startsWith('local-') ||
+      roomStatus !== 'ready' ||
+      nodes.length + arrows.length + strokes.length === 0
+    )
+      return;
+    const captureRoomId = roomId;
+    const timeoutId = window.setTimeout(() => {
+      if (thumbInFlightRef.current) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const svg = canvasRef.current;
+      if (!svg) return;
+      const hash = thumbnailContentHash(nodes, arrows, strokes);
+      if (thumbHashRef.current === hash) return;
+      thumbInFlightRef.current = true;
+      const ticket = getTicket(captureRoomId);
+      captureThumbnailBlob(svg, nodes, arrows, strokes, {
+        roomId: captureRoomId,
+        ticket,
+      })
+        .then((shot) => uploadThumbnail(captureRoomId, ticket, shot.blob))
+        .then((stored) =>
+          pruneOldThumbnails(captureRoomId, ticket, stored.id).then(() => {
+            // Only mark the hash after upload+prune succeed so a failed
+            // capture retries on the next pulse instead of going stale.
+            if (roomIdRef.current === captureRoomId)
+              thumbHashRef.current = hash;
+          }),
+        )
+        .catch(() => {
+          // Silent: thumbnails are decorative; errors stay out of boardError.
+        })
+        .finally(() => {
+          thumbInFlightRef.current = false;
+        });
+    }, THUMB_CAPTURE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [arrows, hasHydrated, nodes, roomId, roomStatus, strokes, syncReady]);
 
   const selectedId = selectedIds[0] ?? '';
 
@@ -6474,6 +6539,14 @@ export function WhiteboardPage({
             router.push(`/board?room=${encodeURIComponent(meta.id)}`);
           }}
           onClose={() => setShowCreateRoom(false)}
+          recentRooms={showCreateRoom ? getRecentRooms() : []}
+          currentRoomId={roomId}
+          onOpenRoom={(nextRoomId) => {
+            setShowCreateRoom(false);
+            if (nextRoomId !== roomId) {
+              router.push(`/board?room=${encodeURIComponent(nextRoomId)}`);
+            }
+          }}
         />
       ) : null}
     </div>
