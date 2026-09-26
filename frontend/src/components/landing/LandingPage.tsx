@@ -1243,6 +1243,7 @@ export function LandingPage() {
           <a href="/billing">Billing</a>
           <a href="/board">Board</a>
           <a href="/status">Status</a>
+          <a href="/settings">Settings</a>
         </nav>
       </footer>
     </div>

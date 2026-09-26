@@ -4950,6 +4950,12 @@ export function WhiteboardPage({
                     >
                       Status
                     </a>
+                    <a
+                      href="/settings"
+                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                    >
+                      Settings
+                    </a>
                   </div>
                   <button
                     type="button"
