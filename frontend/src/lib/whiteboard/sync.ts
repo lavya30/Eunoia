@@ -35,6 +35,10 @@ export type PeerInfo = {
   clientId: number;
   user: PeerUser;
   cursor: { x: number; y: number } | null;
+  /** Active tool id (e.g. 'select', 'draw'), when shared by the peer. */
+  tool: string | null;
+  /** Board element ids the peer currently has selected. */
+  selection: string[];
   updatedAt: number;
 };
 
@@ -63,6 +67,11 @@ type SyncSessionOptions = {
 type SyncSession = {
   publish: (state: SyncBoardState) => void;
   setLocalCursor: (cursor: { x: number; y: number } | null) => void;
+  /**
+   * Share non-positional presence (active tool + selection). Broadcasts
+   * immediately; callers should throttle selection churn themselves.
+   */
+  setLocalPresenceMeta: (tool: string | null, selection: string[]) => void;
   getLocalUser: () => PeerUser;
   destroy: () => void;
 };
@@ -132,9 +141,12 @@ export function getLocalUser(): PeerUser {
   return user;
 }
 
-function sanitizePeerState(
-  value: unknown,
-): { user: PeerUser; cursor: { x: number; y: number } | null } | null {
+function sanitizePeerState(value: unknown): {
+  user: PeerUser;
+  cursor: { x: number; y: number } | null;
+  tool: string | null;
+  selection: string[];
+} | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
   const user = record.user as Record<string, unknown> | undefined;
@@ -156,6 +168,19 @@ function sanitizePeerState(
   ) {
     cursor = { x: raw.x, y: raw.y };
   }
+  const tool =
+    typeof record.tool === 'string' && record.tool.length > 0
+      ? record.tool.slice(0, 32)
+      : null;
+  let selection: string[] = [];
+  if (Array.isArray(record.selection)) {
+    selection = record.selection
+      .filter(
+        (id): id is string =>
+          typeof id === 'string' && id.length > 0 && id.length <= 120,
+      )
+      .slice(0, 200);
+  }
   return {
     user: {
       id: user.id.slice(0, 64),
@@ -163,6 +188,8 @@ function sanitizePeerState(
       color: user.color.slice(0, 32),
     },
     cursor,
+    tool,
+    selection,
   };
 }
 
@@ -269,6 +296,7 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
     return {
       publish: () => undefined,
       setLocalCursor: () => undefined,
+      setLocalPresenceMeta: () => undefined,
       getLocalUser: () => offlineUser,
       destroy: () => undefined,
     };
@@ -315,6 +343,12 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
     awareness.setLocalState(next);
   };
 
+  const setLocalPresenceMeta = (tool: string | null, selection: string[]) => {
+    const current = awareness.getLocalState() as Record<string, unknown> | null;
+    const next = { ...(current ?? {}), user: localUser, tool, selection };
+    awareness.setLocalState(next);
+  };
+
   const emitPeers = () => {
     if (!onPeers) return;
     const now = Date.now();
@@ -329,6 +363,8 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
         clientId,
         user: clean.user,
         cursor: clean.cursor,
+        tool: clean.tool,
+        selection: clean.selection,
         updatedAt,
       });
     }
@@ -469,6 +505,7 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
   return {
     publish,
     setLocalCursor,
+    setLocalPresenceMeta,
     getLocalUser: () => localUser,
     destroy: () => {
       destroyed = true;

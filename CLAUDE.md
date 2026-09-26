@@ -56,7 +56,7 @@ The backend is in `packages/sync-server/` and uses TypeScript, Yjs, WebSocket, E
 - `POST /api/auth/login` (`email`, `password`; wrong/unknown 401 `INVALID_CREDENTIALS` so accounts can't be enumerated)
 - `GET /api/auth/me` (`Authorization: Bearer <user token>`; 401 `INVALID_TOKEN`)
 - `POST /api/compile` (optional `roomId` resolves the tier server-side and requires a ticket on locked rooms; `elk`/`tala` require PRO+, Community caps at `D2_COMMUNITY_NODE_LIMIT` nodes — violations return 403 `TIER_UPGRADE_REQUIRED`)
-- Room images: `POST /api/rooms/:roomId/images/request-upload`, `POST /api/rooms/:roomId/images/confirm`, `GET /api/rooms/:roomId/images`, `GET /api/rooms/:roomId/images/:imageId/url`, `DELETE /api/rooms/:roomId/images/:imageId` (require R2 — 503 `R2_NOT_CONFIGURED` otherwise)
+- Room images: `POST /api/rooms/:roomId/images/request-upload`, `POST /api/rooms/:roomId/images/confirm`, `GET /api/rooms/:roomId/images`, `GET /api/rooms/:roomId/images/:imageId/url`, `GET /api/rooms/:roomId/images/:imageId/bytes` (same-origin bytes proxy for export rasterization — no CORS taint, no presigned expiry), `DELETE /api/rooms/:roomId/images/:imageId` (require R2 — 503 `R2_NOT_CONFIGURED` otherwise)
 - Snapshot history: `GET /api/rooms/:roomId/snapshots` (`limit`, `before`; metadata only), `POST /api/rooms/:roomId/snapshots/:snapshotId/restore` (force-flushes pre-restore state, drops peers with close code 4100 so they reload)
 
 The WebSocket endpoint can also be addressed as `/api/rooms/:roomId/sync`.

@@ -1972,6 +1972,11 @@ circle.canvas-grid {
   color: #2f9e6e;
 }
 
+/* Peer selection highlights: dashed outlines in the peer's color. */
+.peer-selection-outline {
+  pointer-events: none;
+}
+
 /* Room dialogs (create / unlock) and history panel. */
 .room-dialog-backdrop {
   position: fixed;

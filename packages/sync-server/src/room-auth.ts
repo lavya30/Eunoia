@@ -144,11 +144,7 @@ export function extractTicket(
   const authorization = headers["authorization"];
   if (typeof authorization === "string") {
     const parts = authorization.trim().split(/\s+/);
-    if (
-      parts.length === 2 &&
-      parts[0]?.toLowerCase() === "bearer" &&
-      parts[1]
-    )
+    if (parts.length === 2 && parts[0]?.toLowerCase() === "bearer" && parts[1])
       return parts[1];
   }
   const param = query["ticket"];

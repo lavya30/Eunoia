@@ -75,6 +75,14 @@ import type {
   InkPoint,
 } from '@/lib/whiteboard/board-types';
 import {
+  applyEntryValues,
+  diffBoardSnapshots,
+  invertUndoEntry,
+  MAX_UNDO_ENTRIES,
+  type BoardSnapshot,
+  type UndoEntry,
+} from '@/lib/whiteboard/undo';
+import {
   parseCompileResponse,
   reconcileDiagram,
 } from '@/lib/whiteboard/d2-adapter';
@@ -111,9 +119,19 @@ import {
   type AuthSession,
 } from '@/lib/whiteboard/auth';
 import { CreateRoomDialog, UnlockDialog } from './RoomDialogs';
+import { RemoteCursors } from './RemoteCursors';
 import { RoomSettingsDialog } from './RoomSettingsDialog';
 import { HistoryPanel } from './HistoryPanel';
 import { SearchPalette } from './SearchPalette';
+import { contentBounds } from '@/lib/whiteboard/export/bounds';
+import {
+  cloneBoardSvg,
+  downloadBlob,
+  serializeSvg,
+  svgStringToPngBlob,
+} from '@/lib/whiteboard/export/pipeline';
+import { embedRemoteImages } from '@/lib/whiteboard/export/embed-images';
+import { isProTier } from '@/lib/whiteboard/export/tier';
 import './board.css';
 
 type ToolId =
@@ -125,13 +143,6 @@ type ToolId =
   | 'arrow'
   | 'draw'
   | 'text';
-
-type BoardSnapshot = {
-  nodes: BoardNode[];
-  arrows: BoardArrow[];
-  strokes: BoardStroke[];
-  code: string;
-};
 
 type Interaction =
   | { kind: 'pan'; pointerId: number; lastScreen: Point }
@@ -391,7 +402,12 @@ function strokeBounds(stroke: BoardStroke): Aabb {
   // Pad by half the brush diameter (plus smoothing slop) so thick ink is
   // never culled at the viewport edge and marquee selection hits its edges.
   const pad = (stroke.brushSize ?? 6) / 2 + 3;
-  return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+  return {
+    minX: minX - pad,
+    minY: minY - pad,
+    maxX: maxX + pad,
+    maxY: maxY + pad,
+  };
 }
 
 /**
@@ -503,8 +519,7 @@ function inkPerpendicularDistance(
   const dy = b.y - a.y;
   const lenSq = dx * dx + dy * dy;
   if (lenSq < 0.000001) return Math.hypot(p.x - a.x, p.y - a.y);
-  const t =
-    ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
   const clamped = Math.min(1, Math.max(0, t));
   return Math.hypot(p.x - (a.x + clamped * dx), p.y - (a.y + clamped * dy));
 }
@@ -514,10 +529,7 @@ function inkPerpendicularDistance(
  * kept points. Runs on pointer-up so live ink stays raw and stored/synced
  * strokes stay small.
  */
-function simplifyInkPoints(
-  points: InkPoint[],
-  tolerance = 1.5,
-): InkPoint[] {
+function simplifyInkPoints(points: InkPoint[], tolerance = 1.5): InkPoint[] {
   if (points.length <= 2) return points;
   const keep = new Array<boolean>(points.length).fill(false);
   keep[0] = true;
@@ -653,7 +665,9 @@ function getAnchorPoint(node: BoardNode, targetPoint: Point): Point {
       y: cy + dy * t,
     };
   }
-  return rotation === 0 ? local : rotatePoint(local, center, degToRad(rotation));
+  return rotation === 0
+    ? local
+    : rotatePoint(local, center, degToRad(rotation));
 }
 
 /**
@@ -679,7 +693,9 @@ function getOrthogonalAnchor(node: BoardNode, targetPoint: Point): Point {
   } else {
     local = { x: cx, y: dy >= 0 ? cy + hh : cy - hh };
   }
-  return rotation === 0 ? local : rotatePoint(local, center, degToRad(rotation));
+  return rotation === 0
+    ? local
+    : rotatePoint(local, center, degToRad(rotation));
 }
 
 /** Anchor dispatcher honoring the arrow's routing mode. */
@@ -1168,9 +1184,7 @@ function CanvasNode({
     <g
       className={`canvas-node canvas-node--${node.tone} ${isNote ? 'is-note' : ''} ${selected ? 'is-selected' : ''}`}
       transform={
-        rotation === 0
-          ? undefined
-          : `rotate(${rotation} ${centerX} ${centerY})`
+        rotation === 0 ? undefined : `rotate(${rotation} ${centerX} ${centerY})`
       }
       onPointerDown={(event) => {
         event.stopPropagation();
@@ -1197,6 +1211,7 @@ function CanvasNode({
           <image
             className="node-image"
             href={node.href}
+            crossOrigin="anonymous"
             x={node.x}
             y={node.y}
             width={node.width}
@@ -1361,6 +1376,8 @@ export function WhiteboardPage({
     color: string;
   } | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
+  const [exportProgress, setExportProgress] = useState<string | null>(null);
   const [boardTitle, setBoardTitle] = useState('Request flow');
   const canvasRef = useRef<SVGSVGElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -1373,9 +1390,17 @@ export function WhiteboardPage({
     arrows: BoardArrow[];
     strokes: BoardStroke[];
   } | null>(null);
-  const historyRef = useRef<BoardSnapshot[]>([]);
-  const futureRef = useRef<BoardSnapshot[]>([]);
-  const historyRecordedRef = useRef(false);
+  // Per-user isolated undo/redo (PRD §3.3.3): stacks hold op entries
+  // covering ONLY the local user's own mutations. Remote boards are never
+  // captured, so undo can't revert concurrent peer changes.
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const redoStackRef = useRef<UndoEntry[]>([]);
+  // Pre-gesture board staged once per pointer gesture (see beginGesture);
+  // committed as a single entry on release (see commitGesture).
+  const gestureBaseRef = useRef<BoardSnapshot | null>(null);
+  // Explicit post-state for creation commits (the created element hasn't
+  // rendered when the gesture ends).
+  const createCommitRef = useRef<BoardSnapshot | null>(null);
   const syncRef = useRef<ReturnType<typeof createBoardSync> | null>(null);
   const cursorBroadcastRef = useRef(0);
   const compileAbortRef = useRef<AbortController | null>(null);
@@ -1468,64 +1493,108 @@ export function WhiteboardPage({
     };
   }, []);
 
-  const snapshot = useCallback(
-    (): BoardSnapshot => ({
-      nodes,
-      arrows,
-      strokes,
-      code,
-    }),
-    [arrows, code, nodes, strokes],
-  );
-
   const [undoDepth, setUndoDepth] = useState(0);
   const [redoDepth, setRedoDepth] = useState(0);
 
-  const recordHistory = useCallback(() => {
-    historyRef.current = [...historyRef.current, snapshot()].slice(-40);
-    futureRef.current = [];
-    setUndoDepth(historyRef.current.length);
-    setRedoDepth(0);
-  }, [snapshot]);
-
-  const ensureHistory = useCallback(() => {
-    if (historyRecordedRef.current) return;
-    recordHistory();
-    historyRecordedRef.current = true;
-  }, [recordHistory]);
-
-  const applySnapshot = useCallback((entry: BoardSnapshot) => {
-    setNodes(entry.nodes);
-    setArrows(entry.arrows);
-    setStrokes(entry.strokes);
-    setCode(entry.code);
-    if (entry.code !== lastCompiledCodeRef.current) {
-      setCompileState('draft');
-    }
-    setSelectedIds([]);
+  /** Deep-clone the current board for use as an undo base. */
+  const captureBoardSnapshot = useCallback((): BoardSnapshot => {
+    return structuredClone(boardStateRef.current) as unknown as BoardSnapshot;
   }, []);
 
+  const pushUndoEntry = useCallback((entry: UndoEntry) => {
+    undoStackRef.current = [...undoStackRef.current, entry].slice(
+      -MAX_UNDO_ENTRIES,
+    );
+    redoStackRef.current = [];
+    setUndoDepth(undoStackRef.current.length);
+    setRedoDepth(0);
+  }, []);
+
+  /**
+   * Stage the pre-gesture board once per pointer gesture (idempotent).
+   * Passive ref-sync effects flush before discrete pointer events, so the
+   * ref is current at gesture start.
+   */
+  const beginGesture = useCallback(() => {
+    if (gestureBaseRef.current) return;
+    gestureBaseRef.current = structuredClone(
+      boardStateRef.current,
+    ) as unknown as BoardSnapshot;
+  }, []);
+
+  /**
+   * Commit the staged gesture as one undo entry. Call BEFORE
+   * flushPendingRemote: remotes are deferred mid-gesture, so the ref holds
+   * local-only changes and the entry never captures peer edits.
+   * Accepts an explicit post-state for gestures whose final mutation
+   * hasn't rendered yet (draw commit, shape creation).
+   */
+  const commitGesture = useCallback(
+    (afterOverride?: BoardSnapshot) => {
+      const base = gestureBaseRef.current;
+      gestureBaseRef.current = null;
+      if (!base) return;
+      const entry = diffBoardSnapshots(
+        base,
+        afterOverride ?? (boardStateRef.current as unknown as BoardSnapshot),
+      );
+      if (entry) pushUndoEntry(entry);
+    },
+    [pushUndoEntry],
+  );
+
+  /**
+   * Push a discrete (non-gesture) local mutation as one undo entry.
+   * Callers compute `after` explicitly because their setStates are async.
+   */
+  const pushDiscreteChange = useCallback(
+    (before: BoardSnapshot, after: BoardSnapshot) => {
+      const entry = diffBoardSnapshots(before, after);
+      if (entry) pushUndoEntry(entry);
+    },
+    [pushUndoEntry],
+  );
+
+  const applyUndoEntry = useCallback(
+    (entry: UndoEntry, side: 'before' | 'after') => {
+      setNodes((current) => applyEntryValues(current, entry.nodes, side));
+      setArrows((current) => applyEntryValues(current, entry.arrows, side));
+      setStrokes((current) => applyEntryValues(current, entry.strokes, side));
+      const code = side === 'before' ? entry.codeBefore : entry.codeAfter;
+      if (code !== null) {
+        setCode(code);
+        if (code !== lastCompiledCodeRef.current) {
+          setCompileState('draft');
+        }
+      }
+      setSelectedIds([]);
+    },
+    [],
+  );
+
   const undo = useCallback(() => {
-    const stack = historyRef.current;
+    const stack = undoStackRef.current;
     if (stack.length === 0) return;
-    const previous = stack[stack.length - 1];
-    historyRef.current = stack.slice(0, -1);
-    futureRef.current = [...futureRef.current, snapshot()];
-    applySnapshot(previous);
-    setUndoDepth(historyRef.current.length);
-    setRedoDepth(futureRef.current.length);
-  }, [applySnapshot, snapshot]);
+    const entry = stack[stack.length - 1];
+    undoStackRef.current = stack.slice(0, -1);
+    // The redo counterpart inverts the entry; `after` values are read live
+    // so redo re-applies exactly what undo removed.
+    redoStackRef.current = [...redoStackRef.current, invertUndoEntry(entry)];
+    applyUndoEntry(entry, 'before');
+    setUndoDepth(undoStackRef.current.length);
+    setRedoDepth(redoStackRef.current.length);
+  }, [applyUndoEntry]);
 
   const redo = useCallback(() => {
-    const stack = futureRef.current;
+    const stack = redoStackRef.current;
     if (stack.length === 0) return;
-    const next = stack[stack.length - 1];
-    futureRef.current = stack.slice(0, -1);
-    historyRef.current = [...historyRef.current, snapshot()].slice(-40);
-    applySnapshot(next);
-    setUndoDepth(historyRef.current.length);
-    setRedoDepth(futureRef.current.length);
-  }, [applySnapshot, snapshot]);
+    const entry = stack[stack.length - 1];
+    redoStackRef.current = stack.slice(0, -1);
+    undoStackRef.current = [...undoStackRef.current, invertUndoEntry(entry)];
+    applyUndoEntry(entry, 'before');
+    setUndoDepth(undoStackRef.current.length);
+    setRedoDepth(redoStackRef.current.length);
+  }, [applyUndoEntry]);
 
   const pendingRemoteRef = useRef<PersistedBoard | null>(null);
 
@@ -1539,19 +1608,8 @@ export function WhiteboardPage({
       pendingRemoteRef.current = clean;
       return;
     }
-    // Keep the merge undoable: stash local state first, but only when it
-    // actually differs so idle rooms don't spam the history stacks.
-    const local = boardStateRef.current;
-    if (JSON.stringify(local) !== JSON.stringify(clean)) {
-      // boardStateRef always holds sanitized board states at runtime
-      // (initial React state or validated sync payloads); deep-stashed so
-      // later mutations can't corrupt history.
-      const stash = structuredClone(local) as unknown as BoardSnapshot;
-      historyRef.current = [...historyRef.current, stash].slice(-40);
-      futureRef.current = [];
-      setUndoDepth(historyRef.current.length);
-      setRedoDepth(0);
-    }
+    // Deliberately NOT captured for undo: per-user isolated undo covers
+    // only local mutations, so peer edits survive local undo/redo.
     if (restoreNoticeRef.current) {
       restoreNoticeRef.current = false;
       setBoardError(null);
@@ -1603,9 +1661,10 @@ export function WhiteboardPage({
     setHasHydrated(false);
     setPersistenceState('loading');
     // Fresh room, fresh undo: stacks from another room must never leak in.
-    historyRef.current = [];
-    futureRef.current = [];
-    historyRecordedRef.current = false;
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    gestureBaseRef.current = null;
+    createCommitRef.current = null;
     pendingRemoteRef.current = null;
     setUndoDepth(0);
     setRedoDepth(0);
@@ -1912,6 +1971,66 @@ export function WhiteboardPage({
     [nodes],
   );
 
+  const arrowById = useMemo(
+    () => new Map(arrows.map((arrow) => [arrow.id, arrow])),
+    [arrows],
+  );
+
+  const strokeById = useMemo(
+    () => new Map(strokes.map((stroke) => [stroke.id, stroke])),
+    [strokes],
+  );
+
+  /**
+   * Peer selection highlights: dashed outlines in each peer's color for
+   * the elements they currently have selected. Bounds-based (rotated
+   * AABBs for nodes) so highlights track moves without re-rendering the
+   * scene itself.
+   */
+  const peerSelectionOutlines = useMemo(() => {
+    const outlines: Array<{
+      key: string;
+      bounds: Aabb;
+      color: string;
+      name: string;
+    }> = [];
+    for (const peer of peers) {
+      if (!peer.selection || peer.selection.length === 0) continue;
+      for (const id of peer.selection.slice(0, 100)) {
+        const node = nodeById.get(id);
+        if (node) {
+          outlines.push({
+            key: `${peer.clientId}:${id}`,
+            bounds: nodeBounds(node),
+            color: peer.user.color,
+            name: peer.user.name,
+          });
+          continue;
+        }
+        const arrow = arrowById.get(id);
+        if (arrow) {
+          outlines.push({
+            key: `${peer.clientId}:${id}`,
+            bounds: arrowBounds(arrow),
+            color: peer.user.color,
+            name: peer.user.name,
+          });
+          continue;
+        }
+        const stroke = strokeById.get(id);
+        if (stroke) {
+          outlines.push({
+            key: `${peer.clientId}:${id}`,
+            bounds: strokeBounds(stroke),
+            color: peer.user.color,
+            name: peer.user.name,
+          });
+        }
+      }
+    }
+    return outlines;
+  }, [peers, nodeById, arrowById, strokeById]);
+
   const connectors = useMemo(
     () =>
       CONNECTOR_SPECS.flatMap((spec) => {
@@ -1963,44 +2082,56 @@ export function WhiteboardPage({
       if (locked) return;
       if (!selectedIds.some((id) => arrowsRef.current.some((a) => a.id === id)))
         return;
-      recordHistory();
-      setArrows((current) =>
-        current.map((arrow) =>
-          selectedIds.includes(arrow.id) ? { ...arrow, routing } : arrow,
-        ),
+      const before = captureBoardSnapshot();
+      const nextArrows = before.arrows.map((arrow) =>
+        selectedIds.includes(arrow.id) ? { ...arrow, routing } : arrow,
       );
+      setArrows(nextArrows);
+      pushDiscreteChange(before, { ...before, arrows: nextArrows });
     },
-    [locked, recordHistory, selectedIds],
+    [captureBoardSnapshot, locked, pushDiscreteChange, selectedIds],
   );
 
   const applyBrushSize = useCallback(
     (size: number) => {
       setBrushSize(size);
       if (locked || selectedStrokeCount === 0) return;
-      recordHistory();
-      setStrokes((current) =>
-        current.map((stroke) =>
-          selectedIds.includes(stroke.id)
-            ? { ...stroke, brushSize: size }
-            : stroke,
-        ),
+      const before = captureBoardSnapshot();
+      const nextStrokes = before.strokes.map((stroke) =>
+        selectedIds.includes(stroke.id)
+          ? { ...stroke, brushSize: size }
+          : stroke,
       );
+      setStrokes(nextStrokes);
+      pushDiscreteChange(before, { ...before, strokes: nextStrokes });
     },
-    [locked, recordHistory, selectedIds, selectedStrokeCount],
+    [
+      captureBoardSnapshot,
+      locked,
+      pushDiscreteChange,
+      selectedIds,
+      selectedStrokeCount,
+    ],
   );
 
   const applyBrushThinning = useCallback(
     (thinning: number) => {
       setBrushThinning(thinning);
       if (locked || selectedStrokeCount === 0) return;
-      recordHistory();
-      setStrokes((current) =>
-        current.map((stroke) =>
-          selectedIds.includes(stroke.id) ? { ...stroke, thinning } : stroke,
-        ),
+      const before = captureBoardSnapshot();
+      const nextStrokes = before.strokes.map((stroke) =>
+        selectedIds.includes(stroke.id) ? { ...stroke, thinning } : stroke,
       );
+      setStrokes(nextStrokes);
+      pushDiscreteChange(before, { ...before, strokes: nextStrokes });
     },
-    [locked, recordHistory, selectedIds, selectedStrokeCount],
+    [
+      captureBoardSnapshot,
+      locked,
+      pushDiscreteChange,
+      selectedIds,
+      selectedStrokeCount,
+    ],
   );
 
   const selectTool = useCallback((tool: ToolId) => {
@@ -2035,21 +2166,23 @@ export function WhiteboardPage({
     const trimmed = editingNode.value.trim();
 
     if (trimmed === '' && targetNode?.shape === 'text') {
-      recordHistory();
-      setNodes((current) =>
-        current.filter((item) => item.id !== editingNode.id),
+      const before = captureBoardSnapshot();
+      const nextNodes = before.nodes.filter(
+        (item) => item.id !== editingNode.id,
       );
+      setNodes(nextNodes);
       setSelectedIds([]);
+      pushDiscreteChange(before, { ...before, nodes: nextNodes });
     } else if (trimmed && trimmed !== targetNode?.label) {
-      recordHistory();
-      setNodes((current) =>
-        current.map((item) =>
-          item.id === editingNode.id ? { ...item, label: trimmed } : item,
-        ),
+      const before = captureBoardSnapshot();
+      const nextNodes = before.nodes.map((item) =>
+        item.id === editingNode.id ? { ...item, label: trimmed } : item,
       );
+      setNodes(nextNodes);
+      pushDiscreteChange(before, { ...before, nodes: nextNodes });
     }
     setEditingNode(null);
-  }, [editingNode, nodes, recordHistory]);
+  }, [captureBoardSnapshot, editingNode, nodes, pushDiscreteChange]);
 
   const cancelEdit = useCallback(() => {
     setEditingNode(null);
@@ -2067,26 +2200,27 @@ export function WhiteboardPage({
     (color: string, tone: BoardNode['tone']) => {
       setActiveColor(color);
       if (locked || selectedIds.length === 0) return;
-      recordHistory();
-      setNodes((current) =>
-        current.map((node) =>
-          selectedIds.includes(node.id)
-            ? { ...node, tone, stroke: color }
-            : node,
-        ),
+      const before = captureBoardSnapshot();
+      const nextNodes = before.nodes.map((node) =>
+        selectedIds.includes(node.id) ? { ...node, tone, stroke: color } : node,
       );
-      setArrows((current) =>
-        current.map((arrow) =>
-          selectedIds.includes(arrow.id) ? { ...arrow, color } : arrow,
-        ),
+      const nextArrows = before.arrows.map((arrow) =>
+        selectedIds.includes(arrow.id) ? { ...arrow, color } : arrow,
       );
-      setStrokes((current) =>
-        current.map((stroke) =>
-          selectedIds.includes(stroke.id) ? { ...stroke, color } : stroke,
-        ),
+      const nextStrokes = before.strokes.map((stroke) =>
+        selectedIds.includes(stroke.id) ? { ...stroke, color } : stroke,
       );
+      setNodes(nextNodes);
+      setArrows(nextArrows);
+      setStrokes(nextStrokes);
+      pushDiscreteChange(before, {
+        ...before,
+        nodes: nextNodes,
+        arrows: nextArrows,
+        strokes: nextStrokes,
+      });
     },
-    [locked, recordHistory, selectedIds],
+    [captureBoardSnapshot, locked, pushDiscreteChange, selectedIds],
   );
 
   const copySelected = useCallback(() => {
@@ -2104,12 +2238,29 @@ export function WhiteboardPage({
   const cutSelected = useCallback(() => {
     if (locked) return;
     copySelected();
-    recordHistory();
-    setNodes((current) => current.filter((n) => !selectedIds.includes(n.id)));
-    setArrows((current) => current.filter((a) => !selectedIds.includes(a.id)));
-    setStrokes((current) => current.filter((s) => !selectedIds.includes(s.id)));
+    const before = captureBoardSnapshot();
+    const nextNodes = before.nodes.filter((n) => !selectedIds.includes(n.id));
+    const nextArrows = before.arrows.filter((a) => !selectedIds.includes(a.id));
+    const nextStrokes = before.strokes.filter(
+      (s) => !selectedIds.includes(s.id),
+    );
+    setNodes(nextNodes);
+    setArrows(nextArrows);
+    setStrokes(nextStrokes);
     setSelectedIds([]);
-  }, [copySelected, locked, recordHistory, selectedIds]);
+    pushDiscreteChange(before, {
+      ...before,
+      nodes: nextNodes,
+      arrows: nextArrows,
+      strokes: nextStrokes,
+    });
+  }, [
+    captureBoardSnapshot,
+    copySelected,
+    locked,
+    pushDiscreteChange,
+    selectedIds,
+  ]);
 
   const pasteClipboard = useCallback(() => {
     if (locked || !clipboardRef.current) return;
@@ -2121,7 +2272,6 @@ export function WhiteboardPage({
     if (cNodes.length === 0 && cArrows.length === 0 && cStrokes.length === 0)
       return;
 
-    recordHistory();
     const offset = 24;
 
     const newNodes = cNodes.map((n) => ({
@@ -2148,9 +2298,13 @@ export function WhiteboardPage({
       ),
     }));
 
-    setNodes((current) => [...current, ...newNodes]);
-    setArrows((current) => [...current, ...newArrows]);
-    setStrokes((current) => [...current, ...newStrokes]);
+    const before = captureBoardSnapshot();
+    const nextNodes = [...before.nodes, ...newNodes];
+    const nextArrows = [...before.arrows, ...newArrows];
+    const nextStrokes = [...before.strokes, ...newStrokes];
+    setNodes(nextNodes);
+    setArrows(nextArrows);
+    setStrokes(nextStrokes);
 
     const newSelectedIds = [
       ...newNodes.map((n) => n.id),
@@ -2158,7 +2312,13 @@ export function WhiteboardPage({
       ...newStrokes.map((s) => s.id),
     ];
     setSelectedIds(newSelectedIds);
-  }, [locked, recordHistory]);
+    pushDiscreteChange(before, {
+      ...before,
+      nodes: nextNodes,
+      arrows: nextArrows,
+      strokes: nextStrokes,
+    });
+  }, [captureBoardSnapshot, locked, pushDiscreteChange]);
 
   const duplicateSelected = useCallback(() => {
     copySelected();
@@ -2168,31 +2328,46 @@ export function WhiteboardPage({
   const updateSelectedNodes = useCallback(
     (updates: Partial<BoardNode>) => {
       if (locked || selectedIds.length === 0) return;
-      recordHistory();
-      setNodes((current) =>
-        current.map((node) =>
-          selectedIds.includes(node.id) ? { ...node, ...updates } : node,
-        ),
+      const before = captureBoardSnapshot();
+      const nextNodes = before.nodes.map((node) =>
+        selectedIds.includes(node.id) ? { ...node, ...updates } : node,
       );
+      setNodes(nextNodes);
+      pushDiscreteChange(before, { ...before, nodes: nextNodes });
     },
-    [locked, recordHistory, selectedIds],
+    [captureBoardSnapshot, locked, pushDiscreteChange, selectedIds],
   );
 
   const moveSelectedLayer = useCallback(
     (direction: 'forward' | 'backward' | 'front' | 'back') => {
       if (locked || selectedIds.length === 0) return;
-      recordHistory();
-      setNodes((current) =>
-        reorderBySelection(current, selectedIds, direction),
+      const before = captureBoardSnapshot();
+      const nextNodes = reorderBySelection(
+        before.nodes,
+        selectedIds,
+        direction,
       );
-      setArrows((current) =>
-        reorderBySelection(current, selectedIds, direction),
+      const nextArrows = reorderBySelection(
+        before.arrows,
+        selectedIds,
+        direction,
       );
-      setStrokes((current) =>
-        reorderBySelection(current, selectedIds, direction),
+      const nextStrokes = reorderBySelection(
+        before.strokes,
+        selectedIds,
+        direction,
       );
+      setNodes(nextNodes);
+      setArrows(nextArrows);
+      setStrokes(nextStrokes);
+      pushDiscreteChange(before, {
+        ...before,
+        nodes: nextNodes,
+        arrows: nextArrows,
+        strokes: nextStrokes,
+      });
     },
-    [locked, recordHistory, selectedIds],
+    [captureBoardSnapshot, locked, pushDiscreteChange, selectedIds],
   );
 
   const handleResizePointerDown = useCallback(
@@ -2207,7 +2382,7 @@ export function WhiteboardPage({
         return;
       event.stopPropagation();
       event.preventDefault();
-      historyRecordedRef.current = false;
+      gestureBaseRef.current = null;
       interactionRef.current = {
         kind: 'resize',
         pointerId: event.pointerId,
@@ -2222,7 +2397,12 @@ export function WhiteboardPage({
 
   const handleRotatePointerDown = useCallback(
     (event: ReactPointerEvent<SVGCircleElement>) => {
-      if (locked || !canvasRef.current || !selectedNodeBounds || isAuxClick(event))
+      if (
+        locked ||
+        !canvasRef.current ||
+        !selectedNodeBounds ||
+        isAuxClick(event)
+      )
         return;
       event.stopPropagation();
       event.preventDefault();
@@ -2248,7 +2428,7 @@ export function WhiteboardPage({
         .filter((node) => selectedIds.includes(node.id))
         .map((node) => node.id);
       if (targetIds.length === 0) return;
-      historyRecordedRef.current = false;
+      gestureBaseRef.current = null;
       interactionRef.current = {
         kind: 'rotate',
         pointerId: event.pointerId,
@@ -2289,7 +2469,7 @@ export function WhiteboardPage({
       if (locked || !canvasRef.current || isAuxClick(event)) return;
       event.stopPropagation();
       event.preventDefault();
-      historyRecordedRef.current = false;
+      gestureBaseRef.current = null;
       interactionRef.current = {
         kind: 'arrowEndpoint',
         pointerId: event.pointerId,
@@ -2321,7 +2501,7 @@ export function WhiteboardPage({
       );
 
       if (activeTool === 'hand') {
-        historyRecordedRef.current = false;
+        gestureBaseRef.current = null;
         interactionRef.current = {
           kind: 'pan',
           pointerId: event.pointerId,
@@ -2333,7 +2513,7 @@ export function WhiteboardPage({
 
       if (locked) return;
 
-      historyRecordedRef.current = false;
+      gestureBaseRef.current = null;
       let nextSelected: string[];
       if (event.shiftKey) {
         nextSelected = selectedIds.includes(elementId)
@@ -2370,7 +2550,7 @@ export function WhiteboardPage({
             })),
         };
       } else if (activeTool === 'draw') {
-        ensureHistory();
+        beginGesture();
         interactionRef.current = {
           kind: 'draw',
           pointerId: event.pointerId,
@@ -2380,7 +2560,7 @@ export function WhiteboardPage({
           thinning: brushRef.current.thinning,
         };
       } else {
-        ensureHistory();
+        beginGesture();
         interactionRef.current = {
           kind: 'create',
           pointerId: event.pointerId,
@@ -2398,7 +2578,7 @@ export function WhiteboardPage({
       activeTool,
       arrows,
       canvasViewport,
-      ensureHistory,
+      beginGesture,
       locked,
       nodes,
       selectedIds,
@@ -2442,7 +2622,7 @@ export function WhiteboardPage({
         canvasViewport,
         viewportRectRef.current,
       );
-      historyRecordedRef.current = false;
+      gestureBaseRef.current = null;
 
       // Middle-click or space-bar always pans
       if (event.button === 1 || spaceRef.current || activeTool === 'hand') {
@@ -2480,7 +2660,7 @@ export function WhiteboardPage({
         canvasViewport,
       );
       if (activeTool === 'draw') {
-        ensureHistory();
+        beginGesture();
         interactionRef.current = {
           kind: 'draw',
           pointerId: event.pointerId,
@@ -2490,7 +2670,7 @@ export function WhiteboardPage({
           thinning: brushRef.current.thinning,
         };
       } else {
-        ensureHistory();
+        beginGesture();
         interactionRef.current = {
           kind: 'create',
           pointerId: event.pointerId,
@@ -2502,7 +2682,7 @@ export function WhiteboardPage({
       }
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [activeColor, activeTool, canvasViewport, ensureHistory, locked],
+    [activeColor, activeTool, canvasViewport, beginGesture, locked],
   );
 
   const handleCanvasPointerMove = useCallback(
@@ -2539,7 +2719,7 @@ export function WhiteboardPage({
       );
 
       if (interaction.kind === 'arrowEndpoint') {
-        ensureHistory();
+        beginGesture();
         const currentArrow = arrowsRef.current.find(
           (a) => a.id === interaction.arrowId,
         );
@@ -2585,7 +2765,7 @@ export function WhiteboardPage({
       }
 
       if (interaction.kind === 'drag') {
-        ensureHistory();
+        beginGesture();
         const delta = {
           x: worldPoint.x - interaction.startWorld.x,
           y: worldPoint.y - interaction.startWorld.y,
@@ -2718,7 +2898,7 @@ export function WhiteboardPage({
       }
 
       if (interaction.kind === 'rotate') {
-        ensureHistory();
+        beginGesture();
         const center = interaction.center;
         const worldAngle = angleOfPoint(worldPoint, center);
         const rawDeltaDeg =
@@ -2743,9 +2923,7 @@ export function WhiteboardPage({
             origin
               ? {
                   ...node,
-                  rotation: normalizeRotation(
-                    origin.rotation + deltaDeg,
-                  ),
+                  rotation: normalizeRotation(origin.rotation + deltaDeg),
                 }
               : node,
           );
@@ -2833,7 +3011,7 @@ export function WhiteboardPage({
       }
 
       if (interaction.kind === 'resize') {
-        ensureHistory();
+        beginGesture();
         const targetId = interaction.targetId;
         const currentNodes = nodesRef.current;
         const targetNode = currentNodes.find((n) => n.id === targetId);
@@ -3031,7 +3209,7 @@ export function WhiteboardPage({
         setSelectedIds(liveSelected);
       }
     },
-    [canvasViewport, ensureHistory],
+    [canvasViewport, beginGesture],
   );
 
   const handleCanvasPointerUp = useCallback(
@@ -3063,17 +3241,30 @@ export function WhiteboardPage({
         const points = simplifyInkPoints(raw);
         const brushSize = interaction.brushSize;
         const thinning = interaction.thinning;
+        const committedId = nextId('stroke');
         setStrokes((current) =>
           current.map((stroke) =>
             stroke.id === `draft-${interaction.pointerId}`
-              ? { ...stroke, id: nextId('stroke'), points, brushSize, thinning }
+              ? { ...stroke, id: committedId, points, brushSize, thinning }
               : stroke,
           ),
         );
         interactionRef.current = null;
+        // Explicit post-state from the live ref (which holds the draft
+        // stroke): the committed stroke hasn't rendered yet, so a plain
+        // ref diff would miss it.
+        const live = boardStateRef.current as unknown as BoardSnapshot;
+        commitGesture({
+          ...live,
+          strokes: live.strokes.map((stroke) =>
+            stroke.id === `draft-${interaction.pointerId}`
+              ? { ...stroke, id: committedId, points, brushSize, thinning }
+              : stroke,
+          ),
+        });
         flushPendingRemote();
         setActiveTool('select');
-        historyRecordedRef.current = false;
+        gestureBaseRef.current = null;
         if (event.currentTarget.hasPointerCapture(event.pointerId))
           event.currentTarget.releasePointerCapture(event.pointerId);
         return;
@@ -3129,18 +3320,22 @@ export function WhiteboardPage({
             finalEnd = getRoutedAnchor(endNode, start, arrowRoutingRef.current);
           }
 
-          setArrows((current) => [
-            ...current,
-            {
-              id: nextId('arrow'),
-              start: finalStart,
-              end: finalEnd,
-              color: interaction.color,
-              startNodeId: startNode?.id,
-              endNodeId: endNode?.id,
-              routing: arrowRoutingRef.current,
-            },
-          ]);
+          const createdArrow: BoardArrow = {
+            id: nextId('arrow'),
+            start: finalStart,
+            end: finalEnd,
+            color: interaction.color,
+            startNodeId: startNode?.id,
+            endNodeId: endNode?.id,
+            routing: arrowRoutingRef.current,
+          };
+          setArrows((current) => [...current, createdArrow]);
+          const liveAfterCreate =
+            boardStateRef.current as unknown as BoardSnapshot;
+          createCommitRef.current = {
+            ...liveAfterCreate,
+            arrows: [...liveAfterCreate.arrows, createdArrow],
+          };
         } else {
           const shape =
             interaction.tool === 'note'
@@ -3182,6 +3377,12 @@ export function WhiteboardPage({
           };
           setNodes((current) => [...current, node]);
           setSelectedIds([node.id]);
+          const liveAfterCreate =
+            boardStateRef.current as unknown as BoardSnapshot;
+          createCommitRef.current = {
+            ...liveAfterCreate,
+            nodes: [...liveAfterCreate.nodes, node],
+          };
           if (interaction.tool === 'text' || interaction.tool === 'note') {
             setEditingNode({
               id: node.id,
@@ -3190,9 +3391,12 @@ export function WhiteboardPage({
           }
         }
         interactionRef.current = null;
+        // Explicit post-state: the created element hasn't rendered yet.
+        commitGesture(createCommitRef.current ?? undefined);
+        createCommitRef.current = null;
         flushPendingRemote();
         setActiveTool('select');
-        historyRecordedRef.current = false;
+        gestureBaseRef.current = null;
         if (event.currentTarget.hasPointerCapture(event.pointerId))
           event.currentTarget.releasePointerCapture(event.pointerId);
         return;
@@ -3221,26 +3425,30 @@ export function WhiteboardPage({
       }
 
       interactionRef.current = null;
+      // Commit BEFORE flushing remotes: mid-gesture remotes are deferred,
+      // so the ref holds local-only changes (see commitGesture).
+      commitGesture();
       flushPendingRemote();
       setMarquee(null);
       setCreatePreview(null);
-      historyRecordedRef.current = false;
+      gestureBaseRef.current = null;
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    [canvasViewport, flushPendingRemote],
+    [canvasViewport, commitGesture, flushPendingRemote],
   );
 
   const cancelInteraction = useCallback(() => {
     const interaction = interactionRef.current;
-    const stack = historyRef.current;
-    const previous = stack[stack.length - 1];
-    if (historyRecordedRef.current && previous) {
-      setNodes(previous.nodes);
-      setArrows(previous.arrows);
-      setStrokes(previous.strokes);
-      historyRef.current = stack.slice(0, -1);
+    // Escape rolls the in-progress gesture back to its staged base.
+    // Nothing is pushed: a cancelled gesture is not an undoable op.
+    const base = gestureBaseRef.current;
+    if (base) {
+      setNodes(base.nodes);
+      setArrows(base.arrows);
+      setStrokes(base.strokes);
+      setCode(base.code);
     }
     if (interaction?.kind === 'draw') {
       setStrokes((current) =>
@@ -3253,7 +3461,7 @@ export function WhiteboardPage({
       setCreatePreview(null);
     }
     interactionRef.current = null;
-    historyRecordedRef.current = false;
+    gestureBaseRef.current = null;
     viewportRectRef.current = null;
     setMarquee(null);
     flushPendingRemote();
@@ -3311,79 +3519,288 @@ export function WhiteboardPage({
     return () => element.removeEventListener('wheel', onWheelNative);
   }, []);
 
-  /* ── Export helpers ── */
+  /* ── Export helpers (Export Pro: full-board, image-embed, vector PDF) ── */
+  const roomTier = roomMeta?.tier;
+  const requirePro = useCallback(() => {
+    if (isProTier(roomTier)) return true;
+    setBoardError(
+      'Export Pro (PDF, bundle ZIP, GIF) needs a Pro or Enterprise room. Upgrade the room tier to unlock it — PNG, SVG, and JSON stay free.',
+    );
+    return false;
+  }, [roomTier]);
+
+  /** Full-board SVG clone framed to content bounds (not the viewport). */
+  const prepareExportClone = useCallback(() => {
+    const svg = canvasRef.current;
+    if (!svg) throw new Error('The board canvas is not ready yet.');
+    const bounds = contentBounds(nodes, arrows, strokes);
+    const clone = cloneBoardSvg(svg);
+    clone.setAttribute(
+      'viewBox',
+      `${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}`,
+    );
+    clone.setAttribute('width', String(Math.round(bounds.width)));
+    clone.setAttribute('height', String(Math.round(bounds.height)));
+    return { clone, bounds };
+  }, [arrows, nodes, strokes]);
+
+  const exportTicket = useCallback(
+    () => (roomId ? getTicket(roomId) : undefined),
+    [roomId],
+  );
+
   const exportAsJSON = useCallback(() => {
     const data = { nodes, arrows, strokes, camera };
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: 'application/json',
-    });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${boardFileSlug(boardTitle)}-board.json`;
-    link.click();
-    URL.revokeObjectURL(link.href);
+    downloadBlob(
+      new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+      `${boardFileSlug(boardTitle)}-board.json`,
+    );
     setExportMenuOpen(false);
   }, [arrows, boardTitle, camera, nodes, strokes]);
 
-  const exportAsSVG = useCallback(() => {
-    const svg = canvasRef.current;
-    if (!svg) return;
-    const clone = svg.cloneNode(true) as SVGSVGElement;
-    // Remove interactive elements from export
-    clone.querySelectorAll('[data-interactive]').forEach((el) => el.remove());
-    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    const serializer = new XMLSerializer();
-    const svgString = serializer.serializeToString(clone);
-    const blob = new Blob([svgString], { type: 'image/svg+xml' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${boardFileSlug(boardTitle)}-board.svg`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    setExportMenuOpen(false);
-  }, [boardTitle]);
+  const exportAsSVG = useCallback(async () => {
+    if (exportBusy) return;
+    setExportBusy('svg');
+    setExportProgress('Preparing SVG…');
+    try {
+      const { clone } = prepareExportClone();
+      const result = await embedRemoteImages(clone, nodes, {
+        roomId,
+        ticket: exportTicket(),
+        onProgress: (done, total) =>
+          setExportProgress(
+            total > 0 ? `Embedding images ${done}/${total}…` : 'Preparing SVG…',
+          ),
+      });
+      const svgString = serializeSvg(clone);
+      downloadBlob(
+        new Blob([svgString], { type: 'image/svg+xml' }),
+        `${boardFileSlug(boardTitle)}-board.svg`,
+      );
+      setBoardError(
+        result.failed > 0
+          ? `${result.failed} image(s) could not be embedded and show as placeholders.`
+          : null,
+      );
+      setExportMenuOpen(false);
+    } catch (error) {
+      setBoardError(
+        error instanceof Error ? error.message : 'SVG export failed.',
+      );
+    } finally {
+      setExportBusy(null);
+      setExportProgress(null);
+    }
+  }, [exportBusy, exportTicket, nodes, boardTitle, prepareExportClone, roomId]);
 
-  const exportAsPNG = useCallback(() => {
+  const exportAsPNG = useCallback(async () => {
+    if (exportBusy) return;
+    setExportBusy('png');
+    setExportProgress('Preparing PNG…');
+    try {
+      const { clone, bounds } = prepareExportClone();
+      await embedRemoteImages(clone, nodes, {
+        roomId,
+        ticket: exportTicket(),
+        onProgress: (done, total) =>
+          setExportProgress(
+            total > 0 ? `Embedding images ${done}/${total}…` : 'Rendering PNG…',
+          ),
+      });
+      setExportProgress('Rendering PNG…');
+      const svgString = serializeSvg(clone);
+      const blob = await svgStringToPngBlob(
+        svgString,
+        bounds.width,
+        bounds.height,
+        2,
+      );
+      downloadBlob(blob, `${boardFileSlug(boardTitle)}-board.png`);
+      setExportMenuOpen(false);
+    } catch (error) {
+      setBoardError(
+        error instanceof Error
+          ? error.message
+          : 'The board could not be exported as PNG. Try SVG instead.',
+      );
+    } finally {
+      setExportBusy(null);
+      setExportProgress(null);
+    }
+  }, [exportBusy, exportTicket, nodes, boardTitle, prepareExportClone, roomId]);
+
+  const exportAsPDF = useCallback(async () => {
+    if (exportBusy || !requirePro()) return;
+    setExportBusy('pdf');
+    setExportProgress('Preparing vector PDF…');
+    try {
+      const { clone, bounds } = prepareExportClone();
+      const embed = await embedRemoteImages(clone, nodes, {
+        roomId,
+        ticket: exportTicket(),
+        onProgress: (done, total) =>
+          setExportProgress(
+            total > 0 ? `Embedding images ${done}/${total}…` : 'Drawing PDF…',
+          ),
+      });
+      setExportProgress('Drawing PDF…');
+      const { buildVectorPdf } = await import('@/lib/whiteboard/export/pdf');
+      const bytes = await buildVectorPdf({
+        nodes,
+        arrows,
+        strokes,
+        bounds,
+        title: boardTitle,
+        imageData: embed.imageData,
+        onProgress: (done, total) =>
+          setExportProgress(`Drawing PDF ${done}/${total}…`),
+      });
+      downloadBlob(
+        new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }),
+        `${boardFileSlug(boardTitle)}-board.pdf`,
+      );
+      setBoardError(
+        embed.failed > 0
+          ? `${embed.failed} image(s) could not be embedded and show as placeholders.`
+          : null,
+      );
+      setExportMenuOpen(false);
+    } catch (error) {
+      setBoardError(
+        error instanceof Error ? error.message : 'PDF export failed.',
+      );
+    } finally {
+      setExportBusy(null);
+      setExportProgress(null);
+    }
+  }, [
+    arrows,
+    boardTitle,
+    exportBusy,
+    exportTicket,
+    nodes,
+    prepareExportClone,
+    requirePro,
+    roomId,
+    strokes,
+  ]);
+
+  const exportAsBundle = useCallback(async () => {
+    if (exportBusy || !requirePro()) return;
+    setExportBusy('zip');
+    setExportProgress('Preparing bundle…');
+    try {
+      const { clone, bounds } = prepareExportClone();
+      const embed = await embedRemoteImages(clone, nodes, {
+        roomId,
+        ticket: exportTicket(),
+        onProgress: (done, total) =>
+          setExportProgress(
+            total > 0 ? `Embedding images ${done}/${total}…` : 'Bundling…',
+          ),
+      });
+      const svgString = serializeSvg(clone);
+      setExportProgress('Rendering PNG…');
+      const pngBlob = await svgStringToPngBlob(
+        svgString,
+        bounds.width,
+        bounds.height,
+        2,
+      );
+      setExportProgress('Drawing PDF…');
+      const [{ buildVectorPdf }, { buildBoardBundle }] = await Promise.all([
+        import('@/lib/whiteboard/export/pdf'),
+        import('@/lib/whiteboard/export/zip'),
+      ]);
+      const pdfBytes = await buildVectorPdf({
+        nodes,
+        arrows,
+        strokes,
+        bounds,
+        title: boardTitle,
+        imageData: embed.imageData,
+      });
+      setExportProgress('Zipping bundle…');
+      const zipBlob = await buildBoardBundle({
+        boardTitle,
+        roomId,
+        roomTier: roomTier ?? null,
+        nodes,
+        arrows,
+        strokes,
+        camera,
+        svgString,
+        pngBlob,
+        pdfBytes,
+      });
+      downloadBlob(zipBlob, `${boardFileSlug(boardTitle)}-bundle.zip`);
+      setExportMenuOpen(false);
+    } catch (error) {
+      setBoardError(
+        error instanceof Error ? error.message : 'Bundle export failed.',
+      );
+    } finally {
+      setExportBusy(null);
+      setExportProgress(null);
+    }
+  }, [
+    arrows,
+    boardTitle,
+    camera,
+    exportBusy,
+    exportTicket,
+    nodes,
+    prepareExportClone,
+    requirePro,
+    roomId,
+    roomTier,
+    strokes,
+  ]);
+
+  const exportAsGif = useCallback(async () => {
+    if (exportBusy || !requirePro()) return;
     const svg = canvasRef.current;
-    if (!svg) return;
-    const clone = svg.cloneNode(true) as SVGSVGElement;
-    clone.querySelectorAll('[data-interactive]').forEach((el) => el.remove());
-    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    const serializer = new XMLSerializer();
-    const svgString = serializer.serializeToString(clone);
-    const canvas = document.createElement('canvas');
-    const rect = svg.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    const scale = 2; // 2x for retina
-    const maxPixels = 4096;
-    const clampedScale = Math.min(
-      scale,
-      maxPixels / rect.width,
-      maxPixels / rect.height,
-    );
-    canvas.width = Math.max(1, Math.round(rect.width * clampedScale));
-    canvas.height = Math.max(1, Math.round(rect.height * clampedScale));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.scale(clampedScale, clampedScale);
-    const img = new Image();
-    img.onload = () => {
-      ctx.drawImage(img, 0, 0, rect.width, rect.height);
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `${boardFileSlug(boardTitle)}-board.png`;
-        link.click();
-        URL.revokeObjectURL(link.href);
-      }, 'image/png');
-    };
-    img.onerror = () =>
-      setBoardError('The board could not be exported as PNG. Try SVG instead.');
-    img.src =
-      'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
-    setExportMenuOpen(false);
-  }, [boardTitle]);
+    if (!svg) {
+      setBoardError('The board canvas is not ready yet.');
+      return;
+    }
+    setExportBusy('gif');
+    setExportProgress('Preparing GIF…');
+    try {
+      const bounds = contentBounds(nodes, arrows, strokes);
+      const { buildHistoryGif } = await import('@/lib/whiteboard/export/gif');
+      setExportProgress('Encoding frames…');
+      const blob = await buildHistoryGif({
+        svg,
+        nodes,
+        arrows,
+        strokes,
+        bounds,
+        roomId,
+        ticket: exportTicket(),
+        onProgress: (done, total) =>
+          setExportProgress(`Encoding GIF ${done}/${total}…`),
+      });
+      downloadBlob(blob, `${boardFileSlug(boardTitle)}-board.gif`);
+      setExportMenuOpen(false);
+    } catch (error) {
+      setBoardError(
+        error instanceof Error ? error.message : 'GIF export failed.',
+      );
+    } finally {
+      setExportBusy(null);
+      setExportProgress(null);
+    }
+  }, [
+    arrows,
+    boardTitle,
+    exportBusy,
+    exportTicket,
+    nodes,
+    requirePro,
+    roomId,
+    strokes,
+  ]);
 
   /* ── Fit to content ── */
   const fitToContent = useCallback(() => {
@@ -3466,17 +3883,26 @@ export function WhiteboardPage({
         (event.key === 'Delete' || event.key === 'Backspace') &&
         selectedIds.length > 0
       ) {
-        recordHistory();
-        setNodes((current) =>
-          current.filter((node) => !selectedIds.includes(node.id)),
+        const before = captureBoardSnapshot();
+        const nextNodes = before.nodes.filter(
+          (node) => !selectedIds.includes(node.id),
         );
-        setArrows((current) =>
-          current.filter((arrow) => !selectedIds.includes(arrow.id)),
+        const nextArrows = before.arrows.filter(
+          (arrow) => !selectedIds.includes(arrow.id),
         );
-        setStrokes((current) =>
-          current.filter((stroke) => !selectedIds.includes(stroke.id)),
+        const nextStrokes = before.strokes.filter(
+          (stroke) => !selectedIds.includes(stroke.id),
         );
+        setNodes(nextNodes);
+        setArrows(nextArrows);
+        setStrokes(nextStrokes);
         setSelectedIds([]);
+        pushDiscreteChange(before, {
+          ...before,
+          nodes: nextNodes,
+          arrows: nextArrows,
+          strokes: nextStrokes,
+        });
       }
       // Tool & Layer shortcuts (only when no modifier keys or with shift).
       // Skip while focus sits on a button/link so Space/Enter keep working.
@@ -3560,6 +3986,7 @@ export function WhiteboardPage({
     adjustZoom,
     cancelEdit,
     cancelInteraction,
+    captureBoardSnapshot,
     copySelected,
     cutSelected,
     duplicateSelected,
@@ -3568,7 +3995,7 @@ export function WhiteboardPage({
     locked,
     moveSelectedLayer,
     pasteClipboard,
-    recordHistory,
+    pushDiscreteChange,
     redo,
     resetCamera,
     selectAllIds,
@@ -3602,6 +4029,34 @@ export function WhiteboardPage({
   const clearBroadcastCursor = useCallback(() => {
     syncRef.current?.setLocalCursor(null);
   }, []);
+
+  // Broadcast active tool + selection to peers (throttled, trailing-edge
+  // so rapid marquee changes settle instead of spamming awareness).
+  const presenceMetaRef = useRef({ tool: activeTool, selection: selectedIds });
+  const metaBroadcastAtRef = useRef(0);
+
+  useEffect(() => {
+    presenceMetaRef.current = { tool: activeTool, selection: selectedIds };
+  });
+
+  useEffect(() => {
+    const session = syncRef.current;
+    if (!session || !syncReady) return;
+    const send = () => {
+      metaBroadcastAtRef.current = Date.now();
+      const meta = presenceMetaRef.current;
+      syncRef.current?.setLocalPresenceMeta(
+        meta.tool,
+        meta.selection.slice(0, 200),
+      );
+    };
+    if (Date.now() - metaBroadcastAtRef.current >= 250) {
+      send();
+      return;
+    }
+    const timer = window.setTimeout(send, 250);
+    return () => window.clearTimeout(timer);
+  }, [activeTool, selectedIds, syncReady]);
 
   const handleShare = useCallback(() => {
     const share = async () => {
@@ -3706,11 +4161,13 @@ export function WhiteboardPage({
           href: stored.url,
           imageId: stored.id,
         };
-        recordHistory();
-        setNodes((current) => [...current, node]);
+        const before = captureBoardSnapshot();
+        const nextNodes = [...before.nodes, node];
+        setNodes(nextNodes);
         setSelectedIds([node.id]);
         setActiveTool('select');
         setBoardError(null);
+        pushDiscreteChange(before, { ...before, nodes: nextNodes });
       } catch (error) {
         setBoardError(
           error instanceof ApiError && error.code === 'R2_NOT_CONFIGURED'
@@ -3721,7 +4178,14 @@ export function WhiteboardPage({
         );
       }
     },
-    [camera.x, camera.y, locked, recordHistory, roomId],
+    [
+      camera.x,
+      camera.y,
+      captureBoardSnapshot,
+      locked,
+      pushDiscreteChange,
+      roomId,
+    ],
   );
 
   // Stored image URLs can be time-limited presigned links. On load failure,
@@ -3749,21 +4213,58 @@ export function WhiteboardPage({
     [resolveRoomTicket, roomId],
   );
 
-  const codeHistoryRef = useRef(0);
+  // Typing produces one undo entry per ~5s window (not per keystroke).
+  // The window base is the pre-burst code; the entry commits when the
+  // user pauses, so only the local user's own typing is captured.
+  const codeUndoBaseRef = useRef<string | null>(null);
+  const codeUndoLatestRef = useRef('');
+  const codeUndoTimerRef = useRef<number | null>(null);
+  const codeUndoRoomRef = useRef<string | null>(null);
 
   const handleCodeChange = useCallback(
     (value: string) => {
-      // Snapshot code for undo at most once per few seconds so typing
-      // doesn't flush the canvas history.
-      const now = Date.now();
-      if (now - codeHistoryRef.current > 5000) {
-        codeHistoryRef.current = now;
-        recordHistory();
+      // Room-scoped bursts: a room switch drops any staged base, mirroring
+      // the room effect that clears the undo stacks.
+      if (codeUndoRoomRef.current !== roomIdRef.current) {
+        codeUndoRoomRef.current = roomIdRef.current;
+        codeUndoBaseRef.current = null;
+        if (codeUndoTimerRef.current !== null) {
+          window.clearTimeout(codeUndoTimerRef.current);
+          codeUndoTimerRef.current = null;
+        }
       }
+      if (codeUndoBaseRef.current === null) {
+        codeUndoBaseRef.current = boardStateRef.current.code;
+      }
+      codeUndoLatestRef.current = value;
+      if (codeUndoTimerRef.current !== null) {
+        window.clearTimeout(codeUndoTimerRef.current);
+      }
+      // If the room changes before the window commits, the burst belongs
+      // to the old room: drop it with the room-scoped undo stacks.
+      const burstRoomId = roomIdRef.current;
+      codeUndoTimerRef.current = window.setTimeout(() => {
+        codeUndoTimerRef.current = null;
+        const base = codeUndoBaseRef.current;
+        codeUndoBaseRef.current = null;
+        if (
+          base === null ||
+          base === codeUndoLatestRef.current ||
+          roomIdRef.current !== burstRoomId
+        )
+          return;
+        pushUndoEntry({
+          nodes: new Map(),
+          arrows: new Map(),
+          strokes: new Map(),
+          codeBefore: base,
+          codeAfter: codeUndoLatestRef.current,
+        });
+      }, 5000);
       setCode(value);
       setCompileState('draft');
     },
-    [recordHistory],
+    [pushUndoEntry],
   );
 
   const selectEngine = useCallback((next: 'dagre' | 'elk' | 'tala') => {
@@ -3908,7 +4409,7 @@ export function WhiteboardPage({
         );
         return;
       }
-      recordHistory();
+      const before = captureBoardSnapshot();
       const next = reconcileDiagram(
         nodesRef.current,
         arrowsRef.current,
@@ -3925,6 +4426,13 @@ export function WhiteboardPage({
       setSelectedIds((current) => current.filter((id) => keptIds.has(id)));
       setCompileState('compiled');
       setBoardError(null);
+      // Reconcile is a local op: capture it so undo restores the
+      // pre-compile arrangement without touching peer edits.
+      pushDiscreteChange(before, {
+        ...before,
+        nodes: next.nodes,
+        arrows: next.arrows,
+      });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       setCompileState('draft');
@@ -3938,9 +4446,10 @@ export function WhiteboardPage({
         compileAbortRef.current = null;
     }
   }, [
+    captureBoardSnapshot,
     code,
     engine,
-    recordHistory,
+    pushDiscreteChange,
     roomId,
     resolveRoomTicket,
     resolveUserToken,
@@ -3962,6 +4471,8 @@ export function WhiteboardPage({
       compileAbortRef.current?.abort();
       if (copiedTimerRef.current !== null)
         window.clearTimeout(copiedTimerRef.current);
+      if (codeUndoTimerRef.current !== null)
+        window.clearTimeout(codeUndoTimerRef.current);
     },
     [],
   );
@@ -4339,7 +4850,8 @@ export function WhiteboardPage({
                 />
                 <button
                   type="button"
-                  onClick={exportAsPNG}
+                  onClick={() => void exportAsPNG()}
+                  disabled={exportBusy !== null}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -4348,9 +4860,10 @@ export function WhiteboardPage({
                     padding: '10px 14px',
                     border: 0,
                     background: 'transparent',
-                    cursor: 'pointer',
+                    cursor: exportBusy ? 'wait' : 'pointer',
                     fontSize: 13,
                     color: '#35374a',
+                    opacity: exportBusy && exportBusy !== 'png' ? 0.5 : 1,
                   }}
                   onMouseEnter={(e) =>
                     (e.currentTarget.style.background = '#f5f4fa')
@@ -4360,10 +4873,12 @@ export function WhiteboardPage({
                   }
                 >
                   <Download size={15} /> Export as PNG
+                  {exportBusy === 'png' ? '…' : ''}
                 </button>
                 <button
                   type="button"
-                  onClick={exportAsSVG}
+                  onClick={() => void exportAsSVG()}
+                  disabled={exportBusy !== null}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -4372,9 +4887,10 @@ export function WhiteboardPage({
                     padding: '10px 14px',
                     border: 0,
                     background: 'transparent',
-                    cursor: 'pointer',
+                    cursor: exportBusy ? 'wait' : 'pointer',
                     fontSize: 13,
                     color: '#35374a',
+                    opacity: exportBusy && exportBusy !== 'svg' ? 0.5 : 1,
                   }}
                   onMouseEnter={(e) =>
                     (e.currentTarget.style.background = '#f5f4fa')
@@ -4384,10 +4900,12 @@ export function WhiteboardPage({
                   }
                 >
                   <Download size={15} /> Export as SVG
+                  {exportBusy === 'svg' ? '…' : ''}
                 </button>
                 <button
                   type="button"
                   onClick={exportAsJSON}
+                  disabled={exportBusy !== null}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -4396,9 +4914,10 @@ export function WhiteboardPage({
                     padding: '10px 14px',
                     border: 0,
                     background: 'transparent',
-                    cursor: 'pointer',
+                    cursor: exportBusy ? 'wait' : 'pointer',
                     fontSize: 13,
                     color: '#35374a',
+                    opacity: exportBusy ? 0.5 : 1,
                   }}
                   onMouseEnter={(e) =>
                     (e.currentTarget.style.background = '#f5f4fa')
@@ -4409,6 +4928,191 @@ export function WhiteboardPage({
                 >
                   <Download size={15} /> Export as JSON
                 </button>
+                <div
+                  style={{
+                    height: 1,
+                    background: '#eeedf2',
+                    margin: '0 10px',
+                  }}
+                />
+                <div
+                  style={{
+                    padding: '8px 14px 2px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                    color: '#8a8ca3',
+                  }}
+                >
+                  Export Pro
+                  {!isProTier(roomMeta?.tier) ? ' — upgrade room' : ''}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void exportAsPDF()}
+                  disabled={exportBusy !== null}
+                  title={
+                    isProTier(roomMeta?.tier)
+                      ? 'True vector PDF with selectable text'
+                      : 'Requires a Pro or Enterprise room tier'
+                  }
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 14px',
+                    border: 0,
+                    background: 'transparent',
+                    cursor: exportBusy ? 'wait' : 'pointer',
+                    fontSize: 13,
+                    color: '#35374a',
+                    opacity:
+                      exportBusy && exportBusy !== 'pdf'
+                        ? 0.5
+                        : !isProTier(roomMeta?.tier)
+                          ? 0.75
+                          : 1,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = '#f5f4fa')
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = 'transparent')
+                  }
+                >
+                  <Download size={15} /> Export PDF (vector)
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      fontWeight: 800,
+                      padding: '2px 6px',
+                      borderRadius: 999,
+                      background: isProTier(roomMeta?.tier)
+                        ? '#ede9ff'
+                        : '#f1f0f6',
+                      color: isProTier(roomMeta?.tier) ? '#5b54c7' : '#8a8ca3',
+                    }}
+                  >
+                    PRO
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportAsBundle()}
+                  disabled={exportBusy !== null}
+                  title={
+                    isProTier(roomMeta?.tier)
+                      ? 'ZIP with PDF + PNG + SVG + JSON'
+                      : 'Requires a Pro or Enterprise room tier'
+                  }
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 14px',
+                    border: 0,
+                    background: 'transparent',
+                    cursor: exportBusy ? 'wait' : 'pointer',
+                    fontSize: 13,
+                    color: '#35374a',
+                    opacity:
+                      exportBusy && exportBusy !== 'zip'
+                        ? 0.5
+                        : !isProTier(roomMeta?.tier)
+                          ? 0.75
+                          : 1,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = '#f5f4fa')
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = 'transparent')
+                  }
+                >
+                  <Download size={15} /> Bundle ZIP
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      fontWeight: 800,
+                      padding: '2px 6px',
+                      borderRadius: 999,
+                      background: isProTier(roomMeta?.tier)
+                        ? '#ede9ff'
+                        : '#f1f0f6',
+                      color: isProTier(roomMeta?.tier) ? '#5b54c7' : '#8a8ca3',
+                    }}
+                  >
+                    PRO
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportAsGif()}
+                  disabled={exportBusy !== null}
+                  title={
+                    isProTier(roomMeta?.tier)
+                      ? 'Animated build-up replay of the board'
+                      : 'Requires a Pro or Enterprise room tier'
+                  }
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 14px',
+                    border: 0,
+                    background: 'transparent',
+                    cursor: exportBusy ? 'wait' : 'pointer',
+                    fontSize: 13,
+                    color: '#35374a',
+                    opacity:
+                      exportBusy && exportBusy !== 'gif'
+                        ? 0.5
+                        : !isProTier(roomMeta?.tier)
+                          ? 0.75
+                          : 1,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = '#f5f4fa')
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = 'transparent')
+                  }
+                >
+                  <Download size={15} /> Replay GIF
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      fontWeight: 800,
+                      padding: '2px 6px',
+                      borderRadius: 999,
+                      background: isProTier(roomMeta?.tier)
+                        ? '#ede9ff'
+                        : '#f1f0f6',
+                      color: isProTier(roomMeta?.tier) ? '#5b54c7' : '#8a8ca3',
+                    }}
+                  >
+                    PRO
+                  </span>
+                </button>
+                {exportProgress ? (
+                  <div
+                    role="status"
+                    style={{
+                      padding: '8px 14px 10px',
+                      fontSize: 12,
+                      color: '#6b6d85',
+                    }}
+                  >
+                    {exportProgress}
+                  </div>
+                ) : null}
                 <div
                   style={{
                     height: 1,
@@ -5470,32 +6174,26 @@ export function WhiteboardPage({
                     height={marquee.maxY - marquee.minY}
                   />
                 )}
-                {peers.map(
-                  (peer) =>
-                    peer.cursor && (
-                      <g
-                        key={peer.clientId}
-                        className="remote-cursor"
-                        transform={`translate(${peer.cursor.x} ${peer.cursor.y})`}
-                        pointerEvents="none"
-                      >
-                        <path
-                          d="M0 0 L0 16 L4.5 12 L7 18 L9.5 16.8 L7 11 L11.5 11 Z"
-                          fill={peer.user.color}
-                          stroke="#fff"
-                          strokeWidth="1.2"
-                        />
-                        <text
-                          x={13}
-                          y={13}
-                          className="remote-cursor-label"
-                          fill={peer.user.color}
-                        >
-                          {peer.user.name}
-                        </text>
-                      </g>
-                    ),
-                )}
+                {peerSelectionOutlines.map((outline) => (
+                  <g key={outline.key} pointerEvents="none">
+                    <rect
+                      className="peer-selection-outline"
+                      x={outline.bounds.minX - 6}
+                      y={outline.bounds.minY - 6}
+                      width={outline.bounds.maxX - outline.bounds.minX + 12}
+                      height={outline.bounds.maxY - outline.bounds.minY + 12}
+                      rx="8"
+                      fill="none"
+                      stroke={outline.color}
+                      strokeWidth="2"
+                      strokeDasharray="6 4"
+                      opacity="0.85"
+                    >
+                      <title>{`${outline.name} is editing this`}</title>
+                    </rect>
+                  </g>
+                ))}
+                <RemoteCursors peers={peers} />
                 {createPreview &&
                   (() => {
                     const px = Math.min(

@@ -237,36 +237,36 @@ export function createApiApp(
             };
           return validationError(parsed.error);
         }
-      const input = parsed.data;
-      // Authenticated users own their rooms and inherit their tier unless
-      // they explicitly choose otherwise. Client identity and tier are
-      // never taken at face value: ownerId is forced to the caller, and an
-      // explicitly requested tier above the caller's is rejected.
-      const user = await requestUser(
-        users,
-        headers as Record<string, string | undefined>,
-        ticketSecret,
-      );
-      const callerTier = user?.tier ?? "COMMUNITY";
-      if (input.tier && TIER_RANK[input.tier] > TIER_RANK[callerTier]) {
-        set.status = 403;
-        return {
-          error: `The '${input.tier}' tier requires a Pro or Enterprise account`,
-          code: "TIER_UPGRADE_REQUIRED",
-          details: { tier: input.tier },
-        };
-      }
-      const room = await manager.createRoom(
-        {
-          name: input.name,
-          ownerId: user ? user.id : (input.ownerId ?? "anonymous"),
-          tier: input.tier ?? callerTier,
-        },
-        input.password,
-      );
-      set.status = 201;
-      return room;
-    })
+        const input = parsed.data;
+        // Authenticated users own their rooms and inherit their tier unless
+        // they explicitly choose otherwise. Client identity and tier are
+        // never taken at face value: ownerId is forced to the caller, and an
+        // explicitly requested tier above the caller's is rejected.
+        const user = await requestUser(
+          users,
+          headers as Record<string, string | undefined>,
+          ticketSecret,
+        );
+        const callerTier = user?.tier ?? "COMMUNITY";
+        if (input.tier && TIER_RANK[input.tier] > TIER_RANK[callerTier]) {
+          set.status = 403;
+          return {
+            error: `The '${input.tier}' tier requires a Pro or Enterprise account`,
+            code: "TIER_UPGRADE_REQUIRED",
+            details: { tier: input.tier },
+          };
+        }
+        const room = await manager.createRoom(
+          {
+            name: input.name,
+            ownerId: user ? user.id : (input.ownerId ?? "anonymous"),
+            tier: input.tier ?? callerTier,
+          },
+          input.password,
+        );
+        set.status = 201;
+        return room;
+      })
       .get("/api/rooms/:roomId", async ({ params, headers, query, set }) => {
         const access = await requestAccess(
           manager,
@@ -281,67 +281,67 @@ export function createApiApp(
         }
         return access.room;
       })
-    .post("/api/rooms/:roomId/unlock", async ({ params, body, set }) => {
-      const room = await manager.getRoomMetadata(params.roomId);
-      if (!room) {
-        set.status = 404;
-        return { error: "Room not found" };
-      }
-      if (!room.hasPassword) {
-        // Open rooms need no ticket — minting one would create a capability
-        // that survives a later password being set.
-        set.status = 400;
-        return { error: "Room is not locked", code: "ROOM_NOT_LOCKED" };
-      }
-      const parsed = UnlockRoomSchema.safeParse(body);
-      if (!parsed.success) {
-        set.status = 400;
-        return validationError(parsed.error);
-      }
-      const input = parsed.data;
-      if (
-        input.password === undefined ||
-        !(await manager.verifyRoomPassword(room.id, input.password))
-      ) {
-        set.status = 403;
-        return { error: "Invalid password", code: "INVALID_PASSWORD" };
-      }
-      const version = (await manager.getPasswordVersion(room.id)) ?? 0;
-      const { ticket, expiresIn } = issueTicket(
-        ticketSecret,
-        room.id,
-        version,
-        config.roomTicketTtlSec,
-      );
-      return { ticket, expiresIn, roomId: room.id };
-    })
-    .delete("/api/rooms/:roomId", async ({ params, headers, query, set }) => {
-      const access = await requestAccess(
-        manager,
-        params.roomId,
-        headers as Record<string, string | undefined>,
-        query as Record<string, unknown>,
-        ticketSecret,
-      );
-      if ("body" in access) {
-        set.status = access.status;
-        return access.body;
-      }
-      const ownership = await requireOwnership(
-        manager,
-        users,
-        access.room,
-        headers as Record<string, string | undefined>,
-        ticketSecret,
-      );
-      if ("body" in ownership) {
-        set.status = ownership.status;
-        return ownership.body;
-      }
-      await manager.deleteRoom(access.room.id);
-      set.status = 204;
-      return;
-    })
+      .post("/api/rooms/:roomId/unlock", async ({ params, body, set }) => {
+        const room = await manager.getRoomMetadata(params.roomId);
+        if (!room) {
+          set.status = 404;
+          return { error: "Room not found" };
+        }
+        if (!room.hasPassword) {
+          // Open rooms need no ticket — minting one would create a capability
+          // that survives a later password being set.
+          set.status = 400;
+          return { error: "Room is not locked", code: "ROOM_NOT_LOCKED" };
+        }
+        const parsed = UnlockRoomSchema.safeParse(body);
+        if (!parsed.success) {
+          set.status = 400;
+          return validationError(parsed.error);
+        }
+        const input = parsed.data;
+        if (
+          input.password === undefined ||
+          !(await manager.verifyRoomPassword(room.id, input.password))
+        ) {
+          set.status = 403;
+          return { error: "Invalid password", code: "INVALID_PASSWORD" };
+        }
+        const version = (await manager.getPasswordVersion(room.id)) ?? 0;
+        const { ticket, expiresIn } = issueTicket(
+          ticketSecret,
+          room.id,
+          version,
+          config.roomTicketTtlSec,
+        );
+        return { ticket, expiresIn, roomId: room.id };
+      })
+      .delete("/api/rooms/:roomId", async ({ params, headers, query, set }) => {
+        const access = await requestAccess(
+          manager,
+          params.roomId,
+          headers as Record<string, string | undefined>,
+          query as Record<string, unknown>,
+          ticketSecret,
+        );
+        if ("body" in access) {
+          set.status = access.status;
+          return access.body;
+        }
+        const ownership = await requireOwnership(
+          manager,
+          users,
+          access.room,
+          headers as Record<string, string | undefined>,
+          ticketSecret,
+        );
+        if ("body" in ownership) {
+          set.status = ownership.status;
+          return ownership.body;
+        }
+        await manager.deleteRoom(access.room.id);
+        set.status = 204;
+        return;
+      })
       .patch(
         "/api/rooms/:roomId",
         async ({ params, body, headers, query, set }) => {
@@ -500,20 +500,20 @@ export function createApiApp(
         // Tier is resolved server-side and never trusted from the client: the
         // higher of the room's stored tier and the caller's user tier wins,
         // defaulting to COMMUNITY. Locked rooms additionally require a ticket.
-      const caller = await requestUser(
-        users,
-        headers as Record<string, string | undefined>,
-        ticketSecret,
-      );
-      let tier: Tier = caller?.tier ?? "COMMUNITY";
-      if (input.roomId) {
-        const access = await requestAccess(
-          manager,
-          input.roomId,
+        const caller = await requestUser(
+          users,
           headers as Record<string, string | undefined>,
-          query as Record<string, unknown>,
           ticketSecret,
         );
+        let tier: Tier = caller?.tier ?? "COMMUNITY";
+        if (input.roomId) {
+          const access = await requestAccess(
+            manager,
+            input.roomId,
+            headers as Record<string, string | undefined>,
+            query as Record<string, unknown>,
+            ticketSecret,
+          );
           if ("body" in access) {
             set.status = access.status;
             return access.body;
@@ -718,14 +718,14 @@ export function createApiApp(
             set.status = access.status;
             return access.body;
           }
-        const room = access.room;
-        // The room ticket travels in the query alongside real params but is
-        // not part of the schemas (which are strict): strip it first.
-        const { ticket: _ticket, ...listQuery } = query as Record<
-          string,
-          unknown
-        >;
-        const parsed = ImageListQuerySchema.safeParse(listQuery);
+          const room = access.room;
+          // The room ticket travels in the query alongside real params but is
+          // not part of the schemas (which are strict): strip it first.
+          const { ticket: _ticket, ...listQuery } = query as Record<
+            string,
+            unknown
+          >;
+          const parsed = ImageListQuerySchema.safeParse(listQuery);
           if (!parsed.success) {
             set.status = 400;
             return validationError(parsed.error);
@@ -825,16 +825,71 @@ export function createApiApp(
               code: "R2_NOT_CONFIGURED",
             };
           }
-        try {
-          await r2.delete(image.key);
-        } catch (error) {
-          // S3 deletes are idempotent, so absence still proceeds to row
-          // cleanup; anything else aborts before the metadata is touched.
-          if (!isR2NotFound(error)) return r2Error(set, error);
-        }
-        await images.imageStore.deleteImage(image.id);
-        set.status = 204;
-        return;
+          try {
+            await r2.delete(image.key);
+          } catch (error) {
+            // S3 deletes are idempotent, so absence still proceeds to row
+            // cleanup; anything else aborts before the metadata is touched.
+            if (!isR2NotFound(error)) return r2Error(set, error);
+          }
+          await images.imageStore.deleteImage(image.id);
+          set.status = 204;
+          return;
+        },
+      )
+      .get(
+        "/api/rooms/:roomId/images/:imageId/bytes",
+        async ({ params, headers, query, set }) => {
+          const access = await requestAccess(
+            manager,
+            params.roomId,
+            headers as Record<string, string | undefined>,
+            query as Record<string, unknown>,
+            ticketSecret,
+          );
+          if ("body" in access) {
+            set.status = access.status;
+            return access.body;
+          }
+          const image = await images.imageStore.getImage(params.imageId);
+          if (!image || image.roomId !== params.roomId) {
+            set.status = 404;
+            return { error: "Image not found", code: "IMAGE_NOT_FOUND" };
+          }
+          if (!keyBelongsToRoom(image.key, params.roomId)) {
+            set.status = 400;
+            return { error: "Key does not belong to this room", code: "INVALID_KEY" };
+          }
+          const r2 = images.r2;
+          if (!r2) {
+            set.status = 503;
+            return {
+              error: "Image storage is not configured",
+              code: "R2_NOT_CONFIGURED",
+            };
+          }
+          try {
+            const object = await r2.getObject(image.key);
+            if (!object) {
+              set.status = 404;
+              return { error: "Object not found", code: "OBJECT_NOT_FOUND" };
+            }
+            const contentType =
+              object.contentType || image.contentType || "application/octet-stream";
+            // Same-origin bytes for export rasterization: browsers can fetch
+            // without CORS taint, and expired presigned URLs never surface.
+            return new Response(object.body, {
+              status: 200,
+              headers: {
+                "content-type": contentType,
+                "content-length": String(object.body.byteLength),
+                "cache-control": "private, max-age=300",
+                "access-control-allow-origin": "*",
+              },
+            });
+          } catch (error) {
+            return r2Error(set, error);
+          }
         },
       )
       .get(

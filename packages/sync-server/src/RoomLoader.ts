@@ -337,7 +337,10 @@ export class PrismaSnapshotStore implements SnapshotStore {
             : {}),
           ...(updates.tier !== undefined ? { tier: updates.tier } : {}),
           ...(updates.passwordHash !== undefined
-            ? { passwordHash: updates.passwordHash, passwordVersion: { increment: 1 } }
+            ? {
+                passwordHash: updates.passwordHash,
+                passwordVersion: { increment: 1 },
+              }
             : {}),
         },
         select: {

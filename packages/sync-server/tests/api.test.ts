@@ -385,6 +385,27 @@ describe("Room images", () => {
     expect(badKind.status).toBe(400);
   });
 
+  test("serves image bytes via the export proxy", async () => {
+    const { confirmResponse } = await upload();
+    expect(confirmResponse.status).toBe(201);
+    const image = (await confirmResponse.json()) as { id: string };
+    const bytes = await fetch(
+      `${baseUrl}/api/rooms/${roomId}/images/${image.id}/bytes`,
+    );
+    expect(bytes.status).toBe(200);
+    expect(bytes.headers.get("content-type")).toContain("image/png");
+    expect(bytes.headers.get("access-control-allow-origin")).toBe("*");
+    const body = new Uint8Array(await bytes.arrayBuffer());
+    // MemoryR2Client serves a 1x1 PNG placeholder.
+    expect(body.length).toBeGreaterThan(0);
+    expect(body[0]).toBe(137);
+
+    const missing = await fetch(
+      `${baseUrl}/api/rooms/${roomId}/images/no-such-image/bytes`,
+    );
+    expect(missing.status).toBe(404);
+  });
+
   test("returns 503 when R2 is not configured", async () => {
     const bare = createSyncServer(
       {
@@ -1068,7 +1089,11 @@ describe("Room updates", () => {
   });
 
   test("rotation invalidates previously minted tickets", async () => {
-    await patch(`/api/rooms/${openId}`, { password: "first-secret" }, userToken);
+    await patch(
+      `/api/rooms/${openId}`,
+      { password: "first-secret" },
+      userToken,
+    );
     const first = await request(`/api/rooms/${openId}/unlock`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1364,9 +1389,9 @@ describe("Persistence safety", () => {
     });
     const bad = await store.getSnapshot("bad-snapshot");
     expect(bad).not.toBeNull();
-    await expect(
-      room.restoreSnapshot(bad as StoredSnapshot),
-    ).rejects.toThrow(/corrupt/);
+    await expect(room.restoreSnapshot(bad as StoredSnapshot)).rejects.toThrow(
+      /corrupt/,
+    );
     // Live state survived: doc content intact, awareness untouched (a fresh
     // Awareness always carries exactly one self-state).
     expect(room.doc.getMap<string>("m").get("k")).toBe("v");

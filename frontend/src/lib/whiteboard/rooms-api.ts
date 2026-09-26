@@ -368,3 +368,37 @@ export async function deleteImage(
     { ticket },
   );
 }
+
+export function imageBytesUrl(
+  roomId: string,
+  imageId: string,
+  ticket?: string,
+): string {
+  const url = new URL(
+    `${baseUrl()}/api/rooms/${encodeURIComponent(roomId)}/images/${encodeURIComponent(imageId)}/bytes`,
+  );
+  if (ticket) url.searchParams.set('ticket', ticket);
+  return url.toString();
+}
+
+export async function fetchImageBytes(
+  roomId: string,
+  imageId: string,
+  ticket?: string,
+): Promise<Blob> {
+  const url = imageBytesUrl(roomId, imageId, ticket);
+  let response: Response;
+  try {
+    response = await fetch(
+      url,
+      ticket ? { headers: { authorization: `Bearer ${ticket}` } } : undefined,
+    );
+  } catch {
+    throw new ApiError(0, 'Could not download image bytes for export.');
+  }
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw toApiError(response.status, safeJson(text), text);
+  }
+  return response.blob();
+}

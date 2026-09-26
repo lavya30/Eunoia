@@ -132,6 +132,12 @@ export type ObjectHead = {
  * Object-storage client. Bytes live in R2; Postgres keeps metadata only.
  * `head()` returns null when the object does not exist.
  */
+export type ObjectBody = {
+  body: Uint8Array;
+  contentType?: string;
+  size?: number;
+};
+
 export interface R2Client {
   presignUpload(
     key: string,
@@ -144,6 +150,11 @@ export interface R2Client {
   ): Promise<{ url: string; expiresIn: number }>;
   publicUrl(key: string): string | undefined;
   head(key: string): Promise<ObjectHead | null>;
+  /**
+   * Fetch object bytes for the same-origin export proxy. Returns null when
+   * the object does not exist; other failures throw and surface as 502s.
+   */
+  getObject(key: string): Promise<ObjectBody | null>;
   delete(key: string): Promise<void>;
 }
 
@@ -231,6 +242,25 @@ export class S3R2Client implements R2Client {
     }
   }
 
+  async getObject(key: string): Promise<ObjectBody | null> {
+    try {
+      const out = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      if (!out.Body) return null;
+      const body = await out.Body.transformToByteArray();
+      return {
+        body: new Uint8Array(body),
+        contentType: out.ContentType,
+        size:
+          typeof out.ContentLength === "number" ? out.ContentLength : undefined,
+      };
+    } catch (error) {
+      if (isR2NotFound(error)) return null;
+      throw error;
+    }
+  }
+
   async delete(key: string): Promise<void> {
     await this.client.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
@@ -256,10 +286,22 @@ export function isR2NotFound(error: unknown): boolean {
 
 /** In-memory fake for tests and local dev without R2 credentials. */
 export class MemoryR2Client implements R2Client {
-  private readonly objects = new Map<string, { contentType: string }>();
+  private readonly objects = new Map<
+    string,
+    { contentType: string; bytes?: Uint8Array }
+  >();
+
+  /** Seed bytes directly (tests/dev) — presigned uploads record empty bodies. */
+  seedObject(key: string, contentType: string, bytes: Uint8Array): void {
+    this.objects.set(key, { contentType, bytes });
+  }
 
   async presignUpload(key: string, contentType: string, expiresInSec: number) {
-    this.objects.set(key, { contentType });
+    const existing = this.objects.get(key);
+    this.objects.set(key, {
+      contentType,
+      bytes: existing?.bytes ?? MemoryR2Client.placeholderPng(),
+    });
     return { url: `memory://upload/${key}`, expiresIn: expiresInSec };
   }
 
@@ -273,7 +315,30 @@ export class MemoryR2Client implements R2Client {
 
   async head(key: string): Promise<ObjectHead | null> {
     const object = this.objects.get(key);
+    // Deliberately no `size`: the fake never observes real PUT bytes, so
+    // confirm must fall back to the client-reported size (the oversize and
+    // lifecycle tests depend on this). Real byte serving lives in getObject.
     return object ? { contentType: object.contentType } : null;
+  }
+
+  async getObject(key: string): Promise<ObjectBody | null> {
+    const object = this.objects.get(key);
+    if (!object) return null;
+    return {
+      body: object.bytes ?? MemoryR2Client.placeholderPng(),
+      contentType: object.contentType,
+      size: object.bytes?.byteLength,
+    };
+  }
+
+  /** 1x1 transparent PNG so export-proxy tests have deterministic bytes. */
+  private static placeholderPng(): Uint8Array {
+    return new Uint8Array([
+      137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1,
+      0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84,
+      120, 156, 99, 96, 0, 0, 0, 2, 0, 1, 226, 33, 188, 51, 0, 0, 0, 0, 73, 69,
+      78, 68, 174, 66, 96, 130,
+    ]);
   }
 
   async delete(key: string): Promise<void> {
