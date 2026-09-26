@@ -6,6 +6,59 @@ const MAX_ROOM_ID_LENGTH = 256;
 const MAX_IMAGE_KEY_LENGTH = 512;
 
 export const TierSchema = z.enum(["COMMUNITY", "PRO", "ENTERPRISE"]);
+
+export const GenerateDiagramSchema = z
+  .object({
+    prompt: z.string().trim().min(1).max(4000),
+    roomId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
+    model: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+export const WorkspaceRoleSchema = z.enum(["ADMIN", "EDITOR", "VIEWER"]);
+
+export const CreateWorkspaceSchema = z
+  .object({
+    name: z.string().trim().min(1).max(MAX_TEXT_LENGTH),
+    tier: TierSchema.optional(),
+  })
+  .strict();
+
+export const CreateFolderSchema = z
+  .object({
+    name: z.string().trim().min(1).max(MAX_TEXT_LENGTH),
+  })
+  .strict();
+
+export const InviteMemberSchema = z
+  .object({
+    // Exactly one of userId / email identifies the invitee.
+    userId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
+    email: z.string().trim().toLowerCase().email().max(MAX_ROOM_ID_LENGTH).optional(),
+    role: WorkspaceRoleSchema.default("EDITOR"),
+  })
+  .strict()
+  .refine((value) => value.userId !== undefined || value.email !== undefined, {
+    message: "Either userId or email must be provided",
+  });
+
+export const UpdateMemberSchema = z
+  .object({
+    role: WorkspaceRoleSchema,
+  })
+  .strict();
+
+export const MoveRoomSchema = z
+  .object({
+    workspaceId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).nullable(),
+    folderId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).nullable().optional(),
+  })
+  .strict();
+
+export const RoomListQuerySchema = z
+  .object({
+    workspaceId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
+  })
+  .strict();
 export const LayoutEngineSchema = z.enum(["dagre", "elk", "tala"]);
 export const ImageKindSchema = z.enum(["image", "thumbnail"]);
 export const ImageContentTypeSchema = z.enum([
@@ -21,6 +74,7 @@ export const CreateRoomSchema = z
     ownerId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
     password: z.string().min(8).max(MAX_PASSWORD_LENGTH).optional(),
     tier: TierSchema.optional(),
+    workspaceId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
   })
   .strict();
 
@@ -42,8 +96,8 @@ export const CheckoutSchema = z
   .object({
     priceKey: z.string().trim().min(1).default("pro"),
       // Capped: per-seat billing with unbounded quantities is a one-line
-      // API call away from absurd invoices; real seat counts come from
-      // workspaces (not yet built), so 100 is generous headroom.
+      // API call away from absurd invoices; workspace invites enforce
+      // against this count, so 100 is generous headroom.
       seats: z.coerce.number().int().positive().max(100).default(1),
   })
   .strict();

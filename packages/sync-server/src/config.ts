@@ -24,6 +24,14 @@ const envSchema = z.object({
   ROOM_TICKET_SECRET: z.string().min(1).optional(),
   ROOM_TICKET_TTL_SEC: z.coerce.number().int().positive().default(86400),
   USER_TOKEN_TTL_SEC: z.coerce.number().int().positive().default(604800),
+  AI_API_KEY: z.string().optional(),
+  AI_API_BASE_URL: z.string().url().optional(),
+  AI_MODEL: z.string().optional(),
+  OIDC_ISSUER: z.string().url().optional(),
+  OIDC_CLIENT_ID: z.string().optional(),
+  OIDC_CLIENT_SECRET: z.string().optional(),
+  OIDC_REDIRECT_URL: z.string().url().optional(),
+  FRONTEND_BASE_URL: z.string().url().optional(),
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
@@ -57,6 +65,14 @@ export type Config = {
   roomTicketSecret?: string;
   roomTicketTtlSec: number;
   userTokenTtlSec: number;
+  aiApiKey?: string;
+  aiApiBaseUrl?: string;
+  aiModel?: string;
+  oidcIssuer?: string;
+  oidcClientId?: string;
+  oidcClientSecret?: string;
+  oidcRedirectUrl?: string;
+  frontendBaseUrl?: string;
   razorpayKeyId?: string;
   razorpayKeySecret?: string;
   razorpayWebhookSecret?: string;
@@ -147,6 +163,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     roomTicketSecret: parsed.ROOM_TICKET_SECRET,
     roomTicketTtlSec: parsed.ROOM_TICKET_TTL_SEC,
     userTokenTtlSec: parsed.USER_TOKEN_TTL_SEC,
+    aiApiKey: parsed.AI_API_KEY,
+    aiApiBaseUrl: parsed.AI_API_BASE_URL,
+    aiModel: parsed.AI_MODEL,
+    oidcIssuer: parsed.OIDC_ISSUER,
+    oidcClientId: parsed.OIDC_CLIENT_ID,
+    oidcClientSecret: parsed.OIDC_CLIENT_SECRET,
+    oidcRedirectUrl: parsed.OIDC_REDIRECT_URL,
+    frontendBaseUrl: parsed.FRONTEND_BASE_URL,
     razorpayKeyId: parsed.RAZORPAY_KEY_ID,
     razorpayKeySecret: parsed.RAZORPAY_KEY_SECRET,
     razorpayWebhookSecret: parsed.RAZORPAY_WEBHOOK_SECRET,

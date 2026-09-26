@@ -46,6 +46,7 @@ export function groupRoute(method: string, pathname: string): string {
   if (/^\/api\/rooms\/[^/]+$/.test(pathname))
     return `${upper} /api/rooms/:roomId`;
   if (pathname === '/api/compile') return 'POST /api/compile';
+  if (pathname === '/api/ai/generate') return 'POST /api/ai/generate';
   if (pathname === '/api/auth/register') return 'POST /api/auth/register';
   if (pathname === '/api/auth/login') return 'POST /api/auth/login';
   if (pathname === '/api/auth/me') return 'GET /api/auth/me';
@@ -61,6 +62,8 @@ export type MetricsGauges = {
 export class Metrics {
   private readonly http = new Map<string, number>();
   private readonly compiles = new Map<string, number>();
+  private readonly aiGenerations = new Map<string, number>();
+  private readonly wsUpgrades = new Map<string, number>();
 
   incHttp(method: string, pathname: string, status: HttpStatus): void {
     const key = `${groupRoute(method, pathname)}|${normalizeStatus(status)}`;
@@ -70,6 +73,14 @@ export class Metrics {
   incCompile(engine: string, outcome: string): void {
     const key = `${engine}|${outcome}`;
     this.compiles.set(key, (this.compiles.get(key) ?? 0) + 1);
+  }
+
+  incAi(outcome: string): void {
+    this.aiGenerations.set(outcome, (this.aiGenerations.get(outcome) ?? 0) + 1);
+  }
+
+  incWsUpgrade(outcome: string): void {
+    this.wsUpgrades.set(outcome, (this.wsUpgrades.get(outcome) ?? 0) + 1);
   }
 
   render(gauges: MetricsGauges): string {
@@ -97,6 +108,20 @@ export class Metrics {
       lines.push(
         `eunoia_compile_requests_total{engine="${engine}",outcome="${outcome}"} ${count}`,
       );
+    }
+    lines.push(
+      '# HELP eunoia_ai_generations_total NL-to-D2 generations by outcome.',
+      '# TYPE eunoia_ai_generations_total counter',
+    );
+    for (const [outcome, count] of [...this.aiGenerations.entries()].sort()) {
+      lines.push(`eunoia_ai_generations_total{outcome="${outcome}"} ${count}`);
+    }
+    lines.push(
+      '# HELP eunoia_ws_upgrades_total WebSocket upgrade attempts by outcome.',
+      '# TYPE eunoia_ws_upgrades_total counter',
+    );
+    for (const [outcome, count] of [...this.wsUpgrades.entries()].sort()) {
+      lines.push(`eunoia_ws_upgrades_total{outcome="${outcome}"} ${count}`);
     }
     lines.push(
       '# HELP eunoia_active_rooms Rooms currently loaded in server memory.',
