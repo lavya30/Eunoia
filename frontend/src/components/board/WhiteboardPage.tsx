@@ -15,6 +15,7 @@ import {
   Hand,
   Image as ImageIcon,
   Layers2,
+  Sparkles,
   LockKeyhole,
   Maximize2,
   Minus,
@@ -120,6 +121,7 @@ import {
   type AuthSession,
 } from '@/lib/whiteboard/auth';
 import { CreateRoomDialog, UnlockDialog } from './RoomDialogs';
+import { WorkspacePanel } from './WorkspacePanel';
 import { RemoteCursors } from './RemoteCursors';
 import { RoomSettingsDialog } from './RoomSettingsDialog';
 import { HistoryPanel } from './HistoryPanel';
@@ -1397,6 +1399,11 @@ export function WhiteboardPage({
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [exportProgress, setExportProgress] = useState<string | null>(null);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiQuota, setAiQuota] = useState<{ used: number; limit: number } | null>(
+    null,
+  );
   // Thumbnail auto-capture guards: one in-flight upload, last uploaded hash.
   const thumbInFlightRef = useRef(false);
   const thumbHashRef = useRef<string | null>(null);
@@ -1455,6 +1462,7 @@ export function WhiteboardPage({
   const lastCompiledCodeRef = useRef<string | null>(null);
   const restoreNoticeRef = useRef(false);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
+  const [showWorkspaces, setShowWorkspaces] = useState(false);
   const [showRoomSettings, setShowRoomSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -1833,6 +1841,9 @@ export function WhiteboardPage({
       roomId,
       serverUrl: resolveSyncServerUrl(),
       ticket: resolveRoomTicket(),
+      // Workspace members sync locked team rooms through this token
+      // (see sync.ts); harmless for personal rooms.
+      userToken: resolveUserToken(),
       initialState: boardStateRef.current,
       getInitialState: () => boardStateRef.current,
       onReady: () => setSyncReady(true),
@@ -1901,6 +1912,7 @@ export function WhiteboardPage({
     roomId,
     roomStatus,
     resolveRoomTicket,
+    resolveUserToken,
     syncNonce,
   ]);
 
@@ -4536,6 +4548,44 @@ export function WhiteboardPage({
     resolveUserToken,
   ]);
 
+  // Natural-language → D2: the server holds the LLM key, the result flows
+  // back into the editor and compiles through the normal pipeline (with
+  // undo support from handleCodeChange).
+  const generateWithAi = useCallback(async () => {
+    const prompt = aiPrompt.trim();
+    if (!prompt || aiBusy) return;
+    if (locked) return;
+    setAiBusy(true);
+    setBoardError(null);
+    try {
+      const { generateDiagram } = await import(
+        '@/lib/whiteboard/ai-api'
+      );
+      const result = await generateDiagram(prompt, {
+        roomId: roomId ?? undefined,
+        ticket: roomId ? getTicket(roomId) : undefined,
+        userToken: resolveUserToken(),
+      });
+      setAiQuota(result.quota);
+      setAiPrompt('');
+      handleCodeChange(result.d2);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'AUTH_REQUIRED') {
+        setBoardError('Sign in to generate diagrams with AI.');
+      } else if (error instanceof ApiError && error.code === 'AI_NOT_CONFIGURED') {
+        setBoardError(
+          'AI generation is not configured on this server. Set AI_API_KEY to enable it.',
+        );
+      } else {
+        setBoardError(
+          error instanceof Error ? error.message : 'AI generation failed.',
+        );
+      }
+    } finally {
+      setAiBusy(false);
+    }
+  }, [aiBusy, aiPrompt, handleCodeChange, locked, resolveUserToken, roomId]);
+
   // Auto-compile a short pause after the user stops typing, as promised by
   // the footer copy. Skips when the code already matches the last success.
   useEffect(() => {
@@ -4790,6 +4840,16 @@ export function WhiteboardPage({
           <button className="share-button" type="button" onClick={handleShare}>
             {copied ? <Check size={16} /> : <Share2 size={16} />}
             {copied ? 'Link copied' : 'Share room'}
+          </button>
+          <button
+            className="share-button"
+            type="button"
+            title="Team workspaces"
+            aria-label="Team workspaces"
+            onClick={() => setShowWorkspaces(true)}
+          >
+            <Layers2 size={16} />
+            Workspaces
           </button>
           {mounted && session ? (
             <div ref={accountMenuRef} style={{ position: 'relative' }}>
@@ -6580,6 +6640,55 @@ export function WhiteboardPage({
                 {code.split('\n').length} lines
               </span>
             </div>
+            <form
+              className="code-ai-row"
+              style={{ display: 'flex', gap: 8, padding: '8px 12px' }}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void generateWithAi();
+              }}
+            >
+              <div style={{ position: 'relative', flex: 1 }}>
+                <Sparkles
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    left: 10,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    opacity: 0.55,
+                    pointerEvents: 'none',
+                  }}
+                />
+                <input
+                  aria-label="Describe a diagram to generate"
+                  placeholder="Describe a diagram… (AI)"
+                  value={aiPrompt}
+                  maxLength={4000}
+                  disabled={aiBusy}
+                  onChange={(event) => setAiPrompt(event.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px 8px 30px',
+                    borderRadius: 10,
+                    border: '1px solid #e3e2ea',
+                    fontSize: 13,
+                  }}
+                />
+              </div>
+              <button
+                type="submit"
+                className="compile-button"
+                disabled={aiBusy || !aiPrompt.trim()}
+                title={
+                  aiQuota
+                    ? `AI quota: ${aiQuota.used}/${aiQuota.limit} this month`
+                    : 'Generate D2 from description'
+                }
+              >
+                {aiBusy ? 'Dreaming…' : 'Generate'}
+              </button>
+            </form>
             <div className="code-editor-wrap">
               <D2Editor value={code} onChange={handleCodeChange} />
             </div>
@@ -6625,6 +6734,20 @@ export function WhiteboardPage({
             setBoardTitle(meta.name);
           }}
           onClose={() => setShowRoomSettings(false)}
+        />
+      ) : null}
+      {showWorkspaces ? (
+        <WorkspacePanel
+          userToken={resolveUserToken()}
+          userId={session?.user.id ?? null}
+          currentRoomId={roomId}
+          onOpenRoom={(nextRoomId) => {
+            setShowWorkspaces(false);
+            if (nextRoomId !== roomId) {
+              router.push(`/board?room=${encodeURIComponent(nextRoomId)}`);
+            }
+          }}
+          onClose={() => setShowWorkspaces(false)}
         />
       ) : null}
       {showCreateRoom ? (

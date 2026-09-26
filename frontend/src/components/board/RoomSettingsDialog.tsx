@@ -1,12 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ApiError,
   updateRoom,
   type RoomMetadata,
 } from '@/lib/whiteboard/rooms-api';
 import { clearTicket } from '@/lib/whiteboard/tickets';
+import {
+  listWorkspaces,
+  moveRoom,
+  type WorkspaceWithRole,
+} from '@/lib/whiteboard/workspaces-api';
 
 export function RoomSettingsDialog({
   room,
@@ -25,6 +30,37 @@ export function RoomSettingsDialog({
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceWithRole[]>([]);
+  const [targetWorkspace, setTargetWorkspace] = useState<string>(
+    room.workspaceId ?? '',
+  );
+
+  useEffect(() => {
+    if (!userToken) return;
+    listWorkspaces(userToken)
+      .then(setWorkspaces)
+      .catch(() => undefined);
+  }, [userToken]);
+
+  const submitMove = async () => {
+    if (busy) return;
+    const next = targetWorkspace === '' ? null : targetWorkspace;
+    if (next === room.workspaceId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onUpdated(
+        (await moveRoom(room.id, ticket, userToken, {
+          workspaceId: next,
+        })) as unknown as RoomMetadata,
+      );
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not move board.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (clearPassword: boolean) => {
     if (busy) return;
@@ -138,6 +174,52 @@ export function RoomSettingsDialog({
             Cancel
           </button>
         </form>
+        {userToken && (workspaces.length > 0 || room.workspaceId) ? (
+          <div style={{ marginTop: 12 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                color: '#8a8ca3',
+                marginBottom: 6,
+              }}
+            >
+              Workspace
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <select
+                aria-label="Board workspace"
+                value={targetWorkspace}
+                onChange={(event) => setTargetWorkspace(event.target.value)}
+                style={{
+                  flex: 1,
+                  fontSize: 13,
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                }}
+              >
+                <option value="">Personal (no workspace)</option>
+                {workspaces.map((entry) => (
+                  <option key={entry.workspace.id} value={entry.workspace.id}>
+                    {entry.workspace.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="compile-button"
+                disabled={
+                  busy || (targetWorkspace || null) === room.workspaceId
+                }
+                onClick={() => void submitMove()}
+              >
+                Move
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

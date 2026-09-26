@@ -7,6 +7,8 @@ export type RoomMetadata = {
   name: string;
   ownerId: string;
   tier: RoomTier;
+  workspaceId: string | null;
+  folderId: string | null;
   hasPassword: boolean;
 };
 

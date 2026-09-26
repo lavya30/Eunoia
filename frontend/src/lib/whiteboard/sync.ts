@@ -46,6 +46,13 @@ type SyncSessionOptions = {
   roomId: string;
   serverUrl: string | null;
   ticket?: string;
+  /**
+   * Signed-in user token for workspace rooms: browsers can't set WS
+   * headers, so identity travels as a query param (same exposure class
+   * as the existing ?ticket=). Lets members sync locked team rooms
+   * without a room ticket.
+   */
+  userToken?: string;
   initialState: SyncBoardState;
   getInitialState?: () => SyncBoardState;
   onState: (state: SyncBoardState) => void;
@@ -282,6 +289,7 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
     roomId,
     serverUrl,
     ticket,
+    userToken,
   } = options;
   if (
     !serverUrl ||
@@ -407,9 +415,11 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
   const connect = () => {
     if (destroyed) return;
     onStatus(attempts > 0 ? 'reconnecting' : 'connecting');
-    const endpoint = ticket
-      ? `${serverUrl}/sync/${encodeURIComponent(roomId)}?ticket=${encodeURIComponent(ticket)}`
-      : `${serverUrl}/sync/${encodeURIComponent(roomId)}`;
+    const params = new URLSearchParams();
+    if (ticket) params.set('ticket', ticket);
+    if (userToken) params.set('userToken', userToken);
+    const query = params.size > 0 ? `?${params.toString()}` : '';
+    const endpoint = `${serverUrl}/sync/${encodeURIComponent(roomId)}${query}`;
     try {
       socket = new WebSocket(endpoint);
       socket.binaryType = 'arraybuffer';
