@@ -20,7 +20,7 @@ Eunoia is a high-performance, real-time collaborative whiteboard engine designed
 
 ## Positioning
 
-60 FPS infinite-canvas performance at 3,000+ shapes via SVG rendering with grid-cell spatial culling. Sub-50ms peer synchronization using decentralized CRDTs (Yjs binary delta encoding). First-class D2 code-to-canvas compilation producing fully interactive native vector elements rather than flat SVGs. True server-side persistence with compressed binary snapshots in PostgreSQL, eliminating local-storage limits and browser crash data loss.
+60 FPS infinite-canvas performance at 3,000+ shapes via SVG rendering with RBush R-Tree spatial culling. Sub-50ms peer synchronization using decentralized CRDTs (Yjs binary delta encoding). First-class D2 code-to-canvas compilation producing fully interactive native vector elements rather than flat SVGs. True server-side persistence with compressed binary snapshots in PostgreSQL, eliminating local-storage limits and browser crash data loss.
 
 ## Operating Context
 

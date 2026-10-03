@@ -1,0 +1,69 @@
+name: NFR nightly
+
+# Full NFR matrix (PRD §5, docs/SLO.md): E2E compile, latency matrix, room
+# soak, snapshot flush. Per-PR runs only the fast subset (see ci.yml).
+# Flake protocol: each gate retries once; artifacts keep the full output
+# plus every `RESULT {...}` JSON line for week-over-week regression
+# tracking (alert on >20% regression, not just budget breach). On the 2nd
+# consecutive nightly red, file an issue and freeze non-urgent deploys per
+# the SLO error-budget policy.
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nfr-nightly:
+    name: NFR full matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Frontend benches incl. NFR-1 FPS proxy + NFR-4 memory
+        working-directory: frontend
+        run: bun run bench 2>&1 | tee /tmp/nfr-frontend.log
+
+      - name: NFR-3 compile E2E (self-booted server, raised node cap)
+        working-directory: frontend
+        run: bun benchmarks/compile.bench.ts --e2e --spawn --iterations=20 2>&1 | tee /tmp/nfr-compile-e2e.log
+
+      - name: NFR-2 latency matrix (5 clients, 10 rooms, mixed payload)
+        working-directory: packages/sync-server
+        run: bun scripts/latency-probe.ts --samples=100 --clients=5 --rooms=10 --payload=mixed --json 2>&1 | tee /tmp/nfr-latency.log
+
+      - name: NFR-5 delta sizes
+        working-directory: packages/sync-server
+        run: bun scripts/delta-size.ts --samples=50 --json 2>&1 | tee /tmp/nfr-deltas.log
+
+      - name: NFR-6 room soak (100 rooms x 5 users)
+        working-directory: packages/sync-server
+        run: bun scripts/room-soak.ts --rooms=100 --rounds=3 --json 2>&1 | tee /tmp/nfr-soak.log
+
+      - name: NFR-7 snapshot flush (1MB)
+        working-directory: packages/sync-server
+        run: bun scripts/snapshot-flush.bench.ts --rounds=20 --json 2>&1 | tee /tmp/nfr-flush.log
+
+      - name: Upload NFR artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfr-nightly-logs
+          path: /tmp/nfr-*.log
+          retention-days: 90

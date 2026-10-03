@@ -9,7 +9,11 @@
     "lint": "eslint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "bench": "bun benchmarks/culling.bench.ts && bun benchmarks/compile.bench.ts"
+    "bench": "bun benchmarks/culling.bench.ts && bun benchmarks/compile.bench.ts && bun benchmarks/render-fps.bench.ts && bun benchmarks/memory.bench.ts",
+    "bench:fast": "bun benchmarks/culling.bench.ts && bun benchmarks/compile.bench.ts",
+    "bench:fps": "bun benchmarks/render-fps.bench.ts",
+    "bench:memory": "bun benchmarks/memory.bench.ts",
+    "bench:compile:e2e": "bun benchmarks/compile.bench.ts --e2e --spawn"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

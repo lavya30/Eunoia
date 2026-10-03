@@ -130,6 +130,7 @@ export function StatusPage() {
   // samples load in the mount effect below alongside the first probe.
   // nowTick follows the same path: wall-clock never runs during render.
   const [history, setHistory] = useState<ProbeSample[]>([]);
+  const [historySource, setHistorySource] = useState<'browser' | 'upptime'>('browser');
   const [nowTick, setNowTick] = useState(0);
 
   const load = useCallback(async () => {
@@ -173,6 +174,32 @@ export function StatusPage() {
     setHistory(loadHistory());
     setNowTick(Date.now());
     void load();
+    // Prefer the Upptime server-side history as the SLA record when the
+    // prober is live. Contract: GET returns ProbeSample[] ({t, up}).
+    // Unset or unreachable → fall back to the browser-kept 48h log.
+    const upptimeUrl = process.env.NEXT_PUBLIC_UPPTIME_HISTORY_URL;
+    if (upptimeUrl) {
+      fetch(upptimeUrl, { cache: 'no-store' })
+        .then(async (res) => {
+          if (!res.ok) return;
+          const parsed = (await res.json()) as unknown;
+          if (!Array.isArray(parsed)) return;
+          const cutoff = Date.now() - HISTORY_TTL_MS;
+          const samples = parsed.filter(
+            (sample): sample is ProbeSample =>
+              !!sample &&
+              typeof sample === 'object' &&
+              typeof (sample as ProbeSample).t === 'number' &&
+              typeof (sample as ProbeSample).up === 'boolean' &&
+              (sample as ProbeSample).t >= cutoff,
+          );
+          if (samples.length > 0) {
+            setHistory(samples);
+            setHistorySource('upptime');
+          }
+        })
+        .catch(() => undefined);
+    }
     const timer = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(timer);
   }, [load]);
@@ -310,7 +337,7 @@ export function StatusPage() {
               <span>Version {state.readiness.version}</span>
               <span>Uptime {formatUptime(state.readiness.uptimeSec)}</span>
             </div>
-            <HistorySection history={history} now={nowTick} />
+            <HistorySection history={history} now={nowTick} source={historySource} />
           </>
         ) : null}
 
@@ -327,13 +354,16 @@ export function StatusPage() {
 function HistorySection({
   history,
   now,
+  source,
 }: {
   history: ProbeSample[];
   now: number;
+  source: 'browser' | 'upptime';
 }) {
-  // Browser-kept probe log (30s cadence while this page is open, 48h cap).
-  // A hosted prober feed replaces this when SLA layer 4 goes live; the
-  // rendering contract (uptime % + incident spans) stays the same.
+  // Probe log: Upptime server-side history when the prober is live (the SLA
+  // record), otherwise the browser-kept log (30s cadence while this page is
+  // open, 48h cap). Rendering contract (uptime % + incident spans) is the
+  // same for both sources.
   const up =
     history.length > 0
       ? (history.filter((sample) => sample.up).length / history.length) * 100
@@ -367,7 +397,10 @@ function HistorySection({
         }}
       >
         Last 48 hours{' '}
-        {up !== null ? `· ${up.toFixed(up >= 99 ? 2 : 1)}% up` : ''}
+        {up !== null ? `· ${up.toFixed(up >= 99 ? 2 : 1)}% up` : ''}{' '}
+        <span style={{ fontWeight: 400, textTransform: 'none' }}>
+          · {source === 'upptime' ? 'prober history' : 'this browser'}
+        </span>
       </div>
       {strip.length > 0 ? (
         <div

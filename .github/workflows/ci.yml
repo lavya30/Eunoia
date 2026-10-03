@@ -100,10 +100,13 @@ jobs:
         run: bun test
 
   # ──────────────────────────────────────────────
-  # NFR perf gates (PRD §5): culling, compile, sync latency
+  # NFR perf gates, per-PR fast subset (PRD §5, docs/SLO.md).
+  # Full matrix (E2E compile, latency matrix, soak, flush) runs in
+  # nfr-nightly.yml. Flake protocol: retry once, upload the bench output
+  # as an artifact; file an issue on the 2nd consecutive nightly red.
   # ──────────────────────────────────────────────
-  nfr:
-    name: NFR perf gates
+  nfr-fast:
+    name: NFR fast gates (per-PR)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -117,10 +120,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Frontend benches (NFR-1 culling, NFR-3 compile)
+      - name: Frontend benches (NFR-1 culling + FPS proxy, NFR-3 unit, NFR-4 memory)
         working-directory: frontend
-        run: bun run bench
+        run: bun run bench:fast && bun run bench:fps && bun run bench:memory
 
-      - name: Sync latency probe (NFR-2, reduced samples on CI)
+      - name: Delta sizes (NFR-5)
+        working-directory: packages/sync-server
+        run: bun scripts/delta-size.ts --samples=50
+
+      - name: Sync latency smoke (NFR-2, reduced samples; full matrix is nightly)
         working-directory: packages/sync-server
         run: bun scripts/latency-probe.ts --samples=30

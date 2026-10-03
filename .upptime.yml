@@ -1,0 +1,37 @@
+# Upptime status-page + external prober configuration.
+#
+# At Pro launch, enable the Upptime GitHub workflow in this repo (or a
+# dedicated `status` repo — update `status-website.owner/repo` below). It
+# probes `/health` + `/readyz` at a 60s interval from 2+ regions and keeps
+# the server-side uptime history that backs SLA credits (docs/SLO.md).
+# Until then probing stays browser-local (see StatusPage.tsx).
+#
+# Replace `YOUR-PROD-HOST` with the production sync-server origin and set
+# the `GH_PAT` / `GH_TOKEN` secret for the Upptime workflow.
+
+owner: lavya30
+repo: Eunoia
+
+sites:
+  - name: Sync API (liveness)
+    url: https://YOUR-PROD-HOST/health
+    expectedStatusCodes: [200]
+  - name: Sync readiness
+    url: https://YOUR-PROD-HOST/readyz
+    expectedStatusCodes: [200]
+
+status-website:
+  # Base URL of the deployed status page (Upptime README action).
+  baseUrl: /Eunoia
+  logoUrl: https://raw.githubusercontent.com/lavya30/Eunoia/dev/frontend/public/logo.png
+  name: Eunoia status
+  introTitle: Eunoia real-time sync status
+  introMessage: Live availability of the sync API, readiness checks, and incident history.
+  navbar:
+    - title: App
+      url: https://YOUR-PROD-HOST
+
+# SLO: 99.9% over 30 days (~43m budget). ready/degraded count as up;
+# only `down`/unreachable open incidents (see docs/SLO.md).
+i18n:
+  footer: Eunoia · probes every 60s from 2+ regions · SLA record lives here once enabled

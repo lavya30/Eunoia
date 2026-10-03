@@ -42,11 +42,17 @@ checks: { database, redis, compiler, imageStorage } }`. Each check is
 
 ## External probing (status page backend)
 
-Point an external prober (e.g. Better Uptime, Upptime, or a Vercel cron
-hitting a third-party check) at `GET /readyz` from 2+ regions at 60s
-intervals. Alert on: unreachable, HTTP 503, or `status: "down"` for
+Upptime (`.upptime.yml`) is the prober: enable its workflow at Pro launch
+with the production origin filled in and the `GH_PAT` secret set. It hits
+`GET /health` + `GET /readyz` from 2+ regions at 60s intervals. Alert on:
+unreachable, HTTP 503, or `status: "down"` for
 
 > 3 consecutive probes. `degraded` pages low-priority (business hours).
+
+Set `NEXT_PUBLIC_UPPTIME_HISTORY_URL` (frontend env) to the Upptime
+history JSON endpoint (contract: `[{ t: <epochMs>, up: <bool> }]`); the
+`/status` page then renders prober history as the SLA record and falls
+back to its browser-kept 48h log when unset or unreachable.
 
 ## Scaling notes
 
