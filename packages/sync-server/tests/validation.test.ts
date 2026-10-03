@@ -57,7 +57,7 @@ describe("request schemas", () => {
     );
   });
 
-  test("rejects malformed responses from the D2 compiler", async () => {
+  test("falls back to a local layout on malformed compiler responses", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () =>
       new Response(JSON.stringify({ nodes: "not-an-array", edges: [] }), {
@@ -74,8 +74,31 @@ describe("request schemas", () => {
           nodeLimit: 30,
         },
       );
-      expect(result.placeholder).toBe(true);
+      expect(result.fallback).toBe(true);
+      expect(result.nodes.length).toBe(2);
       expect(result.error).toContain("invalid response");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("reports compiler unavailability in production instead of falling back", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      throw new Error("connection refused");
+    };
+    try {
+      await expect(
+        compileD2(
+          { source: "a -> b" },
+          {
+            compilerUrl: "http://compiler.test/compile",
+            isDevelopment: false,
+            tier: "COMMUNITY",
+            nodeLimit: 30,
+          },
+        ),
+      ).rejects.toMatchObject({ code: "D2_COMPILER_UNAVAILABLE" });
     } finally {
       globalThis.fetch = originalFetch;
     }

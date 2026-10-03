@@ -396,8 +396,8 @@ export const ENV_VARS_DOC = [
   {
     name: 'D2_COMPILER_URL',
     required: false,
-    defaultVal: '— (dev placeholder)',
-    description: 'HTTP endpoint of the Go D2 compiler microservice (e.g. http://d2-compiler:9400/compile).',
+    defaultVal: '— (dev fallback layout)',
+    description: 'HTTP endpoint of the Go D2 compiler microservice (e.g. http://d2-compiler:9400/compile). Without it the server serves a local fallback layout in development.',
   },
   {
     name: 'ROOM_TICKET_SECRET',

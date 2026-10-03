@@ -59,7 +59,7 @@ describe("HTTP API", () => {
 
   afterEach(async () => app.close());
 
-  test("creates rooms and returns a development D2 placeholder", async () => {
+  test("creates rooms and returns a development D2 fallback layout", async () => {
     const roomResponse = await fetch(`${baseUrl}/api/rooms`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -75,7 +75,16 @@ describe("HTTP API", () => {
       body: JSON.stringify({ source: "a -> b" }),
     });
     expect(compileResponse.status).toBe(200);
-    expect((await compileResponse.json()).placeholder).toBe(true);
+    const payload = (await compileResponse.json()) as {
+      fallback: boolean;
+      nodes: unknown[];
+      edges: unknown[];
+    };
+    // No compiler URL in tests: the built-in parser produces a usable grid
+    // layout instead of an empty placeholder.
+    expect(payload.fallback).toBe(true);
+    expect(payload.nodes.length).toBe(2);
+    expect(payload.edges.length).toBe(1);
   });
 
   test("returns structured validation errors for malformed requests", async () => {
@@ -177,10 +186,12 @@ describe("HTTP API", () => {
     expect(compileResponse.status).toBe(200);
     const payload = (await compileResponse.json()) as {
       engine: string;
-      placeholder: boolean;
+      fallback: boolean;
+      nodes: unknown[];
     };
     expect(payload.engine).toBe("elk");
-    expect(payload.placeholder).toBe(true);
+    expect(payload.fallback).toBe(true);
+    expect(payload.nodes.length).toBeGreaterThan(0);
   });
 
   test("rejects room tiers above the caller's on creation", async () => {

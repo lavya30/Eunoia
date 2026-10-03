@@ -8,10 +8,16 @@ import {
   type SnapshotStore,
   type StoredSnapshot,
 } from './RoomLoader.js';
-import { RedisTelemetry } from './redis.js';
+import { RedisTelemetry, type RoomTelemetry } from './redis.js';
 import { hashPassword, verifyPassword } from './room-auth.js';
 import type { SnapshotFlushReport } from './SnapshotWorker.js';
 import { SnapshotWorker } from './SnapshotWorker.js';
+
+export interface BusEvent {
+  direction: 'published' | 'received' | 'dropped';
+  kind: 'update' | 'awareness' | 'control' | 'unknown';
+  bytes: number;
+}
 
 export class RoomManager {
   private readonly rooms = new Map<string, Room>();
@@ -22,13 +28,28 @@ export class RoomManager {
     string,
     ReturnType<typeof setTimeout>
   >();
+  /** Stable per-process id: replicas filter their own bus messages by it. */
+  readonly instanceId = randomUUID();
 
   constructor(
     private readonly config: Config,
     private readonly store: SnapshotStore,
-    private readonly telemetry = new RedisTelemetry(config.redisUrl),
+    private readonly telemetry: RoomTelemetry = new RedisTelemetry(
+      config.redisUrl,
+    ),
     private readonly onSnapshotFlush?: (report: SnapshotFlushReport) => void,
-  ) {}
+    private readonly onBusEvent?: (event: BusEvent) => void,
+  ) {
+    this.telemetry.busSenderId = this.instanceId;
+    this.telemetry.busHooks = {
+      onPublish: (kind, bytes) =>
+        this.onBusEvent?.({ direction: 'published', kind, bytes }),
+      onReceive: (kind, bytes) =>
+        this.onBusEvent?.({ direction: 'received', kind, bytes }),
+      onDrop: (kind) =>
+        this.onBusEvent?.({ direction: 'dropped', kind, bytes: 0 }),
+    };
+  }
 
   async getOrCreate(roomId: string): Promise<Room> {
     if (this.closing) throw new Error('Server is shutting down');
@@ -126,6 +147,9 @@ export class RoomManager {
   /**
    * Roll a room back to one of its snapshots. Returns false when the room
    * or snapshot does not exist (or the snapshot belongs to another room).
+   * The restore is fanned out on the room bus so every replica swaps to the
+   * same snapshot and drops its peers — otherwise other instances would
+   * keep serving (and snapshotting) the pre-restore fork.
    */
   async restoreRoomSnapshot(
     roomId: string,
@@ -137,6 +161,15 @@ export class RoomManager {
     if (!snapshot || snapshot.roomId !== roomId) return false;
     const room = await this.getOrCreate(roomId);
     await room.restoreSnapshot(snapshot);
+    const control = Buffer.from(
+      JSON.stringify({ type: 'restore', snapshotId }),
+      'utf8',
+    );
+    await this.telemetry.publishBus(roomId, 'control', control).catch(() => {
+      // The local restore already happened; a missed broadcast only delays
+      // convergence until the next flush or reconnect (accepted degradation,
+      // same as cursor telemetry).
+    });
     return true;
   }
 
@@ -211,6 +244,18 @@ export class RoomManager {
         this.onSnapshotFlush,
       ),
       this.telemetry,
+      {
+        instanceId: this.instanceId,
+        // Cluster-wide restores arrive on the bus: re-read the snapshot
+        // from the shared store and run the same swap-and-drop procedure.
+        // Same-bytes double restores (racing HTTP + bus) are idempotent.
+        onRestoreRequest: async (snapshotId: string) => {
+          const snapshot = await this.store.getSnapshot(snapshotId);
+          if (!snapshot || snapshot.roomId !== roomId) return;
+          const live = this.rooms.get(roomId);
+          if (live) await live.restoreSnapshot(snapshot);
+        },
+      },
     );
     this.rooms.set(roomId, room);
     return room;

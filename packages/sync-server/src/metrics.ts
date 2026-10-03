@@ -99,6 +99,8 @@ export class Metrics {
   private readonly aiGenerations = new Map<string, number>();
   private readonly jevEvaluations = new Map<string, number>();
   private readonly wsUpgrades = new Map<string, number>();
+  private readonly busMessages = new Map<string, number>();
+  private readonly busBytes = new Map<string, number>();
 
   incHttp(method: string, pathname: string, status: HttpStatus): void {
     const key = `${groupRoute(method, pathname)}|${normalizeStatus(status)}`;
@@ -142,6 +144,20 @@ export class Metrics {
 
   incWsUpgrade(outcome: string): void {
     this.wsUpgrades.set(outcome, (this.wsUpgrades.get(outcome) ?? 0) + 1);
+  }
+
+  /**
+   * Cross-instance room-bus traffic. `direction` is "published" (this
+   * replica sent), "received" (validated envelope from a peer), or
+   * "dropped" (failed envelope validation). `kind` is the envelope kind
+   * ("update" | "awareness" | "control", or "unknown" for unparseable).
+   */
+  incBus(direction: string, kind: string, bytes: number): void {
+    const key = `${direction}|${kind}`;
+    this.busMessages.set(key, (this.busMessages.get(key) ?? 0) + 1);
+    if (direction !== 'dropped') {
+      this.busBytes.set(key, (this.busBytes.get(key) ?? 0) + bytes);
+    }
   }
 
   render(gauges: MetricsGauges): string {
@@ -237,6 +253,30 @@ export class Metrics {
     );
     for (const [outcome, count] of [...this.wsUpgrades.entries()].sort()) {
       lines.push(`eunoia_ws_upgrades_total{outcome="${outcome}"} ${count}`);
+    }
+    lines.push(
+      '# HELP eunoia_bus_messages_total Cross-instance room-bus messages by direction and kind.',
+      '# TYPE eunoia_bus_messages_total counter',
+    );
+    for (const [key, count] of [...this.busMessages.entries()].sort()) {
+      const separator = key.lastIndexOf('|');
+      const direction = key.slice(0, separator);
+      const kind = key.slice(separator + 1);
+      lines.push(
+        `eunoia_bus_messages_total{direction="${direction}",kind="${kind}"} ${count}`,
+      );
+    }
+    lines.push(
+      '# HELP eunoia_bus_bytes_total Cross-instance room-bus payload bytes by direction and kind.',
+      '# TYPE eunoia_bus_bytes_total counter',
+    );
+    for (const [key, total] of [...this.busBytes.entries()].sort()) {
+      const separator = key.lastIndexOf('|');
+      const direction = key.slice(0, separator);
+      const kind = key.slice(separator + 1);
+      lines.push(
+        `eunoia_bus_bytes_total{direction="${direction}",kind="${kind}"} ${total}`,
+      );
     }
     lines.push(
       '# HELP eunoia_active_rooms Rooms currently loaded in server memory.',

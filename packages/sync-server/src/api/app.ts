@@ -716,6 +716,9 @@ export function createApiApp(
       .get('/health', () => ({
         status: 'ok',
         version,
+        // Stable per-process id: verifies LB room-affinity distribution and
+        // identifies which replica served a probe in multi-instance deploys.
+        instanceId: manager.instanceId,
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         activeRooms: manager.activeRoomCount,
       }))
@@ -1251,7 +1254,7 @@ export function createApiApp(
         const started = Date.now();
         try {
           const result = await compileD2(
-            { source: input.source, engine },
+            { source: input.source, engine, svg: input.svg },
             {
               compilerUrl: config.d2CompilerUrl,
               isDevelopment: config.nodeEnv !== 'production',
@@ -1264,7 +1267,9 @@ export function createApiApp(
             engine,
             'placeholder' in result && result.placeholder
               ? 'placeholder'
-              : 'success',
+              : 'fallback' in result && result.fallback
+                ? 'fallback'
+                : 'success',
           );
           return result;
         } catch (error) {

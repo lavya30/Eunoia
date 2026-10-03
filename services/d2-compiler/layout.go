@@ -13,6 +13,7 @@ import (
 	"github.com/d2lang/d2/d2layouts/d2elklayout"
 	"github.com/d2lang/d2/d2layouts/d2talalayout"
 	"github.com/d2lang/d2/d2lib"
+	"github.com/d2lang/d2/d2renderers/d2svg"
 	"github.com/d2lang/d2/d2themes"
 	"github.com/d2lang/d2/d2themes/d2themescatalog"
 	"github.com/d2lang/d2/lib/color"
@@ -27,30 +28,66 @@ type server struct {
 }
 
 type nodeJSON struct {
-	Key         string         `json:"key"`
-	Label       string         `json:"label"`
-	Detail      string         `json:"detail,omitempty"`
-	X           float64        `json:"x"`
-	Y           float64        `json:"y"`
-	Width       float64        `json:"width"`
-	Height      float64        `json:"height"`
-	Shape       string         `json:"shape,omitempty"`
-	Style       map[string]any `json:"style,omitempty"`
-	StrokeWidth float64        `json:"strokeWidth,omitempty"`
+	Key           string         `json:"key"`
+	Label         string         `json:"label"`
+	Detail        string         `json:"detail,omitempty"`
+	X             float64        `json:"x"`
+	Y             float64        `json:"y"`
+	Width         float64        `json:"width"`
+	Height        float64        `json:"height"`
+	Shape         string         `json:"shape,omitempty"`
+	Style         map[string]any `json:"style,omitempty"`
+	StrokeWidth   float64        `json:"strokeWidth,omitempty"`
+	Parent        string         `json:"parent,omitempty"`
+	Level         int            `json:"level,omitempty"`
+	Opacity       float64        `json:"opacity,omitempty"`
+	StrokeDash    float64        `json:"strokeDash,omitempty"`
+	BorderRadius  int            `json:"borderRadius,omitempty"`
+	FontSize      int            `json:"fontSize,omitempty"`
+	FontColor     string         `json:"fontColor,omitempty"`
+	Bold          bool           `json:"bold,omitempty"`
+	Italic        bool           `json:"italic,omitempty"`
+	Underline     bool           `json:"underline,omitempty"`
+	LabelPosition string         `json:"labelPosition,omitempty"`
+	Link          string         `json:"link,omitempty"`
+	Tooltip       string         `json:"tooltip,omitempty"`
+	ZIndex        int            `json:"zIndex,omitempty"`
+}
+
+type routePointJSON struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
 
 type edgeJSON struct {
-	Key    string `json:"key"`
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Label  string `json:"label,omitempty"`
-	Color  string `json:"color,omitempty"`
+	Key             string           `json:"key"`
+	Source          string           `json:"source"`
+	Target          string           `json:"target"`
+	Label           string           `json:"label,omitempty"`
+	Color           string           `json:"color,omitempty"`
+	SrcArrow        string           `json:"srcArrow,omitempty"`
+	DstArrow        string           `json:"dstArrow,omitempty"`
+	SrcLabel        string           `json:"srcLabel,omitempty"`
+	DstLabel        string           `json:"dstLabel,omitempty"`
+	StrokeWidth     int              `json:"strokeWidth,omitempty"`
+	StrokeDash      float64          `json:"strokeDash,omitempty"`
+	Opacity         float64          `json:"opacity,omitempty"`
+	FontSize        int              `json:"fontSize,omitempty"`
+	LabelPosition   string           `json:"labelPosition,omitempty"`
+	LabelPercentage float64          `json:"labelPercentage,omitempty"`
+	Route           []routePointJSON `json:"route,omitempty"`
+	IsCurve         bool             `json:"isCurve,omitempty"`
+	ZIndex          int              `json:"zIndex,omitempty"`
 }
 
 type compileResponse struct {
 	Nodes  []nodeJSON `json:"nodes"`
 	Edges  []edgeJSON `json:"edges"`
 	Engine string     `json:"engine"`
+	// Rendered SVG document, only when the caller sets `svg: true`.
+	// Request-scoped (not stored): clients use it for export/thumbnail
+	// rasterization instead of re-rendering layout JSON client-side.
+	Svg string `json:"svg,omitempty"`
 }
 
 func dagreLayout() string { return "dagre" }
@@ -144,7 +181,23 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 		if stroke := resolveColor(shape.Stroke); stroke != "" {
 			style["stroke"] = stroke
 		}
-		resp.Nodes = append(resp.Nodes, nodeJSON{
+		if shape.Opacity != 0 && shape.Opacity != 1 {
+			style["opacity"] = shape.Opacity
+		}
+		if shape.StrokeDash != 0 {
+			style["stroke-dash"] = shape.StrokeDash
+		}
+		if shape.BorderRadius != 0 {
+			style["border-radius"] = shape.BorderRadius
+		}
+		if shape.FontSize != 0 {
+			style["font-size"] = shape.FontSize
+		}
+		fontColor := resolveColor(shape.Color)
+		if fontColor != "" {
+			style["font-color"] = fontColor
+		}
+		node := nodeJSON{
 			Key:         shape.ID,
 			Label:       shape.Label,
 			X:           float64(shape.Pos.X),
@@ -154,7 +207,33 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 			Shape:       strings.ToLower(shape.Type),
 			Style:       style,
 			StrokeWidth: float64(shape.StrokeWidth),
-		})
+			Level:       shape.Level,
+			Opacity:     shape.Opacity,
+			StrokeDash:  shape.StrokeDash,
+			FontSize:    shape.FontSize,
+			FontColor:   fontColor,
+			Bold:        shape.Bold,
+			Italic:      shape.Italic,
+			Underline:   shape.Underline,
+			ZIndex:      shape.ZIndex,
+		}
+		if idx := strings.LastIndex(shape.ID, "."); idx >= 0 {
+			node.Parent = shape.ID[:idx]
+		}
+		if shape.Tooltip != "" {
+			node.Detail = shape.Tooltip
+			node.Tooltip = shape.Tooltip
+		}
+		if shape.BorderRadius != 0 {
+			node.BorderRadius = shape.BorderRadius
+		}
+		if shape.LabelPosition != "" {
+			node.LabelPosition = shape.LabelPosition
+		}
+		if shape.Link != "" {
+			node.Link = shape.Link
+		}
+		resp.Nodes = append(resp.Nodes, node)
 	}
 	known := make(map[string]bool, len(resp.Nodes))
 	for _, n := range resp.Nodes {
@@ -167,13 +246,58 @@ func (s *server) handleCompile(w http.ResponseWriter, r *http.Request) {
 		if !known[conn.Src] || !known[conn.Dst] {
 			continue
 		}
-		resp.Edges = append(resp.Edges, edgeJSON{
-			Key:    conn.ID,
-			Source: conn.Src,
-			Target: conn.Dst,
-			Label:  conn.Label,
-			Color:  resolveColor(conn.Stroke),
-		})
+		edge := edgeJSON{
+			Key:             conn.ID,
+			Source:          conn.Src,
+			Target:          conn.Dst,
+			Label:           conn.Label,
+			Color:           resolveColor(conn.Stroke),
+			StrokeWidth:     conn.StrokeWidth,
+			StrokeDash:      conn.StrokeDash,
+			Opacity:         conn.Opacity,
+			FontSize:        conn.FontSize,
+			LabelPosition:   conn.LabelPosition,
+			LabelPercentage: conn.LabelPercentage,
+			IsCurve:         conn.IsCurve,
+			ZIndex:          conn.ZIndex,
+		}
+		if conn.SrcArrow != "" && conn.SrcArrow != "none" {
+			edge.SrcArrow = string(conn.SrcArrow)
+		}
+		if conn.DstArrow != "" && conn.DstArrow != "none" {
+			edge.DstArrow = string(conn.DstArrow)
+		}
+		if conn.SrcLabel != nil && conn.SrcLabel.Label != "" {
+			edge.SrcLabel = conn.SrcLabel.Label
+		}
+		if conn.DstLabel != nil && conn.DstLabel.Label != "" {
+			edge.DstLabel = conn.DstLabel.Label
+		}
+		for _, p := range conn.Route {
+			if p == nil {
+				continue
+			}
+			edge.Route = append(edge.Route, routePointJSON{X: p.X, Y: p.Y})
+		}
+		resp.Edges = append(resp.Edges, edge)
+	}
+
+	if req.Svg {
+		svgBytes, err := d2svg.Render(diagram, nil)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "",
+				"failed to render diagram SVG")
+			return
+		}
+		// Cap SVG payloads: they are 10-100x larger than layout JSON and
+		// only needed for export/thumbnail flows.
+		const maxSvgBytes = 2_000_000
+		if len(svgBytes) > maxSvgBytes {
+			writeError(w, http.StatusUnprocessableEntity, "",
+				fmt.Sprintf("rendered SVG exceeds %d bytes", maxSvgBytes))
+			return
+		}
+		resp.Svg = string(svgBytes)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

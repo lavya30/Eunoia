@@ -103,8 +103,12 @@ export function createSyncServer(
   // Metrics first: RoomManager reports every snapshot flush (NFR-7
   // durability signal) into this registry via the worker observer.
   const metrics = new Metrics();
-  const manager = new RoomManager(config, persistence, undefined, (report) =>
-    metrics.incSnapshot(report.outcome, report.durationMs),
+  const manager = new RoomManager(
+    config,
+    persistence,
+    undefined,
+    (report) => metrics.incSnapshot(report.outcome, report.durationMs),
+    (event) => metrics.incBus(event.direction, event.kind, event.bytes),
   );
   const users: UserStore =
     userStore ?? (prisma ? new PrismaUserStore(prisma) : new MemoryUserStore());
@@ -318,7 +322,7 @@ if (isMain) {
   const config = loadConfig();
   if (!config.d2CompilerUrl) {
     logger.warn(
-      'D2_COMPILER_URL is unset; /api/compile returns placeholder layouts. Start the compiler (docker compose up d2-compiler) and set D2_COMPILER_URL to enable real diagrams.',
+      'D2_COMPILER_URL is unset; /api/compile serves local fallback layouts (grid, no real D2 geometry). Start the compiler (docker compose up d2-compiler) and set D2_COMPILER_URL to enable full-fidelity diagrams.',
     );
   }
   if (config.aiApiKey && !isJevConfigured(config)) {

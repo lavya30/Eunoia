@@ -3,7 +3,7 @@
 // It wraps terrastruct/d2's layout engines behind a small HTTP API consumed
 // by the sync server (POST /api/compile forwards here):
 //
-//	POST /compile  {source, engine, tier} -> {nodes, edges, engine}
+//	POST /compile  {source, engine, tier, svg?} -> {nodes, edges, engine, svg?}
 //	GET  /healthz  -> {status, engines}
 //
 // Supported engines are dagre (default), elk, and tala — all bundled
@@ -42,6 +42,7 @@ type compileRequest struct {
 	Source string `json:"source"`
 	Engine string `json:"engine"`
 	Tier   string `json:"tier"`
+	Svg    bool   `json:"svg"`
 }
 
 type errorBody struct {

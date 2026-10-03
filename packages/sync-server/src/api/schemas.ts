@@ -179,6 +179,10 @@ export const CompileRequestSchema = z
     // Accepted for backwards compatibility, but deliberately ignored by the
     // route. The room's stored tier is authoritative.
     tier: TierSchema.optional(),
+    // When true the compiler also returns a rendered `svg` document for
+    // export/thumbnail use. Off by default: SVGs are 10-100x larger than the
+    // layout JSON the canvas needs per keystroke.
+    svg: z.boolean().optional(),
   })
   .strict();
 
@@ -227,6 +231,28 @@ export const CursorTelemetrySchema = z
       .optional(),
     tool: z.string().trim().max(64).optional(),
     timestamp: z.number().finite().optional(),
+  })
+  .strict();
+
+/**
+ * Cross-instance room-bus envelope (Redis `bus:{roomId}` channel).
+ * Binary payloads travel base64-encoded so the channel stays JSON-safe;
+ * the 8MB cap mirrors the WebSocket maxPayload bound.
+ */
+export const BusEnvelopeSchema = z
+  .object({
+    v: z.literal(1),
+    kind: z.enum(["update", "awareness", "control"]),
+    from: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH),
+    data: z.string().min(1).max(8_000_000),
+  })
+  .strict();
+
+/** Control payloads carried inside a bus envelope (`kind: "control"`). */
+export const BusControlSchema = z
+  .object({
+    type: z.enum(["restore"]),
+    snapshotId: z.string().trim().min(1).max(MAX_IMAGE_KEY_LENGTH),
   })
   .strict();
 

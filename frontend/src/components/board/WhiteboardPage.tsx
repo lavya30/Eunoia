@@ -5053,10 +5053,11 @@ export function WhiteboardPage({
         );
       }
       lastCompiledCodeRef.current = source;
-      if (diagram.placeholder) {
-        // Placeholder carries no layout, so there is nothing to reconcile.
-        // Never report this as a success: the board was left untouched and
-        // the user must know the compiler is not connected.
+      if (diagram.placeholder && diagram.nodes.length === 0) {
+        // Empty placeholder carries no layout, so there is nothing to
+        // reconcile. Never report this as a success: the board was left
+        // untouched and the user must know the compiler is not connected.
+        // (Legacy servers return this when D2_COMPILER_URL is unset.)
         const upstream =
           payload && typeof payload === 'object'
             ? (payload as Record<string, unknown>).error
@@ -5085,7 +5086,18 @@ export function WhiteboardPage({
       setArrows(next.arrows);
       setSelectedIds((current) => current.filter((id) => keptIds.has(id)));
       setCompileState('compiled');
-      setBoardError(null);
+      // Local fallback layouts render immediately but lack real D2 geometry
+      // (edge routing, containers, SVG fidelity) — say so instead of a
+      // silent success. Upstream errors ride along as `diagram.error`.
+      if (diagram.fallback) {
+        setBoardError(
+          diagram.error
+            ? `Showing a local fallback layout (compiler unreachable: ${diagram.error}). Start it with \`docker compose up d2-compiler\` for full fidelity.`
+            : 'Showing a local fallback layout. Start the D2 compiler with `docker compose up d2-compiler` for full fidelity.',
+        );
+      } else {
+        setBoardError(null);
+      }
       setD2Diagnostics([]);
       // Reconcile is a local op: capture it so undo restores the
       // pre-compile arrangement without touching peer edits.

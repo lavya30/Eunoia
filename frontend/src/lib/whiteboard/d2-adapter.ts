@@ -19,18 +19,36 @@ const MAX_EDGES = 2000;
 
 export type D2AdaptedNode = Omit<BoardNode, 'id'> & { key: string };
 
+export type D2RoutePoint = { x: number; y: number };
+
 export type D2AdaptedEdge = {
   key: string;
   fromKey: string;
   toKey: string;
   label: string;
   color: string;
+  srcArrow?: string;
+  dstArrow?: string;
+  srcLabel?: string;
+  dstLabel?: string;
+  strokeWidth?: number;
+  strokeDash?: number;
+  opacity?: number;
+  fontSize?: number;
+  labelPosition?: string;
+  labelPercentage?: number;
+  route?: D2RoutePoint[];
+  isCurve?: boolean;
+  z?: number;
 };
 
 export type D2ParsedDiagram = {
   nodes: D2AdaptedNode[];
   edges: D2AdaptedEdge[];
   placeholder: boolean;
+  fallback?: boolean;
+  svg?: string;
+  error?: string;
   engine?: string;
 };
 
@@ -116,6 +134,10 @@ function readStyle(record: Record<string, unknown>): {
   fill?: string;
   stroke?: string;
   strokeWidth?: number;
+  opacity?: number;
+  strokeDash?: number;
+  fontSize?: number;
+  fontColor?: string;
 } {
   const style =
     record.style && typeof record.style === 'object'
@@ -126,11 +148,28 @@ function readStyle(record: Record<string, unknown>): {
   const strokeWidthRaw = asFinite(
     record.strokeWidth ?? style?.['stroke-width'],
   );
+  const opacityRaw = asFinite(record.opacity ?? style?.opacity);
+  const strokeDashRaw = asFinite(
+    record.strokeDash ?? style?.['stroke-dash'],
+  );
+  const fontSizeRaw = asFinite(record.fontSize ?? style?.['font-size']);
+  const fontColorRaw = asString(
+    record.fontColor ?? style?.['font-color'] ?? style?.color,
+  );
   return {
     fill: fillRaw ? fillRaw.slice(0, 32) : undefined,
     stroke: strokeRaw ? strokeRaw.slice(0, 32) : undefined,
     strokeWidth:
       strokeWidthRaw === null ? undefined : clamp(strokeWidthRaw, 0.5, 24),
+    opacity:
+      opacityRaw === null ? undefined : clamp(opacityRaw, 0, 1),
+    strokeDash:
+      strokeDashRaw === null ? undefined : clamp(strokeDashRaw, 0, 10),
+    fontSize:
+      fontSizeRaw === null
+        ? undefined
+        : Math.round(clamp(fontSizeRaw, 8, 100)),
+    fontColor: fontColorRaw ? fontColorRaw.slice(0, 32) : undefined,
   };
 }
 
@@ -142,9 +181,10 @@ function adaptNode(
   if (!key) return null;
   const label = asString(record.label, key).slice(0, 500);
   const detail = asString(
-    record.detail ?? record.description ?? record.subtitle,
+    record.detail ?? record.description ?? record.subtitle ?? record.tooltip,
   ).slice(0, 500);
-  const { fill, stroke, strokeWidth } = readStyle(record);
+  const { fill, stroke, strokeWidth, opacity, strokeDash, fontSize } =
+    readStyle(record);
   // Fall back to a staggered grid slot when the compiler omits coordinates
   // so nodes never stack invisibly at the origin.
   const fallbackX = 120 + (fallbackIndex % 5) * 240;
@@ -153,6 +193,8 @@ function adaptNode(
   const y = clamp(asFinite(record.y) ?? fallbackY, -100000, 100000);
   const width = clamp(asFinite(record.width) ?? 190, 24, 4000);
   const height = clamp(asFinite(record.height) ?? 90, 16, 4000);
+  const zRaw = asFinite(record.z ?? record.zIndex);
+  const href = asString(record.link ?? record.href).slice(0, 2000) || undefined;
   return {
     key,
     label,
@@ -166,6 +208,12 @@ function adaptNode(
     fill,
     stroke,
     strokeWidth,
+    opacity,
+    dashed: strokeDash !== undefined ? strokeDash !== 0 : undefined,
+    fontSize,
+    href,
+    z:
+      zRaw === null ? undefined : Math.round(clamp(zRaw, -100000, 100000)),
   };
 }
 
@@ -187,12 +235,58 @@ function adaptEdge(
     suffix += 1;
   }
   seenIds.add(key);
+  const strokeWidthRaw = asFinite(record.strokeWidth);
+  const strokeDashRaw = asFinite(record.strokeDash);
+  const opacityRaw = asFinite(record.opacity);
+  const fontSizeRaw = asFinite(record.fontSize);
+  const labelPercentageRaw = asFinite(
+    record.labelPercentage ?? record.labelpercentage,
+  );
+  const zRaw = asFinite(record.z ?? record.zIndex);
+  let route: D2RoutePoint[] | undefined;
+  if (Array.isArray(record.route)) {
+    const points: D2RoutePoint[] = [];
+    for (const raw of (record.route as unknown[]).slice(0, 256)) {
+      if (!raw || typeof raw !== 'object') continue;
+      const point = raw as Record<string, unknown>;
+      const x = asFinite(point.x);
+      const y = asFinite(point.y);
+      if (x === null || y === null) continue;
+      points.push({
+        x: clamp(x, -1000000, 1000000),
+        y: clamp(y, -1000000, 1000000),
+      });
+    }
+    if (points.length >= 2) route = points;
+  }
   return {
     key,
     fromKey,
     toKey,
     label: asString(record.label).slice(0, 200),
     color: asString(record.color || record.stroke, '#6b7192').slice(0, 32),
+    srcArrow: asString(record.srcArrow || record.srcarrow) || undefined,
+    dstArrow: asString(record.dstArrow || record.dstarrow) || undefined,
+    srcLabel: asString(record.srcLabel ?? record.srclabel) || undefined,
+    dstLabel: asString(record.dstLabel ?? record.dstlabel) || undefined,
+    strokeWidth:
+      strokeWidthRaw === null ? undefined : clamp(strokeWidthRaw, 0.5, 24),
+    strokeDash:
+      strokeDashRaw === null ? undefined : clamp(strokeDashRaw, 0, 10),
+    opacity: opacityRaw === null ? undefined : clamp(opacityRaw, 0, 1),
+    fontSize:
+      fontSizeRaw === null
+        ? undefined
+        : Math.round(clamp(fontSizeRaw, 8, 100)),
+    labelPosition: asString(record.labelPosition) || undefined,
+    labelPercentage:
+      labelPercentageRaw === null
+        ? undefined
+        : clamp(labelPercentageRaw, 0, 1),
+    route,
+    isCurve:
+      typeof record.isCurve === 'boolean' ? record.isCurve : undefined,
+    z: zRaw === null ? undefined : Math.round(clamp(zRaw, -100000, 100000)),
   };
 }
 
@@ -205,6 +299,9 @@ export function parseCompileResponse(payload: unknown): D2ParsedDiagram | null {
   const body = payload as Record<string, unknown>;
   if (!Array.isArray(body.nodes) || !Array.isArray(body.edges)) return null;
   const placeholder = body.placeholder === true;
+  const fallback = body.fallback === true;
+  const svg = typeof body.svg === 'string' ? body.svg : undefined;
+  const error = typeof body.error === 'string' ? body.error : undefined;
   const engine = typeof body.engine === 'string' ? body.engine : undefined;
 
   const nodes: D2AdaptedNode[] = [];
@@ -222,7 +319,7 @@ export function parseCompileResponse(payload: unknown): D2ParsedDiagram | null {
     if (adapted) edges.push(adapted);
   }
 
-  return { nodes, edges, placeholder, engine };
+  return { nodes, edges, placeholder, fallback, svg, error, engine };
 }
 
 export type D2AnchorResolver = (node: BoardNode, targetPoint: Point) => Point;
@@ -268,6 +365,11 @@ export function reconcileDiagram(
       fill: adapted.fill ?? node.fill,
       stroke: adapted.stroke ?? node.stroke,
       strokeWidth: adapted.strokeWidth ?? node.strokeWidth,
+      opacity: adapted.opacity ?? node.opacity,
+      dashed: adapted.dashed ?? node.dashed,
+      fontSize: adapted.fontSize ?? node.fontSize,
+      href: adapted.href ?? node.href,
+      z: adapted.z ?? node.z,
     };
     nextNodes.push(merged);
     nodeById.set(merged.id, merged);
@@ -289,6 +391,11 @@ export function reconcileDiagram(
       fill: adapted.fill,
       stroke: adapted.stroke,
       strokeWidth: adapted.strokeWidth,
+      opacity: adapted.opacity,
+      dashed: adapted.dashed,
+      fontSize: adapted.fontSize,
+      href: adapted.href,
+      z: adapted.z,
     };
     nextNodes.push(created);
     nodeById.set(id, created);
@@ -323,7 +430,13 @@ export function reconcileDiagram(
     // A dangling edge (endpoint deleted) is dropped like a deleted node —
     // keeping stale geometry would leave an unselectable ghost.
     if (!rebound) continue;
-    nextArrows.push({ ...arrow, ...rebound });
+    nextArrows.push({
+      ...arrow,
+      ...rebound,
+      color: adapted.color,
+      routing: adapted.isCurve ? 'curved' : arrow.routing,
+      z: adapted.z ?? arrow.z,
+    });
   }
 
   for (const adapted of diagram.edges) {
@@ -337,7 +450,13 @@ export function reconcileDiagram(
       centerOf,
     );
     if (!rebound) continue; // Endpoint missing — skip dangling edges.
-    nextArrows.push({ id, color: adapted.color, ...rebound });
+    nextArrows.push({
+      id,
+      color: adapted.color,
+      routing: adapted.isCurve ? 'curved' : undefined,
+      z: adapted.z,
+      ...rebound,
+    });
   }
 
   return { nodes: nextNodes, arrows: nextArrows };

@@ -89,7 +89,7 @@ describe('health, readiness, and metrics', () => {
     });
     const text = await (await fetch(`${baseUrl}/metrics`)).text();
     expect(text).toContain(
-      'eunoia_compile_requests_total{engine="dagre",outcome="placeholder"} 1',
+      'eunoia_compile_requests_total{engine="dagre",outcome="fallback"} 1',
     );
     expect(text).toContain(
       'eunoia_compile_duration_ms_count{engine="dagre"} 1',

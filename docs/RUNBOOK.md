@@ -50,11 +50,62 @@ intervals. Alert on: unreachable, HTTP 503, or `status: "down"` for
 
 ## Scaling notes
 
-- Single sync-server replica in compose; scale horizontally behind Redis
-  (cursor fan-out already pub/sub). No sticky sessions required for HTTP;
-  WebSocket rooms are per-connection in-memory (a reconnect resyncs).
+- Multi-instance is supported via the Redis room bus: every replica
+  publishes Yjs doc updates, awareness (presence), and restore control
+  messages on `bus:{roomId}` (plus the legacy `cursor:{roomId}` channel),
+  so any number of replicas can serve clients in the same room without
+  forking the doc. **The bus is dormant without `REDIS_URL`** — set it in
+  every replica or they silently run as isolated singletons.
+- Recommended topology is bus **plus** sticky sessions: pin each room's
+  WebSockets to one replica for locality (the bus then only carries
+  overflow/rebalance traffic instead of every keystroke). Example with
+  Traefik — the cookie is set on the HTTP upgrade handshake, so plain
+  WebSocket clients get affinity with no client changes:
+  ```yaml
+  # traefik dynamic config (file provider)
+  http:
+    services:
+      sync-server:
+        weighted:
+          services:
+            - { name: sync-1@docker, weight: 1 }
+            - { name: sync-2@docker, weight: 1 }
+          sticky:
+            cookie:
+              name: eunoia_affinity
+              secure: true
+              httpOnly: true
+  ```
+  nginx equivalent: `upstream sync { hash $arg_room consistent; ... }`
+  on `/sync/` + `/api/rooms/:id/sync` (path-arg consistent hashing), or
+  the `sticky` cookie directive. HTTP API routes are stateless and need
+  no affinity.
+- Room affinity is best-effort by design: when a replica dies or a room
+  rebalances, clients reconnect (exponential backoff in `sync.ts`) and
+  resync via Yjs state vectors against whichever replica answers. A newly
+  loaded replica may be up to `SNAPSHOT_DEBOUNCE_MS` stale; the connecting
+  clients' own state heals it during the handshake — no catch-up protocol.
+- Observability per replica: `/health` reports a stable `instanceId`
+  (verify affinity distribution by polling each replica); `/metrics`
+  exposes `eunoia_bus_messages_total` / `eunoia_bus_bytes_total` by
+  direction (`published|received|dropped`) and kind
+  (`update|awareness|control`). A rising `dropped` direction means
+  malformed cross-instance traffic — investigate, don't ignore.
+- Graceful shutdown is already final-flush (`SIGTERM`/`SIGINT` →
+  `manager.shutdown()` → per-room snapshot dispose). Behind an
+  orchestrator add a drain window so the LB stops routing first:
+  ```yaml
+  # Kubernetes example
+  lifecycle:
+    preStop:
+      exec: { command: ["sleep", "15"] }
+  terminationGracePeriodSeconds: 60
+  ```
 - Snapshot tuning: `SNAPSHOT_DEBOUNCE_MS`, `SNAPSHOT_MAX_PER_ROOM`,
-  `SNAPSHOT_RETENTION_DAYS`, `ROOM_IDLE_TIMEOUT_MS`.
+  `SNAPSHOT_RETENTION_DAYS`, `ROOM_IDLE_TIMEOUT_MS`. Note: with N
+  replicas, debounced flushes happen on each (last-writer-wins on
+  near-identical bytes); retention pruning is bounded by
+  `SNAPSHOT_MAX_PER_ROOM` per the shared policy.
 - Compiler tuning: `MAX_CONCURRENT_COMPILES`, `COMPILE_TIMEOUT_SEC`,
   `MAX_SOURCE_BYTES` (d2-compiler env).
 
