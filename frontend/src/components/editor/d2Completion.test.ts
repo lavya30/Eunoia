@@ -34,15 +34,11 @@ describe('getCompletionContext', () => {
     expect(ctx(['server: {', '  style: {', '    '], 2, '    ').type).toBe(
       'style-value',
     );
-    expect(ctx(['style.fill: r'], 0, 'style.fill: r').type).toBe(
-      'style-value',
-    );
+    expect(ctx(['style.fill: r'], 0, 'style.fill: r').type).toBe('style-value');
   });
 
   test('direction value position offers directions', () => {
-    expect(ctx(['direction: '], 0, 'direction: ').type).toBe(
-      'direction-value',
-    );
+    expect(ctx(['direction: '], 0, 'direction: ').type).toBe('direction-value');
   });
 
   test('arrowhead value positions offer arrowheads', () => {
@@ -50,8 +46,10 @@ describe('getCompletionContext', () => {
       ctx(['a -> b: {', '  target-arrowhead: '], 1, '  target-arrowhead: ')
         .type,
     ).toBe('arrowhead-value');
-    expect(ctx(['a -> b: {', '  source-arrowhead: d'], 1, '  source-arrowhead: d')
-      .type).toBe('arrowhead-value');
+    expect(
+      ctx(['a -> b: {', '  source-arrowhead: d'], 1, '  source-arrowhead: d')
+        .type,
+    ).toBe('arrowhead-value');
   });
 
   test('connection target offers node references', () => {
@@ -138,10 +136,10 @@ describe('buildSuggestions', () => {
   });
 
   test('key context mixes keywords, identifiers, shapes, snippets', () => {
-    const suggestions = buildSuggestions(
-      { type: 'key', parentKey: null },
-      ['web', 'db'],
-    );
+    const suggestions = buildSuggestions({ type: 'key', parentKey: null }, [
+      'web',
+      'db',
+    ]);
     const labels = suggestions.map((s) => s.label);
     for (const kw of D2_KEYWORDS) expect(labels).toContain(kw);
     expect(labels).toContain('web');

@@ -66,9 +66,7 @@ export function D2Panel({
         </button>
       </div>
       <div className="code-panel-status">
-        <span
-          className={`code-status-dot code-status-dot--${compileState}`}
-        />
+        <span className={`code-status-dot code-status-dot--${compileState}`} />
         <span>
           {compileState === 'draft'
             ? 'Draft changes'

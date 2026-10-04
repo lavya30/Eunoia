@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createSyncServer, type SyncServer } from '../src/index.js';
-import { groupRoute } from '../src/metrics.js';
-import { MemorySnapshotStore } from '../src/RoomLoader.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createSyncServer, type SyncServer } from "../src/index.js";
+import { groupRoute } from "../src/metrics.js";
+import { MemorySnapshotStore } from "../src/RoomLoader.js";
 
 function testConfig() {
   return {
     port: 0,
-    host: '127.0.0.1',
-    nodeEnv: 'test' as const,
+    host: "127.0.0.1",
+    nodeEnv: "test" as const,
     snapshotDebounceMs: 10,
     roomIdleTimeoutMs: 10,
     d2CommunityNodeLimit: 30,
@@ -20,24 +20,24 @@ function testConfig() {
   };
 }
 
-describe('health, readiness, and metrics', () => {
+describe("health, readiness, and metrics", () => {
   let app: SyncServer;
   let baseUrl: string;
 
   beforeEach(async () => {
     app = createSyncServer(testConfig(), new MemorySnapshotStore());
     await new Promise<void>((resolve) =>
-      app.server.listen(0, '127.0.0.1', resolve),
+      app.server.listen(0, "127.0.0.1", resolve),
     );
     const address = app.server.address();
-    if (!address || typeof address === 'string')
-      throw new Error('Server did not bind');
+    if (!address || typeof address === "string")
+      throw new Error("Server did not bind");
     baseUrl = `http://127.0.0.1:${address.port}`;
   });
 
   afterEach(async () => app.close());
 
-  test('GET /health reports liveness with version and uptime', async () => {
+  test("GET /health reports liveness with version and uptime", async () => {
     const response = await fetch(`${baseUrl}/health`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
@@ -46,13 +46,13 @@ describe('health, readiness, and metrics', () => {
       uptimeSec: number;
       activeRooms: number;
     };
-    expect(body.status).toBe('ok');
-    expect(typeof body.version).toBe('string');
+    expect(body.status).toBe("ok");
+    expect(typeof body.version).toBe("string");
     expect(body.uptimeSec).toBeGreaterThanOrEqual(0);
     expect(body.activeRooms).toBe(0);
   });
 
-  test('GET /readyz is ready when optional deps are unconfigured', async () => {
+  test("GET /readyz is ready when optional deps are unconfigured", async () => {
     const response = await fetch(`${baseUrl}/readyz`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
@@ -60,32 +60,32 @@ describe('health, readiness, and metrics', () => {
       version: string;
       checks: Record<string, { status: string }>;
     };
-    expect(body.status).toBe('ready');
-    expect(body.checks.database.status).toBe('skipped');
-    expect(body.checks.redis.status).toBe('skipped');
-    expect(body.checks.compiler.status).toBe('skipped');
-    expect(body.checks.imageStorage.status).toBe('skipped');
+    expect(body.status).toBe("ready");
+    expect(body.checks.database.status).toBe("skipped");
+    expect(body.checks.redis.status).toBe("skipped");
+    expect(body.checks.compiler.status).toBe("skipped");
+    expect(body.checks.imageStorage.status).toBe("skipped");
   });
 
-  test('GET /metrics exposes Prometheus counters and gauges', async () => {
+  test("GET /metrics exposes Prometheus counters and gauges", async () => {
     await fetch(`${baseUrl}/health`);
     const response = await fetch(`${baseUrl}/metrics`);
     expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toContain('text/plain');
+    expect(response.headers.get("content-type")).toContain("text/plain");
     const text = await response.text();
-    expect(text).toContain('eunoia_http_requests_total');
+    expect(text).toContain("eunoia_http_requests_total");
     expect(text).toContain('route="GET /health"');
-    expect(text).toContain('eunoia_compile_requests_total');
-    expect(text).toContain('eunoia_active_rooms 0');
-    expect(text).toContain('eunoia_ws_connections');
-    expect(text).toContain('eunoia_uptime_seconds');
+    expect(text).toContain("eunoia_compile_requests_total");
+    expect(text).toContain("eunoia_active_rooms 0");
+    expect(text).toContain("eunoia_ws_connections");
+    expect(text).toContain("eunoia_uptime_seconds");
   });
 
-  test('compile requests are counted by engine and outcome', async () => {
+  test("compile requests are counted by engine and outcome", async () => {
     await fetch(`${baseUrl}/api/compile`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ source: 'a -> b' }),
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: "a -> b" }),
     });
     const text = await (await fetch(`${baseUrl}/metrics`)).text();
     expect(text).toContain(
@@ -96,25 +96,25 @@ describe('health, readiness, and metrics', () => {
     );
   });
 
-  test('snapshot flushes are counted with durations (NFR-7)', async () => {
+  test("snapshot flushes are counted with durations (NFR-7)", async () => {
     const create = (await (
       await fetch(`${baseUrl}/api/rooms`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({}),
       })
     ).json()) as { id: string };
     // Mutate the live doc so the debounced snapshot worker flushes.
     const room = await app.manager.getOrCreate(create.id);
-    room.doc.getMap('canvas').set('nfr7', { type: 'rectangle' });
+    room.doc.getMap("canvas").set("nfr7", { type: "rectangle" });
     await new Promise((resolve) => setTimeout(resolve, 80));
     const text = await (await fetch(`${baseUrl}/metrics`)).text();
     expect(text).toContain('eunoia_snapshot_flush_total{outcome="success"}');
-    expect(text).toContain('eunoia_snapshot_flush_duration_ms_count');
+    expect(text).toContain("eunoia_snapshot_flush_duration_ms_count");
   });
 });
 
-describe('readiness down state', () => {
+describe("readiness down state", () => {
   let app: SyncServer;
   let baseUrl: string;
 
@@ -125,60 +125,60 @@ describe('readiness down state', () => {
       undefined,
       undefined,
       {
-        checkDatabase: async () => ({ status: 'error', detail: 'boom' }),
-        checkRedis: async () => ({ status: 'skipped' }),
-        checkCompiler: async () => ({ status: 'skipped' }),
+        checkDatabase: async () => ({ status: "error", detail: "boom" }),
+        checkRedis: async () => ({ status: "skipped" }),
+        checkCompiler: async () => ({ status: "skipped" }),
       },
     );
     await new Promise<void>((resolve) =>
-      app.server.listen(0, '127.0.0.1', resolve),
+      app.server.listen(0, "127.0.0.1", resolve),
     );
     const address = app.server.address();
-    if (!address || typeof address === 'string')
-      throw new Error('Server did not bind');
+    if (!address || typeof address === "string")
+      throw new Error("Server did not bind");
     baseUrl = `http://127.0.0.1:${address.port}`;
   });
 
   afterEach(async () => app.close());
 
-  test('GET /readyz returns 503 when the database check fails', async () => {
+  test("GET /readyz returns 503 when the database check fails", async () => {
     const response = await fetch(`${baseUrl}/readyz`);
     expect(response.status).toBe(503);
     const body = (await response.json()) as { status: string };
-    expect(body.status).toBe('down');
+    expect(body.status).toBe("down");
   });
 });
 
-describe('groupRoute', () => {
-  test('collapses ids to templates and groups websocket paths', () => {
-    expect(groupRoute('GET', '/health')).toBe('GET /health');
-    expect(groupRoute('GET', '/api/rooms/abc')).toBe('GET /api/rooms/:roomId');
-    expect(groupRoute('GET', '/api/rooms/abc/images/img-1/bytes')).toBe(
-      'GET /api/rooms/:roomId/images/:imageId/bytes',
+describe("groupRoute", () => {
+  test("collapses ids to templates and groups websocket paths", () => {
+    expect(groupRoute("GET", "/health")).toBe("GET /health");
+    expect(groupRoute("GET", "/api/rooms/abc")).toBe("GET /api/rooms/:roomId");
+    expect(groupRoute("GET", "/api/rooms/abc/images/img-1/bytes")).toBe(
+      "GET /api/rooms/:roomId/images/:imageId/bytes",
     );
-    expect(groupRoute('POST', '/api/rooms/abc/snapshots/s1/restore')).toBe(
-      'POST /api/rooms/:roomId/snapshots/:snapshotId/restore',
+    expect(groupRoute("POST", "/api/rooms/abc/snapshots/s1/restore")).toBe(
+      "POST /api/rooms/:roomId/snapshots/:snapshotId/restore",
     );
-    expect(groupRoute('GET', '/sync/abc')).toBe('WS /sync');
-    expect(groupRoute('POST', '/api/compile')).toBe('POST /api/compile');
-    expect(groupRoute('GET', '/api/workspaces')).toBe('GET /api/workspaces');
-    expect(groupRoute('POST', '/api/workspaces')).toBe('POST /api/workspaces');
-    expect(groupRoute('GET', '/api/workspaces/w1')).toBe(
-      'GET /api/workspaces/:id',
+    expect(groupRoute("GET", "/sync/abc")).toBe("WS /sync");
+    expect(groupRoute("POST", "/api/compile")).toBe("POST /api/compile");
+    expect(groupRoute("GET", "/api/workspaces")).toBe("GET /api/workspaces");
+    expect(groupRoute("POST", "/api/workspaces")).toBe("POST /api/workspaces");
+    expect(groupRoute("GET", "/api/workspaces/w1")).toBe(
+      "GET /api/workspaces/:id",
     );
-    expect(groupRoute('POST', '/api/workspaces/w1/members')).toBe(
-      'POST /api/workspaces/:id/members',
+    expect(groupRoute("POST", "/api/workspaces/w1/members")).toBe(
+      "POST /api/workspaces/:id/members",
     );
-    expect(groupRoute('POST', '/api/rooms/r1/move')).toBe(
-      'POST /api/rooms/:roomId/move',
+    expect(groupRoute("POST", "/api/rooms/r1/move")).toBe(
+      "POST /api/rooms/:roomId/move",
     );
-    expect(groupRoute('GET', '/api/audit')).toBe('GET /api/audit');
-    expect(groupRoute('GET', '/api/billing/prices')).toBe(
-      'GET /api/billing/prices',
+    expect(groupRoute("GET", "/api/audit")).toBe("GET /api/audit");
+    expect(groupRoute("GET", "/api/billing/prices")).toBe(
+      "GET /api/billing/prices",
     );
-    expect(groupRoute('POST', '/api/billing/checkout')).toBe(
-      'POST /api/billing/checkout',
+    expect(groupRoute("POST", "/api/billing/checkout")).toBe(
+      "POST /api/billing/checkout",
     );
-    expect(groupRoute('GET', '/nope')).toBe('OTHER');
+    expect(groupRoute("GET", "/nope")).toBe("OTHER");
   });
 });

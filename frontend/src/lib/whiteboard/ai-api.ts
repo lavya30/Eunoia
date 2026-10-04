@@ -47,11 +47,7 @@ async function postAi(
 ): Promise<GenerateResponse> {
   const authToken = options.token ?? getSessionToken();
   if (!authToken) {
-    throw new ApiError(
-      401,
-      'Sign in to use AI features.',
-      'AUTH_REQUIRED',
-    );
+    throw new ApiError(401, 'Sign in to use AI features.', 'AUTH_REQUIRED');
   }
   const url = `${baseUrl()}${path}`;
   let response: Response;

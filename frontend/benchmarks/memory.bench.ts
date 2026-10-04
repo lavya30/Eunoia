@@ -62,7 +62,13 @@ index.rebuild(
     minY: n.y,
     maxX: n.x + n.width,
     maxY: n.y + n.height,
-    value: { id: n.id, minX: n.x, minY: n.y, maxX: n.x + n.width, maxY: n.y + n.height },
+    value: {
+      id: n.id,
+      minX: n.x,
+      minY: n.y,
+      maxX: n.x + n.width,
+      maxY: n.y + n.height,
+    },
   })),
 );
 
@@ -104,10 +110,14 @@ console.log(
     `(budget heapTotal < ${mb(BUDGET_BYTES)}, NFR-4)`,
 );
 if (process.env.PLAYWRIGHT === '1') {
-  console.log('PLAYWRIGHT=1 browser variant: no served fixture yet — Bun proxy reported above.');
+  console.log(
+    'PLAYWRIGHT=1 browser variant: no served fixture yet — Bun proxy reported above.',
+  );
 }
 if (heapAfter > BUDGET_BYTES) {
-  console.error(`GATE FAIL: heap ${mb(heapAfter)} exceeds ${mb(BUDGET_BYTES)} (NFR-4)`);
+  console.error(
+    `GATE FAIL: heap ${mb(heapAfter)} exceeds ${mb(BUDGET_BYTES)} (NFR-4)`,
+  );
   process.exitCode = 1;
 } else {
   console.log('done.');

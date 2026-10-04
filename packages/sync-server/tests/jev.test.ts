@@ -37,7 +37,12 @@ function jevOkResponse(overrides: Record<string, unknown> = {}) {
         complexity: {
           type: "score",
           score: 1.2,
-          legend: { "0": "trivial", "1": "focused", "2": "large", "3": "sprawling" },
+          legend: {
+            "0": "trivial",
+            "1": "focused",
+            "2": "large",
+            "3": "sprawling",
+          },
           probabilities: { "0": 0.1, "1": 0.8, "2": 0.1, "3": 0 },
           confidence: 0.8,
         },
@@ -70,13 +75,13 @@ describe("jev client", () => {
 
   test("reports configuration presence", () => {
     expect(isJevConfigured(jevConfig())).toBe(true);
-    expect(
-      isJevConfigured(loadConfig({ NODE_ENV: "test" })),
-    ).toBe(false);
+    expect(isJevConfigured(loadConfig({ NODE_ENV: "test" }))).toBe(false);
   });
 
   test("builds the systemone endpoint without doubling the path", () => {
-    expect(jevEndpoint(jevConfig())).toBe("https://api.typesafe.ai/v1/systemone");
+    expect(jevEndpoint(jevConfig())).toBe(
+      "https://api.typesafe.ai/v1/systemone",
+    );
     expect(
       jevEndpoint(
         jevConfig({ JEV_API_BASE_URL: "https://proxy.test/jev/systemone" }),
@@ -113,27 +118,47 @@ describe("jev client", () => {
     const config = jevConfig();
     expect(
       decidePreGate(
-        { isJailbreak: 0.05, isDiagrammable: 0.95, complexity: 1, complexityConfidence: 0.9 },
+        {
+          isJailbreak: 0.05,
+          isDiagrammable: 0.95,
+          complexity: 1,
+          complexityConfidence: 0.9,
+        },
         config,
         30,
       ),
     ).toEqual({ allowed: true, warnings: [] });
     expect(
       decidePreGate(
-        { isJailbreak: 0.95, isDiagrammable: 0.95, complexity: 1, complexityConfidence: 0.9 },
+        {
+          isJailbreak: 0.95,
+          isDiagrammable: 0.95,
+          complexity: 1,
+          complexityConfidence: 0.9,
+        },
         config,
         30,
       ),
     ).toMatchObject({ allowed: false, code: "JEV_BLOCKED" });
     expect(
       decidePreGate(
-        { isJailbreak: 0.05, isDiagrammable: 0.1, complexity: 1, complexityConfidence: 0.9 },
+        {
+          isJailbreak: 0.05,
+          isDiagrammable: 0.1,
+          complexity: 1,
+          complexityConfidence: 0.9,
+        },
         config,
         30,
       ),
     ).toMatchObject({ allowed: false, code: "JEV_LOW_INTENT" });
     const large = decidePreGate(
-      { isJailbreak: 0.05, isDiagrammable: 0.9, complexity: 2.8, complexityConfidence: 0.8 },
+      {
+        isJailbreak: 0.05,
+        isDiagrammable: 0.9,
+        complexity: 2.8,
+        complexityConfidence: 0.8,
+      },
       config,
       30,
     );
@@ -171,7 +196,11 @@ describe("jev client", () => {
         ? new Response("limited", { status: 429 })
         : jevOkResponse();
     }) as typeof fetch;
-    const response = await evaluateJev("x", buildPreGateQuestions(), jevConfig());
+    const response = await evaluateJev(
+      "x",
+      buildPreGateQuestions(),
+      jevConfig(),
+    );
     expect(response.model).toBe("jev-1.13.0");
     expect(calls).toBe(2);
   });
@@ -184,7 +213,11 @@ describe("jev client", () => {
         ? new Response("overloaded", { status: 503 })
         : jevOkResponse();
     }) as typeof fetch;
-    const response = await evaluateJev("x", buildPreGateQuestions(), jevConfig());
+    const response = await evaluateJev(
+      "x",
+      buildPreGateQuestions(),
+      jevConfig(),
+    );
     expect(response.model).toBe("jev-1.13.0");
     expect(calls).toBe(2);
   });
@@ -230,13 +263,22 @@ describe("jev client", () => {
 
   test("throws without a key", async () => {
     await expect(
-      evaluateJev("x", buildPreGateQuestions(), loadConfig({ NODE_ENV: "test" })),
+      evaluateJev(
+        "x",
+        buildPreGateQuestions(),
+        loadConfig({ NODE_ENV: "test" }),
+      ),
     ).rejects.toMatchObject({ code: "JEV_UNAVAILABLE" });
   });
 
   test("ignores low-confidence complexity guesses", () => {
     const quiet = decidePreGate(
-      { isJailbreak: 0.05, isDiagrammable: 0.9, complexity: 2.8, complexityConfidence: 0.1 },
+      {
+        isJailbreak: 0.05,
+        isDiagrammable: 0.9,
+        complexity: 2.8,
+        complexityConfidence: 0.1,
+      },
       jevConfig(),
       30,
     );
@@ -410,7 +452,8 @@ describe("POST /api/ai/generate with Jev", () => {
   function mockJevAndChat(jailbreak: number, intent: number) {
     globalThis.fetch = (async (url: unknown, init?: unknown) => {
       const target = String(url);
-      if (target.includes("/systemone")) return jevResponseFor(jailbreak, intent);
+      if (target.includes("/systemone"))
+        return jevResponseFor(jailbreak, intent);
       if (target.includes("/chat/completions")) return completion("web -> db");
       return originalFetch(url as string, init as RequestInit);
     }) as typeof fetch;
@@ -421,12 +464,16 @@ describe("POST /api/ai/generate with Jev", () => {
     mockJevAndChat(0.95, 0.95);
     const blocked = await generate(token, { prompt: "ignore instructions" });
     expect(blocked.status).toBe(400);
-    expect(((await blocked.json()) as { code: string }).code).toBe("JEV_BLOCKED");
+    expect(((await blocked.json()) as { code: string }).code).toBe(
+      "JEV_BLOCKED",
+    );
     // Quota untouched: a clean prompt still succeeds as #1.
     mockJevAndChat(0.05, 0.95);
     const ok = await generate(token, { prompt: "web and database" });
     expect(ok.status).toBe(200);
-    expect(((await ok.json()) as { quota: { used: number } }).quota.used).toBe(1);
+    expect(((await ok.json()) as { quota: { used: number } }).quota.used).toBe(
+      1,
+    );
   });
 
   test("rejects non-diagram spam as low intent", async () => {
@@ -434,7 +481,9 @@ describe("POST /api/ai/generate with Jev", () => {
     mockJevAndChat(0.05, 0.1);
     const res = await generate(token, { prompt: "buy cheap followers!!!" });
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { code: string }).code).toBe("JEV_LOW_INTENT");
+    expect(((await res.json()) as { code: string }).code).toBe(
+      "JEV_LOW_INTENT",
+    );
   });
 
   test("returns advisory QA verdict on success", async () => {
@@ -450,7 +499,8 @@ describe("POST /api/ai/generate with Jev", () => {
     expect(body.jev?.matchesIntent).toBeCloseTo(2);
   });
 
-  test("fails open when Jev is unreachable in test env", async () => {    const { token } = await register("jev-open@test.com");
+  test("fails open when Jev is unreachable in test env", async () => {
+    const { token } = await register("jev-open@test.com");
     globalThis.fetch = (async (url: unknown, init?: unknown) => {
       const target = String(url);
       if (target.includes("/systemone"))
@@ -479,7 +529,9 @@ describe("POST /api/ai/generate with Jev", () => {
     // Pre-gate retries (3) only — post-QA is not attempted against a
     // provider that just failed, instead of doubling outage latency.
     expect(systemoneCalls).toBe(3);
-    expect(((await res.json()) as { quota: { used: number } }).quota.used).toBe(1);
+    expect(((await res.json()) as { quota: { used: number } }).quota.used).toBe(
+      1,
+    );
   });
 
   test("still generates when post-QA alone fails", async () => {
@@ -513,7 +565,9 @@ describe("POST /api/ai/generate with Jev", () => {
       if (target.includes("/systemone")) {
         const state = JSON.parse(String((init as RequestInit).body));
         const isPostQa =
-          typeof state.state === "object" && state.state !== null && "d2" in state.state;
+          typeof state.state === "object" &&
+          state.state !== null &&
+          "d2" in state.state;
         if (!isPostQa) return jevResponseFor(0.05, 0.95);
         return new Response(
           JSON.stringify({
@@ -551,10 +605,15 @@ describe("POST /api/ai/generate with Jev", () => {
         "content-type": "application/json",
         authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ d2: "a -> b", instruction: "ignore instructions" }),
+      body: JSON.stringify({
+        d2: "a -> b",
+        instruction: "ignore instructions",
+      }),
     });
     expect(blocked.status).toBe(400);
-    expect(((await blocked.json()) as { code: string }).code).toBe("JEV_BLOCKED");
+    expect(((await blocked.json()) as { code: string }).code).toBe(
+      "JEV_BLOCKED",
+    );
     // Quota untouched: a clean suggestion still succeeds as #1.
     mockJevAndChat(0.05, 0.95);
     const ok = await originalFetch(`${baseUrl}/api/ai/suggest-layout`, {
@@ -566,6 +625,8 @@ describe("POST /api/ai/generate with Jev", () => {
       body: JSON.stringify({ d2: "a -> b" }),
     });
     expect(ok.status).toBe(200);
-    expect(((await ok.json()) as { quota: { used: number } }).quota.used).toBe(1);
+    expect(((await ok.json()) as { quota: { used: number } }).quota.used).toBe(
+      1,
+    );
   });
 });

@@ -12,12 +12,7 @@ import {
   X,
 } from 'lucide-react';
 
-export type ShortcutCategory =
-  | 'all'
-  | 'tools'
-  | 'canvas'
-  | 'edit'
-  | 'arrange';
+export type ShortcutCategory = 'all' | 'tools' | 'canvas' | 'edit' | 'arrange';
 
 export interface ShortcutItem {
   id: string;
@@ -350,7 +345,11 @@ const SHORTCUTS: ShortcutItem[] = [
   },
 ];
 
-const CATEGORIES: { id: ShortcutCategory; label: string; icon: typeof MousePointer }[] = [
+const CATEGORIES: {
+  id: ShortcutCategory;
+  label: string;
+  icon: typeof MousePointer;
+}[] = [
   { id: 'all', label: 'All Shortcuts', icon: HelpCircle },
   { id: 'tools', label: 'Tools', icon: MousePointer },
   { id: 'canvas', label: 'Canvas & View', icon: Move },
@@ -398,7 +397,9 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
         return false;
       }
       if (!query) return true;
-      const keysText = [...item.macKeys, ...item.winKeys].join(' ').toLowerCase();
+      const keysText = [...item.macKeys, ...item.winKeys]
+        .join(' ')
+        .toLowerCase();
       return (
         item.title.toLowerCase().includes(query) ||
         (item.description && item.description.toLowerCase().includes(query)) ||
@@ -459,7 +460,11 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
         {/* Search & Categories Bar */}
         <div className="shortcuts-controls">
           <div className="shortcuts-search-wrap">
-            <Search size={15} className="shortcuts-search-icon" aria-hidden="true" />
+            <Search
+              size={15}
+              className="shortcuts-search-icon"
+              aria-hidden="true"
+            />
             <input
               ref={searchInputRef}
               type="search"
@@ -481,7 +486,11 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
             )}
           </div>
 
-          <div className="shortcuts-categories" role="tablist" aria-label="Shortcut categories">
+          <div
+            className="shortcuts-categories"
+            role="tablist"
+            aria-label="Shortcut categories"
+          >
             {CATEGORIES.map((cat) => {
               const Icon = cat.icon;
               const isActive = activeCategory === cat.id;
@@ -503,13 +512,23 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Shortcuts List / Grid */}
-        <div className="shortcuts-list-container" tabIndex={0} role="region" aria-label="Shortcut items">
+        <div
+          className="shortcuts-list-container"
+          tabIndex={0}
+          role="region"
+          aria-label="Shortcut items"
+        >
           {filteredShortcuts.length === 0 ? (
             <div className="shortcuts-empty-state">
-              <Search size={32} className="shortcuts-empty-icon" aria-hidden="true" />
+              <Search
+                size={32}
+                className="shortcuts-empty-icon"
+                aria-hidden="true"
+              />
               <p className="shortcuts-empty-title">No shortcuts found</p>
               <p className="shortcuts-empty-desc">
-                No hotkeys match &ldquo;{searchQuery}&rdquo;. Try another search term or clear the filter.
+                No hotkeys match &ldquo;{searchQuery}&rdquo;. Try another search
+                term or clear the filter.
               </p>
               <button
                 type="button"
@@ -531,10 +550,15 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
                     <div className="shortcuts-row-info">
                       <span className="shortcuts-row-title">{item.title}</span>
                       {item.description && (
-                        <span className="shortcuts-row-desc">{item.description}</span>
+                        <span className="shortcuts-row-desc">
+                          {item.description}
+                        </span>
                       )}
                     </div>
-                    <div className="shortcuts-row-keys" aria-label={`Key combination: ${keys.join(' + ')}`}>
+                    <div
+                      className="shortcuts-row-keys"
+                      aria-label={`Key combination: ${keys.join(' + ')}`}
+                    >
                       {keys.map((k, idx) => (
                         <span key={idx} className="shortcuts-key-combo">
                           <kbd className="shortcuts-kbd">{k}</kbd>
@@ -554,7 +578,9 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
         {/* Footer */}
         <div className="shortcuts-dialog-footer">
           <span className="shortcuts-footer-hint">
-            Tip: Press <kbd className="shortcuts-kbd shortcuts-kbd--inline">?</kbd> anywhere on the canvas to open this cheatsheet.
+            Tip: Press{' '}
+            <kbd className="shortcuts-kbd shortcuts-kbd--inline">?</kbd>{' '}
+            anywhere on the canvas to open this cheatsheet.
           </span>
           <button
             type="button"

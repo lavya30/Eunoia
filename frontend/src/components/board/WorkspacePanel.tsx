@@ -148,7 +148,10 @@ export function WorkspacePanel({
         <h1>Workspaces</h1>
         <p>
           Team rooms, folders, and member roles share one billing seat pool.{' '}
-          <Link href="/workspaces" style={{ color: '#5b54c7', fontWeight: 600 }}>
+          <Link
+            href="/workspaces"
+            style={{ color: '#5b54c7', fontWeight: 600 }}
+          >
             Open full page →
           </Link>
         </p>
@@ -403,15 +406,18 @@ export function WorkspacePanel({
                     <button
                       type="button"
                       onClick={() =>
-                        void runGuarded('Could not leave workspace.', async () => {
-                          await removeMember(
-                            selectedId,
-                            member.userId,
-                            userToken,
-                          );
-                          setSelectedId(null);
-                          await refreshList();
-                        })
+                        void runGuarded(
+                          'Could not leave workspace.',
+                          async () => {
+                            await removeMember(
+                              selectedId,
+                              member.userId,
+                              userToken,
+                            );
+                            setSelectedId(null);
+                            await refreshList();
+                          },
+                        )
                       }
                       style={{
                         border: 0,

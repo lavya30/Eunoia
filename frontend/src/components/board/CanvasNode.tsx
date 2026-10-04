@@ -1,6 +1,9 @@
 'use client';
 
-import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type {
+  PointerEvent as ReactPointerEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import type { BoardNode } from '@/lib/whiteboard/board-types';
 import { normalizeRotation } from '@/lib/whiteboard/geometry';
 import { wrapSvgText } from '@/lib/whiteboard/text-wrap';
@@ -68,8 +71,12 @@ export function CanvasNode({
       ? node.y + 38
       : node.y + (labelLines.length > 1 ? 30 : 43);
 
-  const detailStartY = startY + (labelLines.length > 0 ? (labelLines.length - 1) * lineHeight + 26 : 26);
-  const detailLines = node.detail ? wrapSvgText(node.detail, availableWidth, 10) : [];
+  const detailStartY =
+    startY +
+    (labelLines.length > 0 ? (labelLines.length - 1) * lineHeight + 26 : 26);
+  const detailLines = node.detail
+    ? wrapSvgText(node.detail, availableWidth, 10)
+    : [];
 
   return (
     <g
@@ -179,7 +186,11 @@ export function CanvasNode({
           style={shapeStyle}
         />
       ) : isDiamond && diamondPoints ? (
-        <polygon className="node-body" points={diamondPoints} style={shapeStyle} />
+        <polygon
+          className="node-body"
+          points={diamondPoints}
+          style={shapeStyle}
+        />
       ) : isText ? null : (
         <rect
           className="node-body"
@@ -212,17 +223,9 @@ export function CanvasNode({
         </text>
       )}
       {!isText && !isImage && !isLine && detailLines.length > 0 && (
-        <text
-          className="node-detail"
-          x={node.x + 18}
-          y={detailStartY}
-        >
+        <text className="node-detail" x={node.x + 18} y={detailStartY}>
           {detailLines.map((line, idx) => (
-            <tspan
-              key={idx}
-              x={node.x + 18}
-              dy={idx === 0 ? 0 : '14px'}
-            >
+            <tspan key={idx} x={node.x + 18} dy={idx === 0 ? 0 : '14px'}>
               {line}
             </tspan>
           ))}

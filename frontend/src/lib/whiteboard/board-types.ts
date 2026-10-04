@@ -9,7 +9,15 @@ export type BoardNode = {
   width: number;
   height: number;
   tone: 'violet' | 'orange' | 'blue' | 'yellow' | 'mint' | 'note';
-  shape?: 'round' | 'cylinder' | 'note' | 'ellipse' | 'text' | 'image' | 'diamond' | 'line';
+  shape?:
+    | 'round'
+    | 'cylinder'
+    | 'note'
+    | 'ellipse'
+    | 'text'
+    | 'image'
+    | 'diamond'
+    | 'line';
   href?: string;
   /** Server-side image record id (R2 uploads). Used to refresh/delete. */
   imageId?: string;

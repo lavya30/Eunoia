@@ -1,7 +1,11 @@
 'use client';
 
 import React, { useCallback, useMemo, useRef } from 'react';
-import type { BoardArrow, BoardNode, BoardStroke } from '@/lib/whiteboard/board-types';
+import type {
+  BoardArrow,
+  BoardNode,
+  BoardStroke,
+} from '@/lib/whiteboard/board-types';
 import type { Camera, Viewport } from '@/lib/whiteboard/geometry';
 import { cameraViewBox } from '@/lib/whiteboard/geometry';
 import { contentBounds } from '@/lib/whiteboard/export/bounds';
@@ -93,8 +97,14 @@ export function Minimap({
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      const mapX = Math.max(0, Math.min(MINIMAP_WIDTH, event.clientX - rect.left));
-      const mapY = Math.max(0, Math.min(MINIMAP_HEIGHT, event.clientY - rect.top));
+      const mapX = Math.max(
+        0,
+        Math.min(MINIMAP_WIDTH, event.clientX - rect.left),
+      );
+      const mapY = Math.max(
+        0,
+        Math.min(MINIMAP_HEIGHT, event.clientY - rect.top),
+      );
       const { worldX, worldY } = toWorld(mapX, mapY);
       onPanTo(worldX, worldY);
     },
@@ -175,7 +185,10 @@ export function Minimap({
         {strokes.map((stroke) => {
           if (stroke.points.length < 2) return null;
           const d = stroke.points
-            .map((p, i) => `${i === 0 ? 'M' : 'L'} ${toMinimapX(p.x)} ${toMinimapY(p.y)}`)
+            .map(
+              (p, i) =>
+                `${i === 0 ? 'M' : 'L'} ${toMinimapX(p.x)} ${toMinimapY(p.y)}`,
+            )
             .join(' ');
           return (
             <path

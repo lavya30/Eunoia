@@ -16,7 +16,7 @@ export const DEFAULT_JEV_BASE_URL = "https://api.typesafe.ai/v1";
 export const DEFAULT_JEV_TIMEOUT_MS = 1500;
 export const DEFAULT_JEV_JAILBREAK_THRESHOLD = 0.85;
 export const DEFAULT_JEV_MIN_INTENT = 0.25;
- 
+
 /** Truncation budgets: keep Jev input costs bounded, never send secrets. */
 export const MAX_JEV_PROMPT_CHARS = 4000;
 export const MAX_JEV_D2_CHARS = 8000;
@@ -66,12 +66,21 @@ const JevResponseSchema = z.object({
 export type JevResponse = z.infer<typeof JevResponseSchema>;
 
 export type JevQuestion =
-  | { type: "noul"; instructions: string; criteria?: { true?: string; false?: string } }
-  | { type: "choice"; instructions: string; criteria: Record<string, string | null> }
+  | {
+      type: "noul";
+      instructions: string;
+      criteria?: { true?: string; false?: string };
+    }
+  | {
+      type: "choice";
+      instructions: string;
+      criteria: Record<string, string | null>;
+    }
   | { type: "score"; instructions: string; criteria: string[] };
 
 export class JevError extends Error {
-  readonly code: "JEV_UNAVAILABLE" | "JEV_RATE_LIMITED" | "JEV_INVALID_RESPONSE";
+  readonly code:
+    "JEV_UNAVAILABLE" | "JEV_RATE_LIMITED" | "JEV_INVALID_RESPONSE";
   readonly status: number;
   constructor(code: JevError["code"], status: number, message: string) {
     super(message);
@@ -86,7 +95,10 @@ export function isJevConfigured(config: Config): boolean {
 }
 
 export function jevEndpoint(config: Config): string {
-  const base = (config.jevApiBaseUrl ?? DEFAULT_JEV_BASE_URL).replace(/\/+$/, "");
+  const base = (config.jevApiBaseUrl ?? DEFAULT_JEV_BASE_URL).replace(
+    /\/+$/,
+    "",
+  );
   return /\/systemone\/?$/.test(base) ? base : `${base}/systemone`;
 }
 
@@ -186,7 +198,8 @@ async function evaluateJevInner(
   config: Config,
 ): Promise<JevResponse> {
   const apiKey = config.jevApiKey;
-  if (!apiKey) throw new JevError("JEV_UNAVAILABLE", 503, "Jev is not configured");
+  if (!apiKey)
+    throw new JevError("JEV_UNAVAILABLE", 503, "Jev is not configured");
   const url = jevEndpoint(config);
   const body = JSON.stringify({
     state,
@@ -244,7 +257,11 @@ async function evaluateJevInner(
     }
     const parsed = JevResponseSchema.safeParse(data);
     if (!parsed.success) {
-      throw new JevError("JEV_INVALID_RESPONSE", 502, "Jev returned an invalid response");
+      throw new JevError(
+        "JEV_INVALID_RESPONSE",
+        502,
+        "Jev returned an invalid response",
+      );
     }
     return parsed.data;
   }
@@ -261,12 +278,20 @@ function noulOf(response: JevResponse, id: string): number | undefined {
   return answer?.type === "noul" ? answer.noul : undefined;
 }
 
-function scoreOf(response: JevResponse, id: string): { score: number; confidence: number } | undefined {
+function scoreOf(
+  response: JevResponse,
+  id: string,
+): { score: number; confidence: number } | undefined {
   const answer = response.answers[id];
-  return answer?.type === "score" ? { score: answer.score, confidence: answer.confidence } : undefined;
+  return answer?.type === "score"
+    ? { score: answer.score, confidence: answer.confidence }
+    : undefined;
 }
 
-export type JevPreGateQuestions = Record<"is_jailbreak" | "is_diagrammable" | "complexity", JevQuestion>;
+export type JevPreGateQuestions = Record<
+  "is_jailbreak" | "is_diagrammable" | "complexity",
+  JevQuestion
+>;
 
 export function buildPreGateQuestions(): JevPreGateQuestions {
   return {
@@ -308,14 +333,25 @@ export type JevPreGateResult = {
   complexityConfidence: number;
 };
 
-export async function evaluatePreGate(prompt: string, config: Config): Promise<JevPreGateResult> {
+export async function evaluatePreGate(
+  prompt: string,
+  config: Config,
+): Promise<JevPreGateResult> {
   const state = prompt.trim().slice(0, MAX_JEV_PROMPT_CHARS);
   const response = await evaluateJev(state, buildPreGateQuestions(), config);
   const isJailbreak = noulOf(response, "is_jailbreak");
   const isDiagrammable = noulOf(response, "is_diagrammable");
   const complexity = scoreOf(response, "complexity");
-  if (isJailbreak === undefined || isDiagrammable === undefined || !complexity) {
-    throw new JevError("JEV_INVALID_RESPONSE", 502, "Jev pre-gate answers mismatched");
+  if (
+    isJailbreak === undefined ||
+    isDiagrammable === undefined ||
+    !complexity
+  ) {
+    throw new JevError(
+      "JEV_INVALID_RESPONSE",
+      502,
+      "Jev pre-gate answers mismatched",
+    );
   }
   return {
     isJailbreak,
@@ -345,7 +381,8 @@ export function decidePreGate(
     return {
       allowed: false,
       code: "JEV_LOW_INTENT",
-      error: "Prompt does not look like a diagram request. Describe nodes and connections.",
+      error:
+        "Prompt does not look like a diagram request. Describe nodes and connections.",
     };
   }
   const warnings: string[] = [];
@@ -359,7 +396,10 @@ export function decidePreGate(
   return { allowed: true, warnings };
 }
 
-export type JevQaQuestions = Record<"matches_intent" | "likely_valid", JevQuestion>;
+export type JevQaQuestions = Record<
+  "matches_intent" | "likely_valid",
+  JevQuestion
+>;
 
 export function buildPostQaQuestions(): JevQaQuestions {
   return {
@@ -370,7 +410,8 @@ export function buildPostQaQuestions(): JevQaQuestions {
     },
     likely_valid: {
       type: "noul",
-      instructions: "Will this parse as valid D2 with connected nodes (keys, labels, -> edges)?",
+      instructions:
+        "Will this parse as valid D2 with connected nodes (keys, labels, -> edges)?",
       criteria: {
         true: "valid D2 shape with connections",
         false: "broken syntax or no diagram structure",
@@ -399,16 +440,26 @@ export async function evaluatePostQa(
   const matches = scoreOf(response, "matches_intent");
   const valid = noulOf(response, "likely_valid");
   if (!matches || valid === undefined) {
-    throw new JevError("JEV_INVALID_RESPONSE", 502, "Jev QA answers mismatched");
+    throw new JevError(
+      "JEV_INVALID_RESPONSE",
+      502,
+      "Jev QA answers mismatched",
+    );
   }
   const warnings: string[] = [];
   if (matches.score < 1.0 && matches.confidence > 0.7) {
-    warnings.push("Low match to your description — review nodes before sharing.");
+    warnings.push(
+      "Low match to your description — review nodes before sharing.",
+    );
   } else if (matches.score < 1.5) {
-    warnings.push("Partial match to your description — check for missing connections.");
+    warnings.push(
+      "Partial match to your description — check for missing connections.",
+    );
   }
   if (valid < 0.4) {
-    warnings.push("Generated D2 may not compile — review syntax in the editor.");
+    warnings.push(
+      "Generated D2 may not compile — review syntax in the editor.",
+    );
   }
   return {
     matchesIntent: matches.score,

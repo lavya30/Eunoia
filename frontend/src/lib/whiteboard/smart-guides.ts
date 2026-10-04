@@ -84,7 +84,8 @@ export function computeSmartSnap(
         minDiffX = diff;
         deltaX = cVal - dVal;
         const minY = Math.min(dragAabb.minY, candidate.y) - 20;
-        const maxY = Math.max(dragAabb.maxY, candidate.y + candidate.height) + 20;
+        const maxY =
+          Math.max(dragAabb.maxY, candidate.y + candidate.height) + 20;
         bestGuideX = {
           id: `v_${candidate.id}_${cVal}`,
           orientation: 'vertical',
@@ -111,7 +112,8 @@ export function computeSmartSnap(
         minDiffY = diff;
         deltaY = cVal - dVal;
         const minX = Math.min(dragAabb.minX, candidate.x) - 20;
-        const maxX = Math.max(dragAabb.maxX, candidate.x + candidate.width) + 20;
+        const maxX =
+          Math.max(dragAabb.maxX, candidate.x + candidate.width) + 20;
         bestGuideY = {
           id: `h_${candidate.id}_${cVal}`,
           orientation: 'horizontal',

@@ -185,15 +185,18 @@ export function imageStorageCheck(config: Config): DependencyCheck {
  */
 export function jevCheck(config: Config): DependencyCheck {
   if (!config.jevApiKey) {
-    return { status: 'skipped', detail: 'JEV_API_KEY unset; guardrails skipped' };
+    return {
+      status: "skipped",
+      detail: "JEV_API_KEY unset; guardrails skipped",
+    };
   }
   if (jevLastOutcome() === false) {
     return {
-      status: 'degraded',
-      detail: 'Jev guardrails failing; see eunoia_jev_evaluations_total',
+      status: "degraded",
+      detail: "Jev guardrails failing; see eunoia_jev_evaluations_total",
     };
   }
-  return { status: 'ok', detail: 'Jev guardrails enabled' };
+  return { status: "ok", detail: "Jev guardrails enabled" };
 }
 
 export function summarizeReadiness(
@@ -203,7 +206,7 @@ export function summarizeReadiness(
   imageStorage: DependencyCheck,
   version: string,
   uptimeSec: number,
-  jev: DependencyCheck = { status: 'skipped' as const },
+  jev: DependencyCheck = { status: "skipped" as const },
 ): Readiness {
   // Persistence is load-bearing: without it every room is ephemeral, so a
   // configured-but-unreachable database takes the server out of rotation.

@@ -1,11 +1,7 @@
 'use client';
 
 import React from 'react';
-import {
-  Search,
-  BookOpen,
-  ExternalLink,
-} from 'lucide-react';
+import { Search, BookOpen, ExternalLink } from 'lucide-react';
 
 export interface NavItem {
   id: string;
@@ -78,9 +74,10 @@ export function DocsSidebar({
 }: DocsSidebarProps) {
   const filteredSections = NAV_SECTIONS.map((sec) => ({
     ...sec,
-    items: sec.items.filter((item) =>
-      item.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      sec.category.toLowerCase().includes(searchQuery.toLowerCase())
+    items: sec.items.filter(
+      (item) =>
+        item.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        sec.category.toLowerCase().includes(searchQuery.toLowerCase()),
     ),
   })).filter((sec) => sec.items.length > 0);
 

@@ -157,12 +157,7 @@ const CONNECTION_OP = /(->|<->|<-|--)/;
 const KEY_PATTERN = /[A-Za-z_][\w\-.]*$/;
 
 export type D2SuggestionKind =
-  | 'shape'
-  | 'keyword'
-  | 'property'
-  | 'value'
-  | 'identifier'
-  | 'snippet';
+  'shape' | 'keyword' | 'property' | 'value' | 'identifier' | 'snippet';
 
 export interface D2Suggestion {
   label: string;
@@ -336,8 +331,7 @@ export function collectDefinedIdentifiers(fullText: string): string[] {
   for (const line of lines) {
     const head = line.match(/^\s*([A-Za-z_][\w\-.]*)\s*(?::|\{|->|<->|<-|--)/);
     if (head) push(head[1]);
-    const opGlobal =
-      /(?:->|<->|<-|--)\s*([A-Za-z_][\w\-.]*)/g;
+    const opGlobal = /(?:->|<->|<-|--)\s*([A-Za-z_][\w\-.]*)/g;
     for (const match of line.matchAll(opGlobal)) push(match[1]);
   }
   return ordered;

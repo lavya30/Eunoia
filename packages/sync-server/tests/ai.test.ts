@@ -89,9 +89,7 @@ describe("GET /api/ai/models", () => {
       const address = app.server.address();
       if (!address || typeof address === "string")
         throw new Error("Server did not bind");
-      const res = await fetch(
-        `http://127.0.0.1:${address.port}/api/ai/models`,
-      );
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/ai/models`);
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         models: string[];
@@ -122,13 +120,11 @@ describe("GET /api/ai/models", () => {
       const address = app.server.address();
       if (!address || typeof address === "string")
         throw new Error("Server did not bind");
-      const res = await fetch(
-        `http://127.0.0.1:${address.port}/api/ai/models`,
-      );
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/ai/models`);
       expect(res.status).toBe(200);
-      expect(
-        ((await res.json()) as { configured: boolean }).configured,
-      ).toBe(false);
+      expect(((await res.json()) as { configured: boolean }).configured).toBe(
+        false,
+      );
     } finally {
       await app.close();
     }
@@ -405,9 +401,9 @@ describe("POST /api/ai/suggest-layout", () => {
           messages: Array<{ role: string; content: string }>;
         };
         expect(payload.model).toBe("test-model");
-        expect(
-          payload.messages.some((m) => m.content.includes("a -> b")),
-        ).toBe(true);
+        expect(payload.messages.some((m) => m.content.includes("a -> b"))).toBe(
+          true,
+        );
         return completion("```d2\ndirection: right\na -> b\n```");
       }
       return originalFetch(url as string, init as RequestInit);

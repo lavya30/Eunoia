@@ -52,7 +52,15 @@ function buildBoard(size: number): Entry[] {
       : rand() * 8000;
     const w = 40 + rand() * 260;
     const h = 30 + rand() * 160;
-    entries.push({ id: `n-${i}`, minX: cx - w / 2, minY: cy - h / 2, maxX: cx + w / 2, maxY: cy + h / 2, w, h });
+    entries.push({
+      id: `n-${i}`,
+      minX: cx - w / 2,
+      minY: cy - h / 2,
+      maxX: cx + w / 2,
+      maxY: cy + h / 2,
+      w,
+      h,
+    });
   }
   return entries;
 }
@@ -70,7 +78,9 @@ function viewportForFrame(frame: number, total: number): Aabb {
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return NaN;
-  return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
+  return sorted[
+    Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))
+  ];
 }
 
 async function maybeBrowserVariant(): Promise<boolean> {
@@ -83,10 +93,14 @@ async function maybeBrowserVariant(): Promise<boolean> {
     resolved = false;
   }
   if (!resolved) {
-    console.log('PLAYWRIGHT=1 but playwright is not installed — running synthetic proxy instead.');
+    console.log(
+      'PLAYWRIGHT=1 but playwright is not installed — running synthetic proxy instead.',
+    );
     return false;
   }
-  console.log('Playwright browser variant: no served /board fixture yet — running synthetic proxy instead.');
+  console.log(
+    'Playwright browser variant: no served /board fixture yet — running synthetic proxy instead.',
+  );
   return false;
 }
 
@@ -101,7 +115,8 @@ for (let f = 0; f < 10; f++) {
   const vp = viewportForFrame(f, FRAMES);
   const visible = index.search(vp);
   let acc = 0;
-  for (const n of visible) acc += (n.maxX - vp.minX) * 0.001 + (n.maxY - vp.minY) * 0.001;
+  for (const n of visible)
+    acc += (n.maxX - vp.minX) * 0.001 + (n.maxY - vp.minY) * 0.001;
   if (acc < 0) console.log('unreachable');
 }
 
@@ -165,7 +180,9 @@ console.log(
 
 let failed = false;
 if (p95 > FRAME_BUDGET_MS) {
-  console.error(`GATE FAIL: p95 ${p95.toFixed(3)}ms exceeds ${FRAME_BUDGET_MS}ms (NFR-1)`);
+  console.error(
+    `GATE FAIL: p95 ${p95.toFixed(3)}ms exceeds ${FRAME_BUDGET_MS}ms (NFR-1)`,
+  );
   failed = true;
 }
 if (sustained > 0) {

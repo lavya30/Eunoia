@@ -210,7 +210,9 @@ export class Room {
     }
     const parsed = BusControlSchema.safeParse(control);
     if (!parsed.success || parsed.data.type !== "restore") return;
-    void this.onRestoreRequest?.(parsed.data.snapshotId)?.catch(() => undefined);
+    void this.onRestoreRequest?.(parsed.data.snapshotId)?.catch(
+      () => undefined,
+    );
   };
 
   private applyRemoteUpdate(update: Uint8Array): void {

@@ -339,15 +339,22 @@ export function parseD2Source(source: string): {
   const nodeKeys: string[] = [];
   const seen = new Set<string>();
   const nodeLabels = new Map<string, string>();
-  const edges: Array<{ key: string; from: string; to: string; label?: string }> =
-    [];
+  const edges: Array<{
+    key: string;
+    from: string;
+    to: string;
+    label?: string;
+  }> = [];
   const edgeKeys = new Set<string>();
 
   const ensureNode = (rawKey: string, label?: string): string | null => {
     const key = unquoteKey(rawKey).slice(0, 100).trim();
     if (!key || key.length > 200) return null;
     // Dotted paths create their container prefixes so `a.b: x` still shows `a`.
-    const segments = key.split(".").map((s) => s.trim()).filter(Boolean);
+    const segments = key
+      .split(".")
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (segments.length === 0) return null;
     let prefix = "";
     for (const segment of segments) {

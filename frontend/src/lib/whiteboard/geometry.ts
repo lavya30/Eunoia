@@ -372,12 +372,7 @@ export function rotatedNodeAabb(
 }
 
 export type AlignType =
-  | 'left'
-  | 'center'
-  | 'right'
-  | 'top'
-  | 'middle'
-  | 'bottom';
+  'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 
 export type DistributeAxis = 'horizontal' | 'vertical';
 

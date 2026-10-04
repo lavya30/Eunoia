@@ -45,16 +45,14 @@ describe("request schemas", () => {
   });
 
   test("bounds layout suggestions and defaults the instruction", () => {
-    expect(
-      SuggestLayoutSchema.safeParse({ d2: "a -> b" }).success,
-    ).toBe(true);
-    expect(
-      SuggestLayoutSchema.parse({ d2: "a -> b" }).instruction,
-    ).toBe("Improve the layout of this diagram");
-    expect(SuggestLayoutSchema.safeParse({ d2: "   " }).success).toBe(false);
-    expect(SuggestLayoutSchema.safeParse({ d2: "a -> b", debug: true }).success).toBe(
-      false,
+    expect(SuggestLayoutSchema.safeParse({ d2: "a -> b" }).success).toBe(true);
+    expect(SuggestLayoutSchema.parse({ d2: "a -> b" }).instruction).toBe(
+      "Improve the layout of this diagram",
     );
+    expect(SuggestLayoutSchema.safeParse({ d2: "   " }).success).toBe(false);
+    expect(
+      SuggestLayoutSchema.safeParse({ d2: "a -> b", debug: true }).success,
+    ).toBe(false);
   });
 
   test("falls back to a local layout on malformed compiler responses", async () => {

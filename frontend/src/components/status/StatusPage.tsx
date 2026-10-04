@@ -130,7 +130,9 @@ export function StatusPage() {
   // samples load in the mount effect below alongside the first probe.
   // nowTick follows the same path: wall-clock never runs during render.
   const [history, setHistory] = useState<ProbeSample[]>([]);
-  const [historySource, setHistorySource] = useState<'browser' | 'upptime'>('browser');
+  const [historySource, setHistorySource] = useState<'browser' | 'upptime'>(
+    'browser',
+  );
   const [nowTick, setNowTick] = useState(0);
 
   const load = useCallback(async () => {
@@ -337,7 +339,11 @@ export function StatusPage() {
               <span>Version {state.readiness.version}</span>
               <span>Uptime {formatUptime(state.readiness.uptimeSec)}</span>
             </div>
-            <HistorySection history={history} now={nowTick} source={historySource} />
+            <HistorySection
+              history={history}
+              now={nowTick}
+              source={historySource}
+            />
           </>
         ) : null}
 

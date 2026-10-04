@@ -126,11 +126,7 @@ export function WorkspacesPage() {
                 ...(t === tab ? styles.tabActive : null),
               }}
             >
-              {t === 'teams'
-                ? 'Teams'
-                : t === 'audit'
-                  ? 'Audit log'
-                  : 'Usage'}
+              {t === 'teams' ? 'Teams' : t === 'audit' ? 'Audit log' : 'Usage'}
             </button>
           ))}
         </nav>
@@ -198,8 +194,7 @@ function TeamsTab({
     try {
       const list = await listWorkspaces(token);
       setWorkspaces(list);
-      if (!selectedId && list.length === 1)
-        onSelect(list[0].workspace.id);
+      if (!selectedId && list.length === 1) onSelect(list[0].workspace.id);
     } catch (err) {
       setError(workspaceErrorMessage(err, 'Could not load workspaces.'));
     }
@@ -301,12 +296,8 @@ function TeamsTab({
                     : null),
                 }}
               >
-                <span style={{ fontWeight: 600 }}>
-                  {entry.workspace.name}
-                </span>
-                <span style={styles.mutedSmall}>
-                  {roleBadge(entry.role)}
-                </span>
+                <span style={{ fontWeight: 600 }}>{entry.workspace.name}</span>
+                <span style={styles.mutedSmall}>{roleBadge(entry.role)}</span>
               </button>
             ))}
           </div>
@@ -332,9 +323,7 @@ function TeamsTab({
                 No rooms yet — move a board here from its settings.
               </p>
             ) : (
-              <div
-                style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
-              >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {rooms.map((room) => (
                   <div key={room.id} style={styles.row}>
                     <Link
@@ -445,12 +434,19 @@ function TeamsTab({
                     <button
                       type="button"
                       onClick={() =>
-                        void runGuarded('Could not leave workspace.', async () => {
-                          if (!selectedId) return;
-                          await removeMember(selectedId, member.userId, token);
-                          onSelect(null);
-                          await refreshList();
-                        })
+                        void runGuarded(
+                          'Could not leave workspace.',
+                          async () => {
+                            if (!selectedId) return;
+                            await removeMember(
+                              selectedId,
+                              member.userId,
+                              token,
+                            );
+                            onSelect(null);
+                            await refreshList();
+                          },
+                        )
                       }
                       style={styles.dangerLink}
                     >
@@ -523,15 +519,12 @@ function TeamsTab({
                       )
                     )
                       return;
-                    void runGuarded(
-                      'Could not delete workspace.',
-                      async () => {
-                        if (!selectedId) return;
-                        await deleteWorkspace(selectedId, token);
-                        onSelect(null);
-                        await refreshList();
-                      },
-                    );
+                    void runGuarded('Could not delete workspace.', async () => {
+                      if (!selectedId) return;
+                      await deleteWorkspace(selectedId, token);
+                      onSelect(null);
+                      await refreshList();
+                    });
                   }}
                   style={styles.dangerLink}
                 >
@@ -609,7 +602,9 @@ function AuditTab({
         Workspace scopes require an Admin role; “My activity” shows your own
         actions across workspaces.
       </p>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+      <div
+        style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}
+      >
         <select
           aria-label="Audit scope"
           value={scope}
@@ -681,8 +676,9 @@ function AuditTab({
 }
 
 function UsageTab({ token, tier }: { token: string; tier: string }) {
-  const [subscription, setSubscription] =
-    useState<SubscriptionData | null>(null);
+  const [subscription, setSubscription] = useState<SubscriptionData | null>(
+    null,
+  );
   const [aiActivity, setAiActivity] = useState<AuditRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [billingUnconfigured, setBillingUnconfigured] = useState(false);
@@ -722,8 +718,8 @@ function UsageTab({ token, tier }: { token: string; tier: string }) {
         ) : null}
         {billingUnconfigured ? (
           <p style={styles.muted}>
-            No billing provider connected — tiers are database-managed in
-            this environment.
+            No billing provider connected — tiers are database-managed in this
+            environment.
           </p>
         ) : null}
         <dl style={styles.dl}>
@@ -733,9 +729,7 @@ function UsageTab({ token, tier }: { token: string; tier: string }) {
           </div>
           <div style={styles.dlRow}>
             <dt style={styles.muted}>Seats</dt>
-            <dd style={styles.dd}>
-              {subscription ? subscription.seats : '—'}
-            </dd>
+            <dd style={styles.dd}>{subscription ? subscription.seats : '—'}</dd>
           </div>
           <div style={styles.dlRow}>
             <dt style={styles.muted}>Period ends</dt>
@@ -761,14 +755,13 @@ function UsageTab({ token, tier }: { token: string; tier: string }) {
         <h2 style={styles.h2}>AI usage</h2>
         <p style={styles.muted}>
           {tier} plans include {quotaLimit} AI generations per month. Your
-          remaining quota is reported with every generation in the board
-          editor.
+          remaining quota is reported with every generation in the board editor.
         </p>
         <h3 style={styles.h3}>Recent AI activity</h3>
         {aiActivity.length === 0 ? (
           <p style={styles.muted}>
-            No AI generations yet — describe a diagram in any board’s D2
-            panel to start.
+            No AI generations yet — describe a diagram in any board’s D2 panel
+            to start.
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

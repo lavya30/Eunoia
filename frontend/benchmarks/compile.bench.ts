@@ -100,7 +100,9 @@ function arg(name: string, fallback: string): string {
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return NaN;
-  return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
+  return sorted[
+    Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))
+  ];
 }
 
 function buildSource(nodeCount: number): string {
@@ -114,12 +116,17 @@ async function runE2e(): Promise<void> {
   const spawn = process.argv.includes('--spawn');
   const iterations = Number(arg('iterations', '20'));
   const source = buildSource(NODE_COUNT);
-  let syncUrl = arg('sync-url', process.env.SYNC_URL ?? 'http://127.0.0.1:3001');
+  let syncUrl = arg(
+    'sync-url',
+    process.env.SYNC_URL ?? 'http://127.0.0.1:3001',
+  );
   let child: ReturnType<typeof Bun.spawn> | undefined;
 
   const reachable = async (url: string): Promise<boolean> => {
     try {
-      const probe = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
+      const probe = await fetch(`${url}/health`, {
+        signal: AbortSignal.timeout(3000),
+      });
       return probe.ok;
     } catch {
       return false;
@@ -138,7 +145,8 @@ async function runE2e(): Promise<void> {
       // needs a 50-node diagram, which exceeds the default cap of 30.
       const port = 18937 + Math.floor(Math.random() * 1000);
       syncUrl = `http://127.0.0.1:${port}`;
-      const serverDir = new URL('../../packages/sync-server/', import.meta.url).pathname;
+      const serverDir = new URL('../../packages/sync-server/', import.meta.url)
+        .pathname;
       child = Bun.spawn(['bun', 'src/index.ts'], {
         cwd: serverDir,
         env: {
@@ -160,52 +168,58 @@ async function runE2e(): Promise<void> {
         }
       }
       if (!up) {
-        console.error('GATE FAIL: spawned sync server did not become healthy (NFR-3 E2E)');
+        console.error(
+          'GATE FAIL: spawned sync server did not become healthy (NFR-3 E2E)',
+        );
         process.exitCode = 1;
         return;
       }
     }
-  const totals: number[] = [];
-  let engine = 'unknown';
-  let fallback = false;
-  for (let i = 0; i < iterations; i++) {
-    const start = performance.now();
-    const res = await fetch(`${syncUrl}/api/compile`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ source, engine: 'dagre' }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
-      console.error(`GATE FAIL: /api/compile answered ${res.status} (NFR-3 E2E)`);
-      process.exitCode = 1;
-      return;
+    const totals: number[] = [];
+    let engine = 'unknown';
+    let fallback = false;
+    for (let i = 0; i < iterations; i++) {
+      const start = performance.now();
+      const res = await fetch(`${syncUrl}/api/compile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ source, engine: 'dagre' }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        console.error(
+          `GATE FAIL: /api/compile answered ${res.status} (NFR-3 E2E)`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const body = (await res.json()) as Record<string, unknown>;
+      engine = typeof body.engine === 'string' ? body.engine : engine;
+      fallback = body.fallback === true;
+      const diagram = parseCompileResponse(body);
+      if (!diagram) {
+        console.error('GATE FAIL: E2E compile payload failed to parse (NFR-3)');
+        process.exitCode = 1;
+        return;
+      }
+      reconcileDiagram([], [], diagram, anchorOf, centerOf);
+      totals.push(performance.now() - start);
     }
-    const body = (await res.json()) as Record<string, unknown>;
-    engine = typeof body.engine === 'string' ? body.engine : engine;
-    fallback = body.fallback === true;
-    const diagram = parseCompileResponse(body);
-    if (!diagram) {
-      console.error('GATE FAIL: E2E compile payload failed to parse (NFR-3)');
+    totals.sort((a, b) => a - b);
+    const p50 = percentile(totals, 50);
+    const p95 = percentile(totals, 95);
+    console.log(
+      `compile E2E N=${NODE_COUNT} engine=${engine}${fallback ? ' (fallback layout)' : ''} ` +
+        `n=${iterations}: p50=${p50.toFixed(1)}ms p95=${p95.toFixed(1)}ms (budget p95 < ${BUDGET_MS}ms)`,
+    );
+    if (p95 > BUDGET_MS) {
+      console.error(
+        `GATE FAIL: E2E p95 ${p95.toFixed(1)}ms exceeds ${BUDGET_MS}ms (NFR-3)`,
+      );
       process.exitCode = 1;
-      return;
+    } else {
+      console.log('done.');
     }
-    reconcileDiagram([], [], diagram, anchorOf, centerOf);
-    totals.push(performance.now() - start);
-  }
-  totals.sort((a, b) => a - b);
-  const p50 = percentile(totals, 50);
-  const p95 = percentile(totals, 95);
-  console.log(
-    `compile E2E N=${NODE_COUNT} engine=${engine}${fallback ? ' (fallback layout)' : ''} ` +
-      `n=${iterations}: p50=${p50.toFixed(1)}ms p95=${p95.toFixed(1)}ms (budget p95 < ${BUDGET_MS}ms)`,
-  );
-  if (p95 > BUDGET_MS) {
-    console.error(`GATE FAIL: E2E p95 ${p95.toFixed(1)}ms exceeds ${BUDGET_MS}ms (NFR-3)`);
-    process.exitCode = 1;
-  } else {
-    console.log('done.');
-  }
   } finally {
     child?.kill();
   }

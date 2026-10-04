@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { compileD2, fallbackLayout, parseD2Source } from "../src/d2-compiler.js";
+import {
+  compileD2,
+  fallbackLayout,
+  parseD2Source,
+} from "../src/d2-compiler.js";
 
 describe("D2 local fallback layout", () => {
   test("lays out a simple edge chain on a deterministic grid", () => {

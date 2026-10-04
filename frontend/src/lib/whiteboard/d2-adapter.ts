@@ -149,9 +149,7 @@ function readStyle(record: Record<string, unknown>): {
     record.strokeWidth ?? style?.['stroke-width'],
   );
   const opacityRaw = asFinite(record.opacity ?? style?.opacity);
-  const strokeDashRaw = asFinite(
-    record.strokeDash ?? style?.['stroke-dash'],
-  );
+  const strokeDashRaw = asFinite(record.strokeDash ?? style?.['stroke-dash']);
   const fontSizeRaw = asFinite(record.fontSize ?? style?.['font-size']);
   const fontColorRaw = asString(
     record.fontColor ?? style?.['font-color'] ?? style?.color,
@@ -161,14 +159,11 @@ function readStyle(record: Record<string, unknown>): {
     stroke: strokeRaw ? strokeRaw.slice(0, 32) : undefined,
     strokeWidth:
       strokeWidthRaw === null ? undefined : clamp(strokeWidthRaw, 0.5, 24),
-    opacity:
-      opacityRaw === null ? undefined : clamp(opacityRaw, 0, 1),
+    opacity: opacityRaw === null ? undefined : clamp(opacityRaw, 0, 1),
     strokeDash:
       strokeDashRaw === null ? undefined : clamp(strokeDashRaw, 0, 10),
     fontSize:
-      fontSizeRaw === null
-        ? undefined
-        : Math.round(clamp(fontSizeRaw, 8, 100)),
+      fontSizeRaw === null ? undefined : Math.round(clamp(fontSizeRaw, 8, 100)),
     fontColor: fontColorRaw ? fontColorRaw.slice(0, 32) : undefined,
   };
 }
@@ -212,8 +207,7 @@ function adaptNode(
     dashed: strokeDash !== undefined ? strokeDash !== 0 : undefined,
     fontSize,
     href,
-    z:
-      zRaw === null ? undefined : Math.round(clamp(zRaw, -100000, 100000)),
+    z: zRaw === null ? undefined : Math.round(clamp(zRaw, -100000, 100000)),
   };
 }
 
@@ -275,17 +269,12 @@ function adaptEdge(
       strokeDashRaw === null ? undefined : clamp(strokeDashRaw, 0, 10),
     opacity: opacityRaw === null ? undefined : clamp(opacityRaw, 0, 1),
     fontSize:
-      fontSizeRaw === null
-        ? undefined
-        : Math.round(clamp(fontSizeRaw, 8, 100)),
+      fontSizeRaw === null ? undefined : Math.round(clamp(fontSizeRaw, 8, 100)),
     labelPosition: asString(record.labelPosition) || undefined,
     labelPercentage:
-      labelPercentageRaw === null
-        ? undefined
-        : clamp(labelPercentageRaw, 0, 1),
+      labelPercentageRaw === null ? undefined : clamp(labelPercentageRaw, 0, 1),
     route,
-    isCurve:
-      typeof record.isCurve === 'boolean' ? record.isCurve : undefined,
+    isCurve: typeof record.isCurve === 'boolean' ? record.isCurve : undefined,
     z: zRaw === null ? undefined : Math.round(clamp(zRaw, -100000, 100000)),
   };
 }

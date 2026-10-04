@@ -16,13 +16,13 @@
  * `RESULT {...}` summary line for week-over-week regression tracking
  * (alert on >20% regression, not just budget breach).
  */
-import * as decoding from 'lib0/decoding';
-import * as encoding from 'lib0/encoding';
-import WebSocket from 'ws';
-import * as syncProtocol from 'y-protocols/sync';
-import * as Y from 'yjs';
-import { createSyncServer } from '../src/index.js';
-import { MemorySnapshotStore } from '../src/RoomLoader.js';
+import * as decoding from "lib0/decoding";
+import * as encoding from "lib0/encoding";
+import WebSocket from "ws";
+import * as syncProtocol from "y-protocols/sync";
+import * as Y from "yjs";
+import { createSyncServer } from "../src/index.js";
+import { MemorySnapshotStore } from "../src/RoomLoader.js";
 
 const WS_MESSAGE_SYNC = 0;
 const WS_SYNC_UPDATE = 2;
@@ -41,33 +41,36 @@ function arg(name: string, fallback: number): number {
 function open(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
-    socket.once('open', () => resolve(socket));
-    socket.once('error', reject);
+    socket.once("open", () => resolve(socket));
+    socket.once("error", reject);
   });
 }
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return NaN;
-  const rank = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  const rank = Math.min(
+    sorted.length - 1,
+    Math.floor((p / 100) * sorted.length),
+  );
   return sorted[rank];
 }
 
-const samples = Math.floor(arg('samples', 100));
-const budgetMs = arg('budget-ms', 50);
-const clientCount = Math.max(2, Math.floor(arg('clients', 2)));
-const roomCount = Math.max(1, Math.floor(arg('rooms', 1)));
+const samples = Math.floor(arg("samples", 100));
+const budgetMs = arg("budget-ms", 50);
+const clientCount = Math.max(2, Math.floor(arg("clients", 2)));
+const roomCount = Math.max(1, Math.floor(arg("rooms", 1)));
 const payloadArg = process.argv
-  .find((t) => t.startsWith('--payload='))
-  ?.slice('--payload='.length);
-const payload: 'move' | 'recolor' | 'mixed' =
-  payloadArg === 'move' || payloadArg === 'recolor' ? payloadArg : 'mixed';
-const emitJson = process.argv.includes('--json');
+  .find((t) => t.startsWith("--payload="))
+  ?.slice("--payload=".length);
+const payload: "move" | "recolor" | "mixed" =
+  payloadArg === "move" || payloadArg === "recolor" ? payloadArg : "mixed";
+const emitJson = process.argv.includes("--json");
 
 const app = createSyncServer(
   {
     port: 0,
-    host: '127.0.0.1',
-    nodeEnv: 'test',
+    host: "127.0.0.1",
+    nodeEnv: "test",
     snapshotDebounceMs: 10_000,
     roomIdleTimeoutMs: 60_000,
     d2CommunityNodeLimit: 30,
@@ -80,15 +83,18 @@ const app = createSyncServer(
   },
   new MemorySnapshotStore(),
 );
-await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+await new Promise<void>((resolve) =>
+  app.server.listen(0, "127.0.0.1", resolve),
+);
 const address = app.server.address();
-if (!address || typeof address === 'string') throw new Error('Server did not bind');
+if (!address || typeof address === "string")
+  throw new Error("Server did not bind");
 
 /** Wait for the next bare sync-update message on a socket. */
 function waitForUpdate(socket: WebSocket, probeId: number): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const timer = setTimeout(() => {
-      socket.off('message', onMessage);
+      socket.off("message", onMessage);
       reject(new Error(`probe ${probeId} timed out`));
     }, 2000);
     const onMessage = (data: WebSocket.RawData, isBinary: boolean) => {
@@ -105,10 +111,10 @@ function waitForUpdate(socket: WebSocket, probeId: number): Promise<number> {
         return;
       }
       clearTimeout(timer);
-      socket.off('message', onMessage);
+      socket.off("message", onMessage);
       resolve(performance.now());
     };
-    socket.on('message', onMessage);
+    socket.on("message", onMessage);
   });
 }
 
@@ -116,8 +122,8 @@ try {
   // One sender + (clients-1) receivers per room; probes round-robin rooms.
   const rooms: { sender: WebSocket; receivers: WebSocket[]; doc: Y.Doc }[] = [];
   for (let r = 0; r < roomCount; r++) {
-    const id = roomCount === 1 ? 'latency-probe' : `latency-probe-${r}`;
-    await app.manager.createRoom({ id, name: 'Latency probe' });
+    const id = roomCount === 1 ? "latency-probe" : `latency-probe-${r}`;
+    await app.manager.createRoom({ id, name: "Latency probe" });
     const url = `ws://127.0.0.1:${address.port}/sync/${id}`;
     const sender = await open(url);
     const receivers: WebSocket[] = [];
@@ -130,12 +136,19 @@ try {
   const latencies: number[] = [];
   for (let i = 0; i < samples; i++) {
     const room = rooms[i % rooms.length];
-    const kind = payload === 'mixed' ? (i % 2 === 0 ? 'move' : 'recolor') : payload;
-    const key = kind === 'move' ? `probe-${i}` : 'recolor-target';
-    if (kind === 'move') {
-      room.doc.getMap('canvas').set(key, { x: i * 7, y: i * 3, ts: Date.now() });
+    const kind =
+      payload === "mixed" ? (i % 2 === 0 ? "move" : "recolor") : payload;
+    const key = kind === "move" ? `probe-${i}` : "recolor-target";
+    if (kind === "move") {
+      room.doc
+        .getMap("canvas")
+        .set(key, { x: i * 7, y: i * 3, ts: Date.now() });
     } else {
-      room.doc.getMap('canvas').set(key, { color: `#${(i * 1234567 % 0xffffff).toString(16).padStart(6, '0')}` });
+      room.doc
+        .getMap("canvas")
+        .set(key, {
+          color: `#${((i * 1234567) % 0xffffff).toString(16).padStart(6, "0")}`,
+        });
     }
     const pending = room.receivers.map((socket) => waitForUpdate(socket, i));
     const encoder = encoding.createEncoder();
@@ -159,7 +172,7 @@ try {
   );
   if (emitJson) {
     console.log(
-      `RESULT ${JSON.stringify({ nfr: 'NFR-2', rooms: roomCount, clients: clientCount, payload, samples, p50: Number(p50.toFixed(2)), p95: Number(p95.toFixed(2)), max: Number(max.toFixed(2)), budgetMs, pass: p95 <= budgetMs })}`,
+      `RESULT ${JSON.stringify({ nfr: "NFR-2", rooms: roomCount, clients: clientCount, payload, samples, p50: Number(p50.toFixed(2)), p95: Number(p95.toFixed(2)), max: Number(max.toFixed(2)), budgetMs, pass: p95 <= budgetMs })}`,
     );
   }
   for (const room of rooms) {
@@ -167,7 +180,9 @@ try {
     for (const socket of room.receivers) socket.close();
   }
   if (p95 > budgetMs) {
-    console.error(`GATE FAIL: p95 ${p95.toFixed(2)}ms exceeds ${budgetMs}ms (NFR-2)`);
+    console.error(
+      `GATE FAIL: p95 ${p95.toFixed(2)}ms exceeds ${budgetMs}ms (NFR-2)`,
+    );
     process.exitCode = 1;
   }
 } finally {

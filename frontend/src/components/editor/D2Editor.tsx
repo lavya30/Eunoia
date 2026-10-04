@@ -1,10 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import Editor, {
-  type Monaco,
-  type OnMount,
-} from '@monaco-editor/react';
+import Editor, { type Monaco, type OnMount } from '@monaco-editor/react';
 import { registerD2Language } from './d2Language';
 import type { D2Diagnostic } from '@/lib/whiteboard/d2-diagnostics';
 
@@ -54,22 +51,19 @@ export const D2Editor: React.FC<D2EditorProps> = ({
     [onChange],
   );
 
-  const handleMount: OnMount = useCallback(
-    (editor, monaco) => {
-      mountedRef.current = true;
-      editorRef.current = editor;
-      monacoRef.current = monaco;
-      // beforeMount should have registered everything, but if the
-      // theme is missing (CDN hiccup, HMR), retry registration instead
-      // of rendering an unthemed editor.
-      try {
-        registerD2Language(monaco);
-      } catch {
-        setFailed(true);
-      }
-    },
-    [],
-  );
+  const handleMount: OnMount = useCallback((editor, monaco) => {
+    mountedRef.current = true;
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+    // beforeMount should have registered everything, but if the
+    // theme is missing (CDN hiccup, HMR), retry registration instead
+    // of rendering an unthemed editor.
+    try {
+      registerD2Language(monaco);
+    } catch {
+      setFailed(true);
+    }
+  }, []);
 
   // Inline compile diagnostics: compiler `line:col` failures become gutter
   // markers + squiggles so errors are visible without leaving the editor.

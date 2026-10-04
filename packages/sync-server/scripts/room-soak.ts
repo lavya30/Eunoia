@@ -11,13 +11,13 @@
  * (budget p95 < 50ms). Nightly CI; advisory until two green windows, then
  * blocking.
  */
-import * as decoding from 'lib0/decoding';
-import * as encoding from 'lib0/encoding';
-import WebSocket from 'ws';
-import * as syncProtocol from 'y-protocols/sync';
-import * as Y from 'yjs';
-import { createSyncServer } from '../src/index.js';
-import { MemorySnapshotStore } from '../src/RoomLoader.js';
+import * as decoding from "lib0/decoding";
+import * as encoding from "lib0/encoding";
+import WebSocket from "ws";
+import * as syncProtocol from "y-protocols/sync";
+import * as Y from "yjs";
+import { createSyncServer } from "../src/index.js";
+import { MemorySnapshotStore } from "../src/RoomLoader.js";
 
 const WS_MESSAGE_SYNC = 0;
 const WS_SYNC_UPDATE = 2;
@@ -35,28 +35,30 @@ function arg(name: string, fallback: number): number {
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return NaN;
-  return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
+  return sorted[
+    Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))
+  ];
 }
 
 function open(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
-    socket.once('open', () => resolve(socket));
-    socket.once('error', reject);
+    socket.once("open", () => resolve(socket));
+    socket.once("error", reject);
   });
 }
 
-const roomCount = Math.floor(arg('rooms', 100));
-const rounds = Math.floor(arg('rounds', 5));
-const budgetMs = arg('budget-ms', 50);
-const emitJson = process.argv.includes('--json');
+const roomCount = Math.floor(arg("rooms", 100));
+const rounds = Math.floor(arg("rounds", 5));
+const budgetMs = arg("budget-ms", 50);
+const emitJson = process.argv.includes("--json");
 const USERS_PER_ROOM = 5;
 
 const app = createSyncServer(
   {
     port: 0,
-    host: '127.0.0.1',
-    nodeEnv: 'test',
+    host: "127.0.0.1",
+    nodeEnv: "test",
     snapshotDebounceMs: 10_000,
     roomIdleTimeoutMs: 120_000,
     d2CommunityNodeLimit: 30,
@@ -69,15 +71,18 @@ const app = createSyncServer(
   },
   new MemorySnapshotStore(),
 );
-await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+await new Promise<void>((resolve) =>
+  app.server.listen(0, "127.0.0.1", resolve),
+);
 const address = app.server.address();
-if (!address || typeof address === 'string') throw new Error('Server did not bind');
+if (!address || typeof address === "string")
+  throw new Error("Server did not bind");
 
 try {
   const rooms: { sender: WebSocket; receivers: WebSocket[]; doc: Y.Doc }[] = [];
   for (let r = 0; r < roomCount; r++) {
     const id = `soak-${r}`;
-    await app.manager.createRoom({ id, name: 'Soak room' });
+    await app.manager.createRoom({ id, name: "Soak room" });
     const url = `ws://127.0.0.1:${address.port}/sync/${id}`;
     const sender = await open(url);
     const receivers: WebSocket[] = [];
@@ -90,18 +95,22 @@ try {
   for (let round = 0; round < rounds; round++) {
     for (let r = 0; r < rooms.length; r++) {
       const room = rooms[r];
-      room.doc.getMap('canvas').set(`soak-${round}`, { round, room: r, ts: Date.now() });
+      room.doc
+        .getMap("canvas")
+        .set(`soak-${round}`, { round, room: r, ts: Date.now() });
       const pending = room.receivers.map(
         (socket) =>
           new Promise<number>((resolve, reject) => {
             const timer = setTimeout(() => {
-              socket.off('message', onMessage);
+              socket.off("message", onMessage);
               reject(new Error(`soak r${r} round ${round} timed out`));
             }, 5000);
             const onMessage = (data: WebSocket.RawData, isBinary: boolean) => {
               if (!isBinary) return;
               try {
-                const decoder = decoding.createDecoder(new Uint8Array(data as Buffer));
+                const decoder = decoding.createDecoder(
+                  new Uint8Array(data as Buffer),
+                );
                 if (
                   decoding.readVarUint(decoder) !== WS_MESSAGE_SYNC ||
                   decoding.readVarUint(decoder) !== WS_SYNC_UPDATE
@@ -111,10 +120,10 @@ try {
                 return;
               }
               clearTimeout(timer);
-              socket.off('message', onMessage);
+              socket.off("message", onMessage);
               resolve(performance.now());
             };
-            socket.on('message', onMessage);
+            socket.on("message", onMessage);
           }),
       );
       const encoder = encoding.createEncoder();
@@ -139,7 +148,7 @@ try {
   );
   if (emitJson) {
     console.log(
-      `RESULT ${JSON.stringify({ nfr: 'NFR-6', rooms: roomCount, usersPerRoom: USERS_PER_ROOM, relays: latencies.length, p50: Number(p50.toFixed(2)), p95: Number(p95.toFixed(2)), max: Number(max.toFixed(2)), rssMB: Number(rssMB.toFixed(1)), budgetMs, pass: p95 <= budgetMs })}`,
+      `RESULT ${JSON.stringify({ nfr: "NFR-6", rooms: roomCount, usersPerRoom: USERS_PER_ROOM, relays: latencies.length, p50: Number(p50.toFixed(2)), p95: Number(p95.toFixed(2)), max: Number(max.toFixed(2)), rssMB: Number(rssMB.toFixed(1)), budgetMs, pass: p95 <= budgetMs })}`,
     );
   }
   for (const room of rooms) {
@@ -147,10 +156,12 @@ try {
     for (const socket of room.receivers) socket.close();
   }
   if (p95 > budgetMs) {
-    console.error(`GATE FAIL: soak p95 ${p95.toFixed(2)}ms exceeds ${budgetMs}ms (NFR-6)`);
+    console.error(
+      `GATE FAIL: soak p95 ${p95.toFixed(2)}ms exceeds ${budgetMs}ms (NFR-6)`,
+    );
     process.exitCode = 1;
   } else {
-    console.log('done.');
+    console.log("done.");
   }
 } finally {
   await app.close();
