@@ -1250,6 +1250,7 @@ export function LandingPage() {
           <a href="/pricing">Pricing</a>
           <a href="/billing">Billing</a>
           <a href="/board">Board</a>
+          <a href="/workspaces">Workspaces</a>
           <a href="/status">Status</a>
           <a href="/settings">Settings</a>
         </nav>

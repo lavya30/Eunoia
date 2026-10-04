@@ -332,6 +332,12 @@ export function SettingsPage() {
           <Link href="/board" style={{ color: '#5b54c7', fontWeight: 600 }}>
             Open a board →
           </Link>
+          <Link
+            href="/workspaces"
+            style={{ color: '#5b54c7', fontWeight: 600 }}
+          >
+            Workspaces →
+          </Link>
           <Link href="/status" style={{ color: '#5b54c7', fontWeight: 600 }}>
             System status →
           </Link>

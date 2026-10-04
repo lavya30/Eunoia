@@ -1,7 +1,12 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { ApiError } from '@/lib/whiteboard/rooms-api';
+import {
+  roleBadge,
+  useGuardedWorkspace,
+  workspaceErrorMessage,
+} from '@/lib/whiteboard/workspace-helpers';
 import {
   createFolder,
   createWorkspace,
@@ -20,14 +25,6 @@ import {
   type WorkspaceRole,
   type WorkspaceWithRole,
 } from '@/lib/whiteboard/workspaces-api';
-
-function roleBadge(role: WorkspaceRole): string {
-  return role === 'ADMIN' ? 'Admin' : role === 'EDITOR' ? 'Editor' : 'Viewer';
-}
-
-function errorMessage(err: unknown, fallback: string): string {
-  return err instanceof Error ? err.message : fallback;
-}
 
 export function WorkspacePanel({
   userToken,
@@ -55,8 +52,7 @@ export function WorkspacePanel({
   const [newFolder, setNewFolder] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>('EDITOR');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, setError, runGuarded } = useGuardedWorkspace();
 
   const refreshList = useCallback(async () => {
     if (!userToken) return;
@@ -65,9 +61,9 @@ export function WorkspacePanel({
       setWorkspaces(list);
       if (list.length === 1) setSelectedId(list[0].workspace.id);
     } catch (err) {
-      setError(errorMessage(err, 'Could not load workspaces.'));
+      setError(workspaceErrorMessage(err, 'Could not load workspaces.'));
     }
-  }, [userToken]);
+  }, [userToken, setError]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- initial server-state load on mount. */
   useEffect(() => {
@@ -90,10 +86,10 @@ export function WorkspacePanel({
         setShowAudit(false);
         setError(null);
       } catch (err) {
-        setError(errorMessage(err, 'Could not load workspace.'));
+        setError(workspaceErrorMessage(err, 'Could not load workspace.'));
       }
     },
-    [userToken],
+    [userToken, setError],
   );
 
   /* eslint-disable react-hooks/set-state-in-effect -- selection-driven server-state load. */
@@ -101,23 +97,6 @@ export function WorkspacePanel({
     if (selectedId) void refreshDetail(selectedId);
   }, [selectedId, refreshDetail]);
   /* eslint-enable react-hooks/set-state-in-effect */
-
-  const runGuarded = async (label: string, task: () => Promise<void>) => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await task();
-    } catch (err) {
-      setError(
-        err instanceof ApiError && err.code === 'SEATS_EXHAUSTED'
-          ? 'Seat limit reached. Upgrade to Pro to invite more members.'
-          : errorMessage(err, label),
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
 
   if (!userToken) {
     return (
@@ -168,7 +147,10 @@ export function WorkspacePanel({
       >
         <h1>Workspaces</h1>
         <p>
-          Team rooms, folders, and member roles share one billing seat pool.
+          Team rooms, folders, and member roles share one billing seat pool.{' '}
+          <Link href="/workspaces" style={{ color: '#5b54c7', fontWeight: 600 }}>
+            Open full page →
+          </Link>
         </p>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -390,7 +372,7 @@ export function WorkspacePanel({
                       {roleBadge(member.role)}
                     </span>
                   )}
-                  {canAdmin ? (
+                  {canAdmin && member.userId !== ownerId ? (
                     <button
                       type="button"
                       onClick={() =>
@@ -415,6 +397,31 @@ export function WorkspacePanel({
                       }}
                     >
                       Remove
+                    </button>
+                  ) : null}
+                  {!isOwner && member.userId === userId ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void runGuarded('Could not leave workspace.', async () => {
+                          await removeMember(
+                            selectedId,
+                            member.userId,
+                            userToken,
+                          );
+                          setSelectedId(null);
+                          await refreshList();
+                        })
+                      }
+                      style={{
+                        border: 0,
+                        background: 'transparent',
+                        color: '#e5484d',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                      }}
+                    >
+                      Leave
                     </button>
                   ) : null}
                 </div>
