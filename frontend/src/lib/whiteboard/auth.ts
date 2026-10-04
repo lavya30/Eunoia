@@ -156,6 +156,48 @@ export async function fetchMe(token: string): Promise<AuthUser> {
   return getAuth<AuthUser>('/api/auth/me', token);
 }
 
+export async function updateProfile(
+  token: string,
+  input: { name: string | null },
+): Promise<AuthUser> {
+  const url = `${baseUrl()}/api/auth/me`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    });
+  } catch {
+    throw new ApiError(
+      0,
+      'Could not reach the sync server. Check your connection.',
+    );
+  }
+  const text = await response.text();
+  const payload: unknown = text.trim() ? safeJson(text) : null;
+  if (!response.ok) throw toApiError(response.status, payload, text);
+  return payload as AuthUser;
+}
+
+export async function requestPasswordReset(email: string): Promise<{
+  message: string;
+  resetToken?: string;
+  expiresIn?: number;
+}> {
+  return postAuth('/api/auth/forgot', { email });
+}
+
+export async function resetPassword(input: {
+  token: string;
+  password: string;
+}): Promise<{ message: string }> {
+  return postAuth('/api/auth/reset', input);
+}
+
 export function saveSession(response: AuthResponse): AuthSession {
   const session: AuthSession = {
     token: response.token,

@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createSyncServer, type SyncServer } from "../src/index.js";
 import { MemorySnapshotStore } from "../src/RoomLoader.js";
-import { issueUserToken, verifyUserToken } from "../src/user-auth.js";
+import {
+  issuePasswordResetToken,
+  issueUserToken,
+  verifyPasswordResetToken,
+  verifyUserToken,
+} from "../src/user-auth.js";
 
 const SECRET = "test-secret-32-chars-long-secret!!";
 
@@ -119,5 +124,99 @@ describe("room ownership authorization", () => {
     expect(((await res.json()) as { code: string }).code).toBe(
       "ROOM_NOT_FOUND",
     );
+  });
+
+  test("password reset round-trips: forgot → reset → login", async () => {
+    await register("reset@test.com");
+    const forgot = await fetch(`${baseUrl}/api/auth/forgot`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "reset@test.com" }),
+    });
+    expect(forgot.status).toBe(200);
+    const forgotBody = (await forgot.json()) as { resetToken?: string };
+    // Non-production returns the token inline (no mailer configured).
+    expect(typeof forgotBody.resetToken).toBe("string");
+    const reset = await fetch(`${baseUrl}/api/auth/reset`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        token: forgotBody.resetToken,
+        password: "newpassword123",
+      }),
+    });
+    expect(reset.status).toBe(200);
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "reset@test.com",
+        password: "newpassword123",
+      }),
+    });
+    expect(login.status).toBe(200);
+    const oldLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "reset@test.com",
+        password: "password123",
+      }),
+    });
+    expect(oldLogin.status).toBe(401);
+  });
+
+  test("forgot never enumerates accounts", async () => {
+    const res = await fetch(`${baseUrl}/api/auth/forgot`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "nobody@test.com" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.resetToken).toBeUndefined();
+    expect(body.message).toBeDefined();
+  });
+
+  test("reset rejects forged tokens and PATCH /me updates the name", async () => {
+    const { token } = await register("profile@test.com");
+    const bad = await fetch(`${baseUrl}/api/auth/reset`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        token: "pw1.evil.9999999999.evil",
+        password: "newpassword123",
+      }),
+    });
+    expect(bad.status).toBe(401);
+    const patched = await fetch(`${baseUrl}/api/auth/me`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ name: "Ada" }),
+    });
+    expect(patched.status).toBe(200);
+    expect(((await patched.json()) as { name: string }).name).toBe("Ada");
+    const anon = await fetch(`${baseUrl}/api/auth/me`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Eve" }),
+    });
+    expect(anon.status).toBe(401);
+  });
+});
+
+describe("password reset tokens", () => {
+  test("round-trips and rejects cross-domain tokens", () => {
+    const { token } = issuePasswordResetToken(SECRET, "Ada@Test.com");
+    expect(verifyPasswordResetToken(SECRET, token)).toBe("ada@test.com");
+    // Session tokens must never validate as reset tokens.
+    const session = issueUserToken(SECRET, "user-1", 3600);
+    expect(verifyPasswordResetToken(SECRET, session.token)).toBeNull();
+    expect(
+      verifyPasswordResetToken("other-secret-32-chars-long-!!!!", token),
+    ).toBeNull();
   });
 });

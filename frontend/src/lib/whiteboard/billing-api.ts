@@ -170,3 +170,40 @@ export async function fetchSubscription(
   if (!response.ok) throw toApiError(response.status, payload, text);
   return payload as SubscriptionResponse;
 }
+
+export type InvoiceRecord = {
+  id: string;
+  priceKey: string;
+  seats: number;
+  status: string;
+  currency: string;
+  pricePerSeat: number | null;
+  periodEnd: string | null;
+  createdAt: string;
+  note: string;
+};
+
+export async function fetchInvoices(
+  token?: string,
+): Promise<{ invoices: InvoiceRecord[] }> {
+  const authToken = token ?? getSessionToken();
+  if (!authToken) {
+    throw new ApiError(401, 'Authentication required.', 'AUTH_REQUIRED');
+  }
+  const url = `${baseUrl()}/api/billing/invoices`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+      },
+    });
+  } catch {
+    throw new ApiError(0, 'Could not reach the server. Check your connection.');
+  }
+  const text = await response.text();
+  const payload = text.trim() ? safeJson(text) : null;
+  if (!response.ok) throw toApiError(response.status, payload, text);
+  return payload as { invoices: InvoiceRecord[] };
+}

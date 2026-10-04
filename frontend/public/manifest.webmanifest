@@ -1,0 +1,16 @@
+{
+  "name": "Eunoia — Architecture Whiteboard",
+  "short_name": "Eunoia",
+  "description": "Sketch, diagram, and collaborate with native D2 support.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#f7f4ec",
+  "theme_color": "#5b54c7",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}

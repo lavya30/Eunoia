@@ -2633,3 +2633,34 @@ path.canvas-grid {
     grid-template-columns: 1fr;
   }
 }
+
+/* Touch-first toolbar: coarse pointers get larger targets, bottom-docked
+   toolbar, and pinch-friendly canvas gestures. Mouse layouts unchanged. */
+@media (pointer: coarse) {
+  .board-floating-toolbar {
+    top: auto;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: calc(100vw - 20px);
+    overflow-x: auto;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .floating-tool,
+  .board-floating-toolbar .board-tool {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .board-style-panel {
+    bottom: 76px;
+    right: 12px;
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+  .board-floating-toolbar {
+    touch-action: pan-x;
+  }
+}

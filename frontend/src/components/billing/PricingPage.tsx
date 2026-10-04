@@ -324,7 +324,7 @@ export function PricingPage() {
         {/* Feature comparison guarantee */}
         <div className="mt-20 flex flex-wrap items-center justify-center gap-8 text-white/60 text-sm border-t border-white/10 pt-10 w-full max-w-4xl">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-[#6965DB]" /> Secure Stripe
+            <ShieldCheck className="w-5 h-5 text-[#6965DB]" /> Secure Razorpay
             Checkout
           </div>
           <div className="flex items-center gap-2">

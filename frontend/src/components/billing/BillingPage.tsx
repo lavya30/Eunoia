@@ -5,9 +5,11 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, loadSession } from '@/lib/whiteboard/auth';
 import {
+  fetchInvoices,
   fetchSubscription,
   cancelSubscription,
   SubscriptionData,
+  InvoiceRecord,
 } from '@/lib/whiteboard/billing-api';
 import { CreditCard, CheckCircle2, ArrowLeft, User } from 'lucide-react';
 
@@ -18,6 +20,7 @@ export function BillingPage() {
   const [subscription, setSubscription] = useState<SubscriptionData | null>(
     null,
   );
+  const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [userTier, setUserTier] = useState<string>('COMMUNITY');
   const [loading, setLoading] = useState(true);
   const [cancelLoading, setCancelLoading] = useState(false);
@@ -49,6 +52,12 @@ export function BillingPage() {
       .then((res) => {
         setSubscription(res.subscription);
         setUserTier(res.userTier || currentSession.user.tier || 'COMMUNITY');
+        return fetchInvoices(currentSession.token).catch(() => ({
+          invoices: [] as InvoiceRecord[],
+        }));
+      })
+      .then((res) => {
+        setInvoices(res.invoices);
       })
       .catch((err) => {
         // Expired/revoked tokens must offer a way forward, not a dead end.
@@ -293,6 +302,45 @@ export function BillingPage() {
                   >
                     Compare All Plans
                   </Link>
+                </div>
+
+                {/* Invoice history */}
+                <div className="pt-4 border-t border-white/10">
+                  <h2 className="text-sm font-bold text-white mb-1">
+                    Invoice history
+                  </h2>
+                  <p className="text-xs text-white/50 mb-3">
+                    Itemized receipts are emailed by Razorpay per charge. The
+                    rows below come from your subscription record.
+                  </p>
+                  {invoices.length === 0 ? (
+                    <p className="text-xs text-white/50">
+                      No invoices yet. Need a copy? Email billing@eunoia.dev
+                      from your account email.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {invoices.map((invoice) => (
+                        <li
+                          key={invoice.id}
+                          className="bg-white/5 p-3 rounded-xl border border-white/5 text-xs text-white/80 flex flex-wrap gap-x-4 gap-y-1"
+                        >
+                          <span className="font-semibold text-white">
+                            {invoice.priceKey} × {invoice.seats}
+                          </span>
+                          <span className="capitalize">{invoice.status}</span>
+                          <span>
+                            {new Date(invoice.createdAt).toLocaleDateString()}
+                          </span>
+                          {invoice.pricePerSeat !== null ? (
+                            <span>
+                              {invoice.currency} {invoice.pricePerSeat}/seat
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             )}

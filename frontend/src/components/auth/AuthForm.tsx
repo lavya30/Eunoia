@@ -135,7 +135,28 @@ function ArrowIcon() {
   );
 }
 
-function SsoButton({ next }: { next: string | null }) {
+function SsoButtons({ next }: { next: string | null }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <SsoButton next={next} label="Continue with Google" />
+      <SsoButton
+        next={next}
+        label="Continue with Enterprise SSO"
+        hint="Okta / Entra via the configured OIDC provider"
+      />
+    </div>
+  );
+}
+
+function SsoButton({
+  next,
+  label,
+  hint,
+}: {
+  next: string | null;
+  label: string;
+  hint?: string;
+}) {
   const [started, setStarted] = useState(false);
   const [ssoError, setSsoError] = useState<string | null>(null);
   const [available, setAvailable] = useState(true);
@@ -193,8 +214,11 @@ function SsoButton({ next }: { next: string | null }) {
         disabled={started}
         onClick={() => void start()}
       >
-        {started ? 'Redirecting…' : 'Continue with Google'}
+        {started ? 'Redirecting…' : label}
       </button>
+      {hint && !ssoError ? (
+        <p style={{ fontSize: 12, opacity: 0.65, margin: '4px 0 0' }}>{hint}</p>
+      ) : null}
       {ssoError ? (
         <p className="auth-form-error" role="alert">
           {ssoError}
@@ -588,8 +612,15 @@ export function AuthForm({
                 </form>
 
                 <div style={{ marginTop: 12 }}>
-                  <SsoButton next={next} />
+                  <SsoButtons next={next} />
                 </div>
+                {mode === 'login' ? (
+                  <p style={{ marginTop: 10, fontSize: 13 }}>
+                    <Link href="/forgot" style={{ color: '#5b54c7' }}>
+                      Forgot your password?
+                    </Link>
+                  </p>
+                ) : null}
 
                 <ul
                   className="auth-trust"

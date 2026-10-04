@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import { SmoothScroll } from '@/components/providers/smooth-scroll';
 import './globals.css';
@@ -17,6 +17,11 @@ export const metadata: Metadata = {
   title: 'Eunoia | Architecture Whiteboard & D2 Diagram Canvas',
   description:
     'Sketch, diagram, and collaborate seamlessly with Eunoia — the modern architecture whiteboard with native D2 support.',
+  manifest: '/manifest.webmanifest',
+};
+
+export const viewport: Viewport = {
+  themeColor: '#5b54c7',
 };
 
 export default function RootLayout({

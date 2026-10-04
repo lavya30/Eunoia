@@ -3,8 +3,11 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import {
+  ApiError,
   clearSession,
   loadSession,
+  saveSession,
+  updateProfile,
   type AuthSession,
 } from '@/lib/whiteboard/auth';
 
@@ -200,6 +203,20 @@ export function SettingsPage() {
                 >
                   Billing
                 </Link>
+                <Link
+                  href="/forgot"
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 10,
+                    border: '1px solid #e3e2ea',
+                    background: '#fff',
+                    fontWeight: 600,
+                    fontSize: 13,
+                    color: '#35374a',
+                  }}
+                >
+                  Change password
+                </Link>
                 <button
                   type="button"
                   onClick={() => {
@@ -243,6 +260,10 @@ export function SettingsPage() {
             </div>
           )}
         </section>
+
+        {mounted && session ? (
+          <ProfileNameForm session={session} onUpdated={refresh} />
+        ) : null}
 
         <section
           aria-label="Browser storage"
@@ -329,6 +350,9 @@ export function SettingsPage() {
         </section>
 
         <div style={{ marginTop: 24, fontSize: 13, display: 'flex', gap: 16 }}>
+          <Link href="/dashboard" style={{ color: '#5b54c7', fontWeight: 600 }}>
+            Boards →
+          </Link>
           <Link href="/board" style={{ color: '#5b54c7', fontWeight: 600 }}>
             Open a board →
           </Link>
@@ -341,8 +365,108 @@ export function SettingsPage() {
           <Link href="/status" style={{ color: '#5b54c7', fontWeight: 600 }}>
             System status →
           </Link>
+          <Link href="/changelog" style={{ color: '#5b54c7', fontWeight: 600 }}>
+            Changelog →
+          </Link>
         </div>
       </div>
     </main>
+  );
+}
+
+function ProfileNameForm({
+  session,
+  onUpdated,
+}: {
+  session: AuthSession;
+  onUpdated: () => void;
+}) {
+  const [name, setName] = useState(session.user.name ?? '');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  return (
+    <section
+      aria-label="Profile"
+      style={{
+        padding: 18,
+        borderRadius: 12,
+        background: '#fff',
+        border: '1px solid #e3e2ea',
+        marginBottom: 16,
+      }}
+    >
+      <h2 style={{ fontSize: 15, margin: '0 0 4px' }}>Profile</h2>
+      <p style={{ fontSize: 12, color: '#6b6d85', margin: '0 0 12px' }}>
+        Display name shown on presence avatars and comments.
+      </p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Your name"
+          aria-label="Display name"
+          style={{
+            border: '1px solid #e3e2ea',
+            borderRadius: 8,
+            padding: '8px 10px',
+            fontSize: 13,
+            flex: 1,
+          }}
+        />
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setMessage(null);
+            void updateProfile(session.token, {
+              name: name.trim() ? name.trim() : null,
+            })
+              .then((user) => {
+                try {
+                  saveSession({
+                    user,
+                    token: session.token,
+                    expiresIn: Math.max(
+                      60,
+                      Math.floor((session.expiresAt - Date.now()) / 1000),
+                    ),
+                  });
+                } catch {
+                  // Best-effort session refresh.
+                }
+                setMessage('Name updated.');
+                onUpdated();
+              })
+              .catch((error: unknown) => {
+                setMessage(
+                  error instanceof ApiError
+                    ? error.message
+                    : 'Could not update your name.',
+                );
+              })
+              .finally(() => setBusy(false));
+          }}
+          style={{
+            padding: '8px 14px',
+            borderRadius: 8,
+            background: '#5b54c7',
+            color: '#fff',
+            border: 0,
+            fontWeight: 600,
+            fontSize: 13,
+            cursor: busy ? 'wait' : 'pointer',
+          }}
+        >
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {message ? (
+        <p style={{ fontSize: 12, marginTop: 8 }} role="status">
+          {message}
+        </p>
+      ) : null}
+    </section>
   );
 }

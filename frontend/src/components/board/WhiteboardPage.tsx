@@ -142,6 +142,9 @@ import {
 import { CreateRoomDialog, UnlockDialog } from './RoomDialogs';
 import { WorkspacePanel } from './WorkspacePanel';
 import { RemoteCursors } from './RemoteCursors';
+import { CommentsPanel } from './CommentsPanel';
+import { OnboardingTour } from '@/components/onboarding/OnboardingTour';
+import { parseBoardExport } from '@/lib/whiteboard/board-import';
 import { RoomSettingsDialog } from './RoomSettingsDialog';
 import { HistoryPanel } from './HistoryPanel';
 import { SearchPalette } from './SearchPalette';
@@ -1262,6 +1265,8 @@ export function WhiteboardPage({
   const [showHistory, setShowHistory] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showComments, setShowComments] = useState(false);
+  const [followedPeerId, setFollowedPeerId] = useState<number | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
@@ -1625,6 +1630,56 @@ export function WhiteboardPage({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
+
+  // Dashboard handoff: templates stash D2 source and imports stash board
+  // JSON in sessionStorage under a per-room key (see DashboardPage). Apply
+  // once when the room becomes ready, then clear the key.
+  /* eslint-disable react-hooks/set-state-in-effect -- one-shot handoff applied on room-ready, not a render loop. */
+  useEffect(() => {
+    if (!roomId || roomStatus !== 'ready') return;
+    try {
+      const templateKey = `eunoia:template-d2:${roomId}`;
+      const templateD2 = window.sessionStorage.getItem(templateKey);
+      if (templateD2) {
+        window.sessionStorage.removeItem(templateKey);
+        setCode(templateD2);
+        setShowCode(true);
+      }
+      const importKey = `eunoia:import-board:${roomId}`;
+      const importPayload = window.sessionStorage.getItem(importKey);
+      if (importPayload) {
+        window.sessionStorage.removeItem(importKey);
+        const parsed = parseBoardExport(importPayload);
+        if (parsed) {
+          setNodes(parsed.nodes);
+          setArrows(parsed.arrows);
+          setStrokes(parsed.strokes);
+          if (parsed.code) setCode(parsed.code);
+        }
+      }
+    } catch {
+      // Best-effort handoff; the board is usable without it.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, roomStatus]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Follow mode: track the followed peer's cursor by centering the camera
+  // on it. Any manual pan/zoom interaction clears the follow.
+  /* eslint-disable react-hooks/set-state-in-effect -- follow-mode camera tracking driven by peer telemetry. */
+  useEffect(() => {
+    if (followedPeerId === null) return;
+    const peer = peers.find((entry) => entry.clientId === followedPeerId);
+    if (!peer?.cursor) return;
+    const viewport = canvasViewportRef.current;
+    const cursor = peer.cursor;
+    setCamera((current) => ({
+      ...current,
+      x: cursor.x - viewport.width / 2 / current.zoom,
+      y: cursor.y - viewport.height / 2 / current.zoom,
+    }));
+  }, [peers, followedPeerId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (
@@ -5515,6 +5570,45 @@ export function WhiteboardPage({
             <Layers2 size={16} />
             Workspaces
           </button>
+          <Link className="share-button" href="/dashboard">
+            Boards
+          </Link>
+          <button
+            className="share-button"
+            type="button"
+            title="Toggle comments"
+            aria-label="Toggle comments"
+            aria-pressed={showComments}
+            onClick={() => setShowComments((value) => !value)}
+          >
+            Comments
+          </button>
+          {peers.length > 0 ? (
+            <select
+              aria-label="Follow a teammate"
+              title="Follow a teammate's viewport"
+              value={followedPeerId === null ? '' : String(followedPeerId)}
+              onChange={(event) =>
+                setFollowedPeerId(
+                  event.target.value ? Number(event.target.value) : null,
+                )
+              }
+              style={{
+                border: '1px solid #e3e2ea',
+                borderRadius: 8,
+                padding: '6px 8px',
+                fontSize: 13,
+                background: '#fff',
+              }}
+            >
+              <option value="">Follow…</option>
+              {peers.map((peer) => (
+                <option key={peer.clientId} value={peer.clientId}>
+                  Follow {peer.user.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {mounted && session ? (
             <div ref={accountMenuRef} style={{ position: 'relative' }}>
               <button
@@ -5572,8 +5666,15 @@ export function WhiteboardPage({
                       gap: 12,
                       marginTop: 8,
                       fontSize: 13,
+                      flexWrap: 'wrap',
                     }}
                   >
+                    <a
+                      href="/dashboard"
+                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                    >
+                      Boards
+                    </a>
                     <a
                       href="/pricing"
                       style={{ color: '#5b54c7', fontWeight: 600 }}
@@ -6007,7 +6108,7 @@ export function WhiteboardPage({
                     setExportMenuOpen(false);
                     if (
                       window.confirm(
-                        'Delete this board and its history? This cannot be undone.',
+                        'Move this board to Trash? Restore it from Boards → Trash within 30 days.',
                       )
                     ) {
                       const doomedRoomId = roomId;
@@ -6027,9 +6128,28 @@ export function WhiteboardPage({
                       )
                         .then(() => {
                           clearTicket(doomedRoomId);
+                          try {
+                            const raw =
+                              window.localStorage.getItem('eunoia:trash:v1');
+                            const parsed = raw ? JSON.parse(raw) : [];
+                            const next = [
+                              {
+                                id: doomedRoomId,
+                                name: boardTitle || 'Untitled board',
+                                deletedAt: Date.now(),
+                              },
+                              ...(Array.isArray(parsed) ? parsed : []),
+                            ].slice(0, 50);
+                            window.localStorage.setItem(
+                              'eunoia:trash:v1',
+                              JSON.stringify(next),
+                            );
+                          } catch {
+                            // Best-effort trash record.
+                          }
                           // Replace (not push): Back must not land on the
                           // just-deleted room's missing state.
-                          router.replace('/board');
+                          router.replace('/dashboard?restored=trash');
                         })
                         .catch((error: unknown) => {
                           setBoardError(
@@ -7116,6 +7236,72 @@ export function WhiteboardPage({
       ) : null}
       {showShortcuts ? (
         <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
+      ) : null}
+      <OnboardingTour />
+      {followedPeerId !== null ? (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: 16,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#252747',
+            color: '#fff',
+            borderRadius: 999,
+            padding: '8px 14px',
+            fontSize: 13,
+            zIndex: 60,
+            display: 'flex',
+            gap: 12,
+            alignItems: 'center',
+          }}
+        >
+          Following{' '}
+          {peers.find((peer) => peer.clientId === followedPeerId)?.user.name ??
+            'teammate'}
+          <button
+            type="button"
+            onClick={() => setFollowedPeerId(null)}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.4)',
+              color: '#fff',
+              borderRadius: 999,
+              padding: '2px 10px',
+              cursor: 'pointer',
+              fontSize: 12,
+            }}
+          >
+            Stop
+          </button>
+        </div>
+      ) : null}
+      {showComments && roomId ? (
+        <div
+          style={{
+            position: 'fixed',
+            right: 16,
+            top: 120,
+            width: 320,
+            maxHeight: '60vh',
+            overflowY: 'auto',
+            zIndex: 55,
+          }}
+        >
+          <CommentsPanel
+            roomId={roomId}
+            author={session?.user.name ?? session?.user.email ?? 'Anonymous'}
+            onFocus={(comment) => {
+              const viewport = canvasViewportRef.current;
+              setCamera((current) => ({
+                ...current,
+                x: comment.x - viewport.width / 2 / current.zoom,
+                y: comment.y - viewport.height / 2 / current.zoom,
+              }));
+            }}
+          />
+        </div>
       ) : null}
     </div>
   );

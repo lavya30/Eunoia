@@ -59,7 +59,12 @@ import {
   sealState,
   verifyIdToken,
 } from '../sso.js';
-import { issueUserToken, verifyUserToken } from '../user-auth.js';
+import {
+  issueUserToken,
+  issuePasswordResetToken,
+  verifyPasswordResetToken,
+  verifyUserToken,
+} from '../user-auth.js';
 import type { PublicUser, UserStore } from '../users.js';
 import { appVersion } from '../version.js';
 import {
@@ -73,6 +78,7 @@ import {
   CreateFolderSchema,
   CreateRoomSchema,
   CreateWorkspaceSchema,
+  ForgotPasswordSchema,
   GenerateDiagramSchema,
   ImageConfirmSchema,
   ImageContentTypeSchema,
@@ -83,11 +89,13 @@ import {
   LoginUserSchema,
   MoveRoomSchema,
   RegisterUserSchema,
+  ResetPasswordSchema,
   RoomListQuerySchema,
   SnapshotQuerySchema,
   SuggestLayoutSchema,
   UnlockRoomSchema,
   UpdateMemberSchema,
+  UpdateMeSchema,
   UpdateRoomSchema,
   validationError,
 } from './schemas.js';
@@ -1096,6 +1104,82 @@ export function createApiApp(
           return { error: 'Invalid or expired token', code: 'INVALID_TOKEN' };
         }
         return user;
+      })
+      .patch('/api/auth/me', async ({ body, headers, set }) => {
+        const user = await requestUser(
+          users,
+          headers as Record<string, string | undefined>,
+          ticketSecret,
+        );
+        if (!user) {
+          set.status = 401;
+          return { error: 'Invalid or expired token', code: 'INVALID_TOKEN' };
+        }
+        const parsed = UpdateMeSchema.safeParse(body);
+        if (!parsed.success) {
+          set.status = 400;
+          return validationError(parsed.error);
+        }
+        const updated = await users.updateProfile(user.id, {
+          name: parsed.data.name,
+        });
+        if (!updated) {
+          set.status = 404;
+          return { error: 'User not found', code: 'USER_NOT_FOUND' };
+        }
+        return updated;
+      })
+      .post('/api/auth/forgot', async ({ body, set }) => {
+        const parsed = ForgotPasswordSchema.safeParse(body);
+        if (!parsed.success) {
+          set.status = 400;
+          return validationError(parsed.error);
+        }
+        // Never reveal whether the email exists: identical response either
+        // way. In non-production the reset token is returned inline so
+        // self-hosters without a mailer can still complete the flow from
+        // server logs or the API response.
+        const user = await users.findByEmail(parsed.data.email);
+        if (!user) return { message: 'If that email exists, a reset was issued' };
+        const { token, expiresIn } = issuePasswordResetToken(
+          ticketSecret,
+          user.email,
+        );
+        if (config.nodeEnv === 'production') {
+          return { message: 'If that email exists, a reset was issued' };
+        }
+        return {
+          message: 'If that email exists, a reset was issued',
+          resetToken: token,
+          expiresIn,
+        };
+      })
+      .post('/api/auth/reset', async ({ body, set }) => {
+        const parsed = ResetPasswordSchema.safeParse(body);
+        if (!parsed.success) {
+          set.status = 400;
+          if (parsed.error.issues.some((issue) => issue.path[0] === 'password'))
+            return {
+              error: 'Password must be at least 8 characters',
+              code: 'INVALID_PASSWORD',
+            };
+          return validationError(parsed.error);
+        }
+        const email = verifyPasswordResetToken(
+          ticketSecret,
+          parsed.data.token,
+        );
+        if (!email) {
+          set.status = 401;
+          return { error: 'Invalid or expired reset token', code: 'INVALID_TOKEN' };
+        }
+        const user = await users.findByEmail(email);
+        if (!user) {
+          set.status = 401;
+          return { error: 'Invalid or expired reset token', code: 'INVALID_TOKEN' };
+        }
+        await users.updatePasswordHash(user.id, hashPassword(parsed.data.password));
+        return { message: 'Password has been reset' };
       })
       .get('/api/auth/sso/start', async ({ query, set }) => {
         const oidc = oidcConfig(config);
@@ -2597,6 +2681,52 @@ export function createApiApp(
           user.id,
         );
         return { subscription: subscription ?? null, userTier: user.tier };
+      })
+      .get('/api/billing/invoices', async ({ headers, set }) => {
+        // Invoice history is derived from the local subscription record
+        // (Razorpay emails itemized receipts per charge; there is no local
+        // invoice ledger to reconcile against). Returns zero or more rows
+        // so the Billing page can render history without provider secrets
+        // ever reaching the browser.
+        const billing = deps.billing;
+        if (!billing) {
+          set.status = 503;
+          return {
+            error: 'Billing is not configured',
+            code: 'BILLING_NOT_CONFIGURED',
+          };
+        }
+        const user = await requestUser(
+          users,
+          headers as Record<string, string | undefined>,
+          ticketSecret,
+        );
+        if (!user) {
+          set.status = 401;
+          return { error: 'Authentication required', code: 'AUTH_REQUIRED' };
+        }
+        const subscription = await billing.subscriptionStore.findByUserId(
+          user.id,
+        );
+        if (!subscription) return { invoices: [] };
+        const plan = billing.provider
+          .plans()
+          .find((entry) => entry.key === subscription.priceKey);
+        return {
+          invoices: [
+            {
+              id: subscription.id,
+              priceKey: subscription.priceKey,
+              seats: subscription.seats,
+              status: subscription.status,
+              currency: plan?.currency ?? 'USD',
+              pricePerSeat: plan?.pricePerSeat ?? null,
+              periodEnd: subscription.periodEnd,
+              createdAt: subscription.createdAt,
+              note: 'Itemized receipts are emailed by Razorpay per charge.',
+            },
+          ],
+        };
       })
       .get('/api/audit', async ({ headers, query, set }) => {
         const user = await requestUser(

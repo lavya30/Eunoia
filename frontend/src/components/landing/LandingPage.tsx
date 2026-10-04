@@ -552,7 +552,7 @@ function DoodleSection({
 export function LandingPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
-  const openBoard = () => router.push('/board');
+  const openBoard = () => router.push('/dashboard');
 
   return (
     <div className="eunoia-landing">

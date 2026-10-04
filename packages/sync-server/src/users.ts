@@ -32,6 +32,13 @@ export interface UserStore {
   getPasswordHash(userId: string): Promise<string | null>;
   /** Update the user's subscription tier. Returns null if user not found. */
   updateTier(userId: string, tier: Tier): Promise<PublicUser | null>;
+  /** Replace the password hash (password reset / change). */
+  updatePasswordHash(userId: string, passwordHash: string): Promise<boolean>;
+  /** Update editable profile fields. Returns null if user not found. */
+  updateProfile(
+    userId: string,
+    updates: { name?: string | null },
+  ): Promise<PublicUser | null>;
   /**
    * SSO link-or-create: returns the user bound to (provider, subject),
    * creating and/or linking as needed. Same email links to the existing
@@ -84,6 +91,27 @@ export class MemoryUserStore implements UserStore {
     const row = this.byId.get(userId);
     if (!row) return null;
     row.tier = tier;
+    return toPublicUser(row);
+  }
+
+  async updatePasswordHash(
+    userId: string,
+    passwordHash: string,
+  ): Promise<boolean> {
+    const row = this.byId.get(userId);
+    if (!row) return false;
+    row.passwordHash = passwordHash;
+    return true;
+  }
+
+  async updateProfile(
+    userId: string,
+    updates: { name?: string | null },
+  ): Promise<PublicUser | null> {
+    const row = this.byId.get(userId);
+    if (!row) return null;
+    if (updates.name !== undefined)
+      row.name = updates.name?.trim() ? updates.name.trim() : null;
     return toPublicUser(row);
   }
 
@@ -162,6 +190,57 @@ export class PrismaUserStore implements UserStore {
       const row = await this.prisma.user.update({
         where: { id: userId },
         data: { tier },
+      });
+      return toPublicUser(row);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error as { code?: string }).code === "P2025"
+      )
+        return null;
+      throw error;
+    }
+  }
+
+  async updatePasswordHash(
+    userId: string,
+    passwordHash: string,
+  ): Promise<boolean> {
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      });
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error as { code?: string }).code === "P2025"
+      )
+        return false;
+      throw error;
+    }
+  }
+
+  async updateProfile(
+    userId: string,
+    updates: { name?: string | null },
+  ): Promise<PublicUser | null> {
+    try {
+      const row = await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(updates.name !== undefined
+            ? {
+                name:
+                  updates.name?.trim() && updates.name.trim().length > 0
+                    ? updates.name.trim()
+                    : null,
+              }
+            : {}),
+        },
       });
       return toPublicUser(row);
     } catch (error) {

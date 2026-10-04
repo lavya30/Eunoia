@@ -152,6 +152,28 @@ export const LoginUserSchema = z
   })
   .strict();
 
+export const ForgotPasswordSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(MAX_ROOM_ID_LENGTH),
+  })
+  .strict();
+
+export const ResetPasswordSchema = z
+  .object({
+    token: z.string().trim().min(1).max(2048),
+    password: z.string().min(8).max(MAX_PASSWORD_LENGTH),
+  })
+  .strict();
+
+export const UpdateMeSchema = z
+  .object({
+    name: z.string().trim().min(1).max(MAX_TEXT_LENGTH).nullable(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one field must be provided",
+  });
+
 export const UpdateRoomSchema = z
   .object({
     name: z.string().trim().min(1).max(MAX_TEXT_LENGTH).optional(),
