@@ -1,13 +1,16 @@
-# Upptime status-page + external prober configuration.
+# Upptime status-page + external prober configuration (Upptime reads
+# `.upptimerc.yml` in the repo root).
 #
-# At Pro launch, enable the Upptime GitHub workflow in this repo (or a
-# dedicated `status` repo — update `status-website.owner/repo` below). It
-# probes `/health` + `/readyz` at a 60s interval from 2+ regions and keeps
-# the server-side uptime history that backs SLA credits (docs/SLO.md).
+# At Pro launch, replace `YOUR-PROD-HOST` with the production sync-server
+# origin and set the `GH_PAT` secret (classic PAT with `repo` scope — the
+# stock GITHUB_TOKEN cannot push the status-site commits). The workflows in
+# `.github/workflows/uptime*.yml` + `response-time.yml` do the rest: probe
+# `/health` + `/readyz` from 2+ regions and keep the server-side uptime
+# history that backs SLA credits (docs/SLO.md).
 # Until then probing stays browser-local (see StatusPage.tsx).
 #
-# Replace `YOUR-PROD-HOST` with the production sync-server origin and set
-# the `GH_PAT` / `GH_TOKEN` secret for the Upptime workflow.
+# Upptime opens one GitHub issue per outage and assigns the current
+# primary (see `assignees` below + docs/RUNBOOK.md on-call rotation).
 
 owner: lavya30
 repo: Eunoia
@@ -16,9 +19,14 @@ sites:
   - name: Sync API (liveness)
     url: https://YOUR-PROD-HOST/health
     expectedStatusCodes: [200]
+    # On-call primary gets auto-assigned to incident issues.
+    # Fill with the current primary's GitHub username at launch (weekly
+    # rotation chore, see docs/RUNBOOK.md); empty until then.
+    assignees: []
   - name: Sync readiness
     url: https://YOUR-PROD-HOST/readyz
     expectedStatusCodes: [200]
+    assignees: []
 
 status-website:
   # Base URL of the deployed status page (Upptime README action).

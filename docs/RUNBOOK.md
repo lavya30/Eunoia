@@ -32,6 +32,24 @@ checks: { database, redis, compiler, imageStorage } }`. Each check is
 | RBI recurring notes                            | First mandate charge needs customer 2FA (hosted link handles it); UPI Autopay caps at ₹15,000/cycle — card mandates suit $12 plans | Razorpay dashboard                                               | Nothing to build; pre-debit notifications + eFIRC are Razorpay-side                                   |
 | Rising 5xx in `eunoia_http_requests_total`     | App regression                                                                                                                     | `docker compose logs sync-server` (pino JSON access lines)       | Roll back to last good image                                                                          |
 
+## Billing go-live checklist (test mode first, then live)
+
+1. Razorpay dashboard (test mode): create the Pro plan ($12/user/mo, card
+   mandates per the RBI note above) → record the plan id as
+   `RAZORPAY_PLAN_PRO`. Register
+   `https://<staging-host>/api/billing/webhook`, copy the webhook secret.
+   Keys live in host env / deploy secrets — never in git.
+2. Set `RAZORPAY_KEY_ID/SECRET/WEBHOOK_SECRET/PLAN_PRO` on staging;
+   confirm `/api/billing/*` stops returning `BILLING_NOT_CONFIGURED` and
+   `GET /api/billing/prices` matches `PricingPage.tsx` ($12/$30).
+3. Run the drill (human, staging, never CI):
+   `bun scripts/verify-billing.ts --confirm-staging --sync-url=https://<staging-host>`
+   — register → test payment on the hosted link → webhook tier flip →
+   redelivery idempotency → cancel at cycle end.
+4. Cutover: swap test→live keys, re-register the live webhook, repeat the
+   drill once against production. Keep the test plan IDs here for future
+   staging drills.
+
 ## Environment knobs
 
 - `ROOM_TICKET_SECRET` unset → ephemeral secret (warns in logs); tickets
@@ -42,8 +60,9 @@ checks: { database, redis, compiler, imageStorage } }`. Each check is
 
 ## External probing (status page backend)
 
-Upptime (`.upptime.yml`) is the prober: enable its workflow at Pro launch
-with the production origin filled in and the `GH_PAT` secret set. It hits
+Upptime (`.upptimerc.yml` + `.github/workflows/uptime*.yml`) is the prober:
+fill in the production origin and set the `GH_PAT` secret (classic PAT,
+`repo` scope). It hits
 `GET /health` + `GET /readyz` from 2+ regions at 60s intervals. Alert on:
 unreachable, HTTP 503, or `status: "down"` for
 
@@ -123,14 +142,20 @@ back to its browser-kept 48h log when unset or unreachable.
 3. Post a retrospective when the error budget (docs/SLO.md) drops below
    50% in a window.
 
-## On-call rotation (template — fill names at Pro launch)
+## On-call rotation (fill names at Pro launch)
 
 | Week (Mon–Sun) | Primary        | Secondary      |
 | -------------- | -------------- | -------------- |
-| YYYY-MM-DD     | name (contact) | name (contact) |
+| YYYY-MM-DD     | TBD (username) | TBD (username) |
+| YYYY-MM-DD     | TBD (username) | TBD (username) |
 
-- **Paging:** `down` (503 `/readyz`) or unreachable ×3 probes → page
-  primary immediately. `degraded` → ticket for business hours. Rising
+- **Assignees:** the current primary's GitHub username goes in the
+  `assignees` lists in `.upptimerc.yml` — Upptime auto-assigns each
+  incident issue to them. Rotating the lists is a 2-minute weekly chore
+  done at handoff until it's worth automating.
+- **Paging:** `down` (503 `/readyz`) or unreachable ×3 probes → Upptime
+  opens an incident issue assigned to primary: page immediately.
+  `degraded` → ticket for business hours. Rising
   `eunoia_ws_upgrades_total{outcome="locked"}` is usually credential
   rotation, not an outage — check deploys first.
 - **Handoff:** Monday 09:00 local; outgoing primary posts open incidents +
@@ -138,3 +163,14 @@ back to its browser-kept 48h log when unset or unreachable.
 - **Escalation:** no ack in 15 min → secondary; no ack in 30 min → whole
   team. SLA credits (when the contract is signed) are computed from the
   prober history, not from recollection.
+
+## Launch dry run (do once, before signing the SLA)
+
+1. Stop staging `d2-compiler` → `/readyz` goes `degraded`: confirm NO
+   incident issue opens (degraded is not downtime).
+2. Stop staging `postgres` → `/readyz` goes `down`: confirm an incident
+   issue opens within ~3 probe cycles, assigned to the primary.
+3. Measure ack time against the 15-minute target; practice mitigate
+   (restart) → diagnose (`/metrics` + container logs).
+4. Heal postgres → confirm the issue auto-closes. Link the dry-run issue
+   here as the worked example.

@@ -27,7 +27,7 @@ compiles keep working by design.
 
 ## External probing
 
-Upptime (`.upptime.yml`) probes `GET /health` + `GET /readyz` at a 60s
+Upptime (`.upptimerc.yml`, workflows `uptime*.yml`) probes `GET /health` + `GET /readyz` at a 60s
 interval from 2+ regions. `ready`/`degraded` count as up; `down` or
 unreachable count as down. >3 consecutive failures open an incident and
 page per `docs/RUNBOOK.md`. The `/status` page prefers Upptime

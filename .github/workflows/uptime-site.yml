@@ -1,0 +1,25 @@
+name: Uptime status site
+
+# Rebuilds the status-site pages/graphs from probe history after each
+# monitoring run. Same secret requirement as uptime.yml (`GH_PAT`).
+
+on:
+  workflow_run:
+    workflows: ["Uptime monitor", "Uptime response-time tracking"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-site:
+    name: Update status site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update graphs
+        uses: upptime/update-graphs@v1
+        with:
+          committer: Eunoia status bot <bot@eunoia.dev>
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}

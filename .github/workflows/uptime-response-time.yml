@@ -1,0 +1,24 @@
+name: Uptime response-time tracking
+
+# Records per-probe response times for the graphs workflow. Same secret
+# requirement as uptime.yml (`GH_PAT`).
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  response-time:
+    name: Record response times
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check response times
+        uses: upptime/uptime-monitor@v1
+        with:
+          command: response-time
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}

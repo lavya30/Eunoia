@@ -1,0 +1,30 @@
+name: Uptime monitor
+
+# Upptime prober: hits every site in `.upptimerc.yml` and opens a GitHub
+# issue per outage (assigned to the site's `assignees`, i.e. the on-call
+# primary). Requires the `GH_PAT` secret (classic PAT, `repo` scope).
+# Until `YOUR-PROD-HOST` is replaced with the production origin, these
+# runs fail closed — keep the workflow disabled (comment out the schedule)
+# or expect red checks pre-launch.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uptime-monitor
+  cancel-in-progress: false
+
+jobs:
+  uptime:
+    name: Probe production endpoints
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check production uptime
+        uses: upptime/uptime-monitor@v1
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
