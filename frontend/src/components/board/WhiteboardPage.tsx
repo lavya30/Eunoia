@@ -31,6 +31,7 @@ import {
   Hand,
   Image as ImageIcon,
   Layers2,
+  LayoutTemplate,
   LockKeyhole,
   Map as MapIcon,
   Maximize2,
@@ -40,10 +41,12 @@ import {
   MoveHorizontal,
   PanelRight,
   Pencil,
+  Presentation,
   Redo2,
   RotateCcw,
   Search,
   Share2,
+  Sparkles,
   Square,
   StickyNote,
   Type,
@@ -98,6 +101,7 @@ import type {
   BoardComment,
   BoardNode,
   BoardStroke,
+  FrameAspectRatio,
   InkPoint,
 } from '@/lib/whiteboard/board-types';
 import {
@@ -185,6 +189,17 @@ import {
   type SnapCandidate,
 } from '@/lib/whiteboard/smart-guides';
 import { CanvasScheduler } from '@/lib/whiteboard/canvas-scheduler';
+import {
+  sortFrames,
+  getFrameCamera,
+  getContainedElements,
+} from '@/lib/whiteboard/frames';
+import {
+  pruneLaserPoints,
+  type LaserPoint,
+} from '@/lib/whiteboard/laser';
+import { LaserOverlay, type RemoteLaserPeer } from './LaserOverlay';
+import { PresenterHud } from './PresenterHud';
 import './board.css';
 
 type ToolId =
@@ -199,7 +214,9 @@ type ToolId =
   | 'draw'
   | 'eraser'
   | 'text'
-  | 'comment';
+  | 'comment'
+  | 'frame'
+  | 'laser';
 
 type Interaction =
   | { kind: 'pan'; pointerId: number; lastScreen: Point }
@@ -243,7 +260,7 @@ type Interaction =
   | {
       kind: 'create';
       pointerId: number;
-      tool: Exclude<ToolId, 'select' | 'hand' | 'comment'>;
+      tool: Exclude<ToolId, 'select' | 'hand' | 'comment' | 'laser'>;
       startWorld: Point;
       currentWorld: Point;
       color: string;
@@ -258,6 +275,10 @@ type Interaction =
     }
   | {
       kind: 'erase';
+      pointerId: number;
+    }
+  | {
+      kind: 'laser';
       pointerId: number;
     };
 
@@ -876,6 +897,7 @@ const NODE_SHAPES = new Set([
   'image',
   'diamond',
   'line',
+  'frame',
 ]);
 
 function sanitizeNode(raw: unknown): BoardNode | null {
@@ -935,6 +957,18 @@ function sanitizeNode(raw: unknown): BoardNode | null {
       n.z === undefined
         ? undefined
         : clampSize(Math.round(finiteOr(n.z, 0)), -100000, 100000),
+    aspectRatio:
+      typeof n.aspectRatio === 'string' &&
+      (n.aspectRatio === '16:9' ||
+        n.aspectRatio === '4:3' ||
+        n.aspectRatio === '1:1' ||
+        n.aspectRatio === 'custom')
+        ? (n.aspectRatio as FrameAspectRatio)
+        : undefined,
+    frameIndex:
+      typeof n.frameIndex === 'number' && Number.isFinite(n.frameIndex)
+        ? Math.round(n.frameIndex)
+        : undefined,
   };
 }
 
@@ -1256,6 +1290,63 @@ export function WhiteboardPage({
     y: number;
     nodeId: string;
   } | null>(null);
+
+  // Presentation mode & frames
+  const [presenting, setPresenting] = useState(false);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(1);
+  const presentationFrames = useMemo(() => sortFrames(nodes), [nodes]);
+
+  // Laser pointer state
+  const [localLaserPoints, setLocalLaserPoints] = useState<LaserPoint[]>([]);
+  const remoteLasersRef = useRef<Map<number, LaserPoint[]>>(new Map());
+  const [remoteLaserPeers, setRemoteLaserPeers] = useState<RemoteLaserPeer[]>([]);
+
+  // Ingest remote laser points from peers telemetry into ref (without triggering cascading re-renders)
+  useEffect(() => {
+    const now = Date.now();
+    for (const peer of peers) {
+      if (peer.tool === 'laser' && peer.cursor) {
+        const pt = { x: peer.cursor.x, y: peer.cursor.y, time: now };
+        const existing = remoteLasersRef.current.get(peer.clientId) ?? [];
+        remoteLasersRef.current.set(peer.clientId, [...existing.slice(-60), pt]);
+      }
+    }
+  }, [peers]);
+
+  // Prune decaying laser points for local and remote trails on an animation interval
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setLocalLaserPoints((prev) => {
+        if (prev.length === 0) return prev;
+        const pruned = pruneLaserPoints(prev, now);
+        return pruned.length === prev.length ? prev : pruned;
+      });
+
+      const peerMap = new Map(peers.map((p) => [p.clientId, p]));
+      const list: RemoteLaserPeer[] = [];
+      for (const [clientId, points] of remoteLasersRef.current.entries()) {
+        const pruned = pruneLaserPoints(points, now);
+        if (pruned.length > 0) {
+          remoteLasersRef.current.set(clientId, pruned);
+          const peer = peerMap.get(clientId);
+          list.push({
+            id: String(clientId),
+            name: peer?.user.name ?? 'Teammate',
+            color: peer?.user.color ?? '#3b82f6',
+            points: pruned,
+          });
+        } else {
+          remoteLasersRef.current.delete(clientId);
+        }
+      }
+      setRemoteLaserPeers((prev) => {
+        if (prev.length === 0 && list.length === 0) return prev;
+        return list;
+      });
+    }, 40);
+    return () => clearInterval(interval);
+  }, [peers]);
   // Thumbnail auto-capture guards: one in-flight upload, last uploaded hash.
   const thumbInFlightRef = useRef(false);
   const thumbHashRef = useRef<string | null>(null);
@@ -1388,6 +1479,76 @@ export function WhiteboardPage({
       window.removeEventListener('resize', update);
     };
   }, []);
+
+  const animateCameraTo = useCallback((target: Camera, durationMs = 380) => {
+    const start = cameraRef.current;
+    const startTime = performance.now();
+    const animate = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+      const ease =
+        progress < 0.5
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      setCamera({
+        x: start.x + (target.x - start.x) * ease,
+        y: start.y + (target.y - start.y) * ease,
+        zoom: start.zoom + (target.zoom - start.zoom) * ease,
+      });
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+    requestAnimationFrame(animate);
+  }, []);
+
+  const goToSlide = useCallback(
+    (index: number) => {
+      if (presentationFrames.length === 0) return;
+      const clamped = Math.max(1, Math.min(presentationFrames.length, index));
+      setCurrentSlideIndex(clamped);
+      const targetFrame = presentationFrames[clamped - 1];
+      if (targetFrame) {
+        const targetCam = getFrameCamera(
+          targetFrame,
+          canvasViewportRef.current,
+        );
+        animateCameraTo(targetCam);
+      }
+    },
+    [animateCameraTo, presentationFrames],
+  );
+
+  useEffect(() => {
+    if (!presenting) return;
+    const handlePresentationKeys = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      if (
+        e.key === 'ArrowRight' ||
+        e.key === 'ArrowDown' ||
+        e.key === ' ' ||
+        e.key === 'PageDown'
+      ) {
+        e.preventDefault();
+        goToSlide(currentSlideIndex + 1);
+      } else if (
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowUp' ||
+        e.key === 'PageUp'
+      ) {
+        e.preventDefault();
+        goToSlide(currentSlideIndex - 1);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setPresenting(false);
+      } else if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        setActiveTool((prev) => (prev === 'laser' ? 'select' : 'laser'));
+      }
+    };
+    window.addEventListener('keydown', handlePresentationKeys);
+    return () => window.removeEventListener('keydown', handlePresentationKeys);
+  }, [currentSlideIndex, goToSlide, presenting]);
 
   const [undoDepth, setUndoDepth] = useState(0);
   const [redoDepth, setRedoDepth] = useState(0);
@@ -3221,6 +3382,18 @@ export function WhiteboardPage({
 
       if (locked) return;
 
+      if (activeTool === 'laser') {
+        const pt = { x: worldPoint.x, y: worldPoint.y, time: Date.now() };
+        setLocalLaserPoints((prev) => [...prev.slice(-60), pt]);
+        syncRef.current?.setLocalCursor(worldPoint);
+        interactionRef.current = {
+          kind: 'laser',
+          pointerId: event.pointerId,
+        };
+        canvasRef.current.setPointerCapture(event.pointerId);
+        return;
+      }
+
       if (activeTool === 'comment') {
         setCommentAnchor(worldPoint);
         setShowComments(true);
@@ -3281,22 +3454,37 @@ export function WhiteboardPage({
 
       const startWorld = worldPoint;
       if (activeTool === 'select') {
+        // Frame containment: dragging a frame also drags all elements inside it
+        const frameNodes = nodes.filter(
+          (item) => nextSelected.includes(item.id) && item.shape === 'frame',
+        );
+        const allDragNodeIds = new Set(nextSelected);
+        const allDragArrowIds = new Set(nextSelected);
+        const allDragStrokeIds = new Set(nextSelected);
+
+        for (const frame of frameNodes) {
+          const contained = getContainedElements(frame, nodes, arrows, strokes);
+          for (const id of contained.nodeIds) allDragNodeIds.add(id);
+          for (const id of contained.arrowIds) allDragArrowIds.add(id);
+          for (const id of contained.strokeIds) allDragStrokeIds.add(id);
+        }
+
         interactionRef.current = {
           kind: 'drag',
           pointerId: event.pointerId,
           startWorld,
           originNodes: nodes
-            .filter((item) => nextSelected.includes(item.id))
+            .filter((item) => allDragNodeIds.has(item.id))
             .map((item) => ({ id: item.id, x: item.x, y: item.y })),
           originArrows: arrows
-            .filter((item) => nextSelected.includes(item.id))
+            .filter((item) => allDragArrowIds.has(item.id))
             .map((item) => ({
               id: item.id,
               start: { ...item.start },
               end: { ...item.end },
             })),
           originStrokes: strokes
-            .filter((item) => nextSelected.includes(item.id))
+            .filter((item) => allDragStrokeIds.has(item.id))
             .map((item) => ({
               id: item.id,
               points: item.points.map((p) => ({ ...p })),
@@ -3418,6 +3606,17 @@ export function WhiteboardPage({
         cameraRef.current,
         canvasViewport,
       );
+      if (activeTool === 'laser') {
+        const pt = { x: worldPoint.x, y: worldPoint.y, time: Date.now() };
+        setLocalLaserPoints((prev) => [...prev.slice(-60), pt]);
+        syncRef.current?.setLocalCursor(worldPoint);
+        interactionRef.current = {
+          kind: 'laser',
+          pointerId: event.pointerId,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
+      }
       if (activeTool === 'comment') {
         setCommentAnchor(worldPoint);
         setShowComments(true);
@@ -3500,6 +3699,13 @@ export function WhiteboardPage({
         currentCamera,
         canvasViewport,
       );
+
+      if (interaction.kind === 'laser') {
+        const pt = { x: worldPoint.x, y: worldPoint.y, time: Date.now() };
+        setLocalLaserPoints((prev) => [...prev.slice(-60), pt]);
+        syncRef.current?.setLocalCursor(worldPoint);
+        return;
+      }
 
       if (interaction.kind === 'erase') {
         eraseAtPoint(worldPoint);
@@ -4142,6 +4348,14 @@ export function WhiteboardPage({
         canvasViewport,
       );
 
+      if (interaction.kind === 'laser') {
+        interactionRef.current = null;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        return;
+      }
+
       if (interaction.kind === 'draw') {
         // Simplify on commit (not live) so stored/synced strokes stay
         // small while the in-progress stroke keeps full fidelity.
@@ -4219,14 +4433,26 @@ export function WhiteboardPage({
         const minX = Math.min(start.x, end.x);
         const minY = Math.min(start.y, end.y);
         const isLineTool = interaction.tool === 'line';
-        const width = Math.max(
-          Math.abs(end.x - start.x),
-          interaction.tool === 'text' ? 160 : isLineTool ? 120 : 96,
-        );
-        const height = Math.max(
-          Math.abs(end.y - start.y),
-          interaction.tool === 'text' ? 36 : isLineTool ? 24 : 76,
-        );
+        const isFrameTool = interaction.tool === 'frame';
+        const rawDragWidth = Math.abs(end.x - start.x);
+        const rawDragHeight = Math.abs(end.y - start.y);
+        const isClickOrTiny = rawDragWidth < 40 && rawDragHeight < 40;
+        const width = isFrameTool
+          ? isClickOrTiny
+            ? 1920
+            : Math.max(rawDragWidth, 480)
+          : Math.max(
+              rawDragWidth,
+              interaction.tool === 'text' ? 160 : isLineTool ? 120 : 96,
+            );
+        const height = isFrameTool
+          ? isClickOrTiny
+            ? 1080
+            : Math.max(rawDragHeight, 270)
+          : Math.max(
+              rawDragHeight,
+              interaction.tool === 'text' ? 36 : isLineTool ? 24 : 76,
+            );
         const centerX = (start.x + end.x) / 2;
         const centerY = (start.y + end.y) / 2;
 
@@ -4311,55 +4537,80 @@ export function WhiteboardPage({
           };
         } else {
           const shape =
-            interaction.tool === 'note'
-              ? 'note'
-              : interaction.tool === 'ellipse'
-                ? 'ellipse'
-                : interaction.tool === 'diamond'
-                  ? 'diamond'
-                  : interaction.tool === 'line'
-                    ? 'line'
-                    : interaction.tool === 'text'
-                      ? 'text'
-                      : 'round';
+            isFrameTool
+              ? 'frame'
+              : interaction.tool === 'note'
+                ? 'note'
+                : interaction.tool === 'ellipse'
+                  ? 'ellipse'
+                  : interaction.tool === 'diamond'
+                    ? 'diamond'
+                    : interaction.tool === 'line'
+                      ? 'line'
+                      : interaction.tool === 'text'
+                        ? 'text'
+                        : 'round';
+          const nextFrameIdx = isFrameTool
+            ? presentationFrames.length + 1
+            : undefined;
           const node: BoardNode = {
             id: nextId(interaction.tool),
             label:
-              interaction.tool === 'note'
-                ? 'New thought'
-                : interaction.tool === 'text'
-                  ? 'Text'
-                  : interaction.tool === 'diamond'
-                    ? 'Decision'
-                    : interaction.tool === 'line'
-                      ? ''
-                      : 'New shape',
+              isFrameTool
+                ? `Slide ${nextFrameIdx}`
+                : interaction.tool === 'note'
+                  ? 'New thought'
+                  : interaction.tool === 'text'
+                    ? 'Text'
+                    : interaction.tool === 'diamond'
+                      ? 'Decision'
+                      : interaction.tool === 'line'
+                        ? ''
+                        : 'New shape',
             detail:
-              interaction.tool === 'note'
-                ? 'Click twice to refine'
-                : interaction.tool === 'text'
-                  ? ''
-                  : interaction.tool === 'diamond'
-                    ? 'Yes / no?'
-                    : interaction.tool === 'line'
-                      ? ''
-                      : 'Canvas object',
+              isFrameTool
+                ? ''
+                : interaction.tool === 'note'
+                  ? 'Click twice to refine'
+                  : interaction.tool === 'text'
+                    ? ''
+                    : interaction.tool === 'diamond'
+                      ? 'Yes / no?'
+                      : interaction.tool === 'line'
+                        ? ''
+                        : 'Canvas object',
             x: snapPoint({
-              x: interaction.tool === 'text' ? minX : centerX - width / 2,
-              y: interaction.tool === 'text' ? minY : centerY - height / 2,
+              x:
+                interaction.tool === 'text' || isFrameTool
+                  ? minX
+                  : centerX - width / 2,
+              y:
+                interaction.tool === 'text' || isFrameTool
+                  ? minY
+                  : centerY - height / 2,
             }).x,
             y: snapPoint({
-              x: interaction.tool === 'text' ? minX : centerX - width / 2,
-              y: interaction.tool === 'text' ? minY : centerY - height / 2,
+              x:
+                interaction.tool === 'text' || isFrameTool
+                  ? minX
+                  : centerX - width / 2,
+              y:
+                interaction.tool === 'text' || isFrameTool
+                  ? minY
+                  : centerY - height / 2,
             }).y,
             width,
             height: isLineTool ? Math.min(height, 32) : height,
             tone:
-              interaction.tool === 'note'
-                ? 'note'
-                : toneForColor(interaction.color),
+              isFrameTool
+                ? 'violet'
+                : interaction.tool === 'note'
+                  ? 'note'
+                  : toneForColor(interaction.color),
             shape,
-            z: topZ(),
+            aspectRatio: isFrameTool ? '16:9' : undefined,
+            frameIndex: nextFrameIdx,
+            z: isFrameTool ? -100 : topZ(),
           };
           setNodes((current) => [...current, node]);
           setSelectedIds([node.id]);
@@ -4423,7 +4674,13 @@ export function WhiteboardPage({
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    [canvasViewport, commitGesture, flushPendingRemote, topZ],
+    [
+      canvasViewport,
+      commitGesture,
+      flushPendingRemote,
+      presentationFrames.length,
+      topZ,
+    ],
   );
 
   const cancelInteraction = useCallback(() => {
@@ -4679,6 +4936,67 @@ export function WhiteboardPage({
     exportTicket,
     nodes,
     prepareExportClone,
+    requirePro,
+    roomId,
+    strokes,
+  ]);
+
+  const exportPresentationAsPDF = useCallback(async () => {
+    if (exportBusy || presentationFrames.length === 0 || !requirePro()) return;
+    setExportBusy('pdf');
+    setExportProgress('Preparing presentation slides PDF…');
+    try {
+      const { clone } = prepareExportClone();
+      const embed = await embedRemoteImages(clone, nodes, {
+        roomId,
+        ticket: exportTicket(),
+        onProgress: (done, total) =>
+          setExportProgress(
+            total > 0
+              ? `Embedding images ${done}/${total}…`
+              : 'Drawing slide deck PDF…',
+          ),
+      });
+      setExportProgress('Drawing slide deck PDF…');
+      const { buildPresentationPdf } = await import('@/lib/whiteboard/export/pdf');
+      const bytes = await buildPresentationPdf({
+        frames: presentationFrames,
+        nodes,
+        arrows,
+        strokes,
+        title: boardTitle,
+        imageData: embed.imageData,
+        onProgress: (page, total) =>
+          setExportProgress(`Generating slide ${page}/${total}…`),
+      });
+      downloadBlob(
+        new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }),
+        `${boardFileSlug(boardTitle)}-slides.pdf`,
+      );
+      setBoardError(
+        embed.failed > 0
+          ? `${embed.failed} image(s) could not be embedded and show as placeholders.`
+          : null,
+      );
+      setExportMenuOpen(false);
+    } catch (error) {
+      setBoardError(
+        error instanceof Error
+          ? error.message
+          : 'Presentation PDF export failed.',
+      );
+    } finally {
+      setExportBusy(null);
+      setExportProgress(null);
+    }
+  }, [
+    arrows,
+    boardTitle,
+    exportBusy,
+    exportTicket,
+    nodes,
+    prepareExportClone,
+    presentationFrames,
     requirePro,
     roomId,
     strokes,
@@ -4953,6 +5271,18 @@ export function WhiteboardPage({
           target.getAttribute('role') === 'button');
       const nativeControlKey =
         focusOnControl && (event.key === ' ' || event.key === 'Enter');
+      if (event.altKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        setPresenting((prev) => {
+          const next = !prev;
+          if (next && presentationFrames.length > 0) {
+            goToSlide(1);
+          }
+          return next;
+        });
+        return;
+      }
+
       if (
         !event.metaKey &&
         !event.ctrlKey &&
@@ -4969,6 +5299,12 @@ export function WhiteboardPage({
             break;
           case 'h':
             selectTool('hand');
+            break;
+          case 'f':
+            selectTool('frame');
+            break;
+          case 'p':
+            selectTool('laser');
             break;
           case 'r':
             selectTool('rectangle');
@@ -5053,10 +5389,12 @@ export function WhiteboardPage({
     duplicateSelected,
     editingNode,
     exportMenuOpen,
+    goToSlide,
     groupSelected,
     locked,
     moveSelectedLayer,
     pasteClipboard,
+    presentationFrames.length,
     pushDiscreteChange,
     redo,
     resetCamera,
@@ -5803,7 +6141,11 @@ export function WhiteboardPage({
   }
 
   return (
-    <div className="eunoia-board-shell">
+    <div
+      className={`eunoia-board-shell ${
+        presenting ? 'eunoia-board-shell--presenting' : ''
+      }`}
+    >
       <input
         ref={imageInputRef}
         className="board-file-input"
@@ -6094,6 +6436,29 @@ export function WhiteboardPage({
               Sign in
             </a>
           )}
+          {presentationFrames.length > 0 && (
+            <button
+              className="share-button"
+              type="button"
+              onClick={() => {
+                setPresenting(true);
+                goToSlide(1);
+              }}
+              title="Start presentation mode (Alt+P)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                background: '#4f46e5',
+                color: '#fff',
+                borderColor: '#4338ca',
+                fontWeight: 600,
+              }}
+            >
+              <Presentation size={15} />
+              <span>Present ({presentationFrames.length})</span>
+            </button>
+          )}
           <div ref={exportMenuRef} style={{ position: 'relative' }}>
             <button
               className="header-icon-button"
@@ -6305,6 +6670,60 @@ export function WhiteboardPage({
                     PRO
                   </span>
                 </button>
+                {presentationFrames.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void exportPresentationAsPDF()}
+                    disabled={exportBusy !== null}
+                    title={
+                      isProTier(roomMeta?.tier)
+                        ? `Export all ${presentationFrames.length} slides to a multi-page PDF`
+                        : 'Requires a Pro or Enterprise room tier'
+                    }
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      width: '100%',
+                      padding: '10px 14px',
+                      border: 0,
+                      background: 'transparent',
+                      cursor: exportBusy ? 'wait' : 'pointer',
+                      fontSize: 13,
+                      color: '#4f46e5',
+                      fontWeight: 600,
+                      opacity:
+                        exportBusy && exportBusy !== 'pdf'
+                          ? 0.5
+                          : !isProTier(roomMeta?.tier)
+                            ? 0.75
+                            : 1,
+                    }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background = '#f5f4fa')
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.background = 'transparent')
+                    }
+                  >
+                    <Download size={15} /> Export {presentationFrames.length} Slides PDF
+                    <span
+                      style={{
+                        marginLeft: 'auto',
+                        fontSize: 10,
+                        fontWeight: 800,
+                        padding: '2px 6px',
+                        borderRadius: 999,
+                        background: isProTier(roomMeta?.tier)
+                          ? '#ede9ff'
+                          : '#f1f0f6',
+                        color: isProTier(roomMeta?.tier) ? '#5b54c7' : '#8a8ca3',
+                      }}
+                    >
+                      PRO
+                    </span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void exportAsBundle()}
@@ -6578,6 +6997,13 @@ export function WhiteboardPage({
               <StickyNote size={18} />
             </ToolButton>
             <ToolButton
+              label="Frame / Slide (F)"
+              active={activeTool === 'frame'}
+              onClick={() => selectTool('frame')}
+            >
+              <LayoutTemplate size={18} />
+            </ToolButton>
+            <ToolButton
               label="Rectangle"
               active={activeTool === 'rectangle'}
               onClick={() => selectTool('rectangle')}
@@ -6618,6 +7044,13 @@ export function WhiteboardPage({
               onClick={() => selectTool('draw')}
             >
               <Pencil size={18} />
+            </ToolButton>
+            <ToolButton
+              label="Laser pointer (P)"
+              active={activeTool === 'laser'}
+              onClick={() => selectTool('laser')}
+            >
+              <Sparkles size={18} />
             </ToolButton>
             <ToolButton
               label="Eraser (X)"
@@ -6731,6 +7164,13 @@ export function WhiteboardPage({
               <StickyNote size={17} />
             </ToolButton>
             <ToolButton
+              label="Frame / Slide"
+              active={activeTool === 'frame'}
+              onClick={() => selectTool('frame')}
+            >
+              <LayoutTemplate size={17} />
+            </ToolButton>
+            <ToolButton
               label="Rectangle"
               active={activeTool === 'rectangle'}
               onClick={() => selectTool('rectangle')}
@@ -6771,6 +7211,13 @@ export function WhiteboardPage({
               onClick={() => selectTool('draw')}
             >
               <Pencil size={17} />
+            </ToolButton>
+            <ToolButton
+              label="Laser pointer"
+              active={activeTool === 'laser'}
+              onClick={() => selectTool('laser')}
+            >
+              <Sparkles size={17} />
             </ToolButton>
             <ToolButton
               label="Eraser"
@@ -7328,6 +7775,10 @@ export function WhiteboardPage({
                   </g>
                 ))}
                 <RemoteCursors peers={peers} />
+                <LaserOverlay
+                  localPoints={localLaserPoints}
+                  remoteLasers={remoteLaserPeers}
+                />
                 {createPreview &&
                   (() => {
                     const px = Math.min(
@@ -7345,6 +7796,40 @@ export function WhiteboardPage({
                       createPreview.end.y - createPreview.start.y,
                     );
                     if (pw < 2 && ph < 2) return null;
+                    if (createPreview.tool === 'frame') {
+                      return (
+                        <g pointerEvents="none">
+                          <rect
+                            x={px}
+                            y={py}
+                            width={pw}
+                            height={ph}
+                            rx="12"
+                            fill="rgba(99, 102, 241, 0.04)"
+                            stroke="#6366f1"
+                            strokeWidth="2.5"
+                            strokeDasharray="8 6"
+                          />
+                          <rect
+                            x={px}
+                            y={py}
+                            width={Math.min(pw, 120)}
+                            height={28}
+                            rx="6"
+                            fill="#6366f1"
+                          />
+                          <text
+                            x={px + 12}
+                            y={py + 18}
+                            fill="#ffffff"
+                            fontSize="12"
+                            fontWeight="600"
+                          >
+                            Slide Frame
+                          </text>
+                        </g>
+                      );
+                    }
                     if (createPreview.tool === 'ellipse') {
                       return (
                         <ellipse
@@ -7758,6 +8243,21 @@ export function WhiteboardPage({
           />
         </div>
       ) : null}
+      {presenting && (
+        <PresenterHud
+          currentSlideIndex={currentSlideIndex}
+          totalSlides={presentationFrames.length}
+          frames={presentationFrames}
+          laserActive={activeTool === 'laser'}
+          onToggleLaser={() =>
+            setActiveTool((prev) => (prev === 'laser' ? 'select' : 'laser'))
+          }
+          onPrevSlide={() => goToSlide(currentSlideIndex - 1)}
+          onNextSlide={() => goToSlide(currentSlideIndex + 1)}
+          onSelectSlide={(idx) => goToSlide(idx)}
+          onExit={() => setPresenting(false)}
+        />
+      )}
     </div>
   );
 }

@@ -2664,3 +2664,23 @@ path.canvas-grid {
     touch-action: pan-x;
   }
 }
+
+/* Presentation Mode: Clean fullscreen stage */
+.eunoia-board-shell--presenting .board-toolbar,
+.eunoia-board-shell--presenting .board-floating-toolbar,
+.eunoia-board-shell--presenting .board-style-panel,
+.eunoia-board-shell--presenting .board-status-row,
+.eunoia-board-shell--presenting .minimap-panel {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.25s ease !important;
+}
+
+.eunoia-board-shell--presenting .board-header {
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.eunoia-board-shell--presenting .board-header:hover {
+  opacity: 1;
+}

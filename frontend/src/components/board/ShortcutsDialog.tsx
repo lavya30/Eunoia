@@ -98,6 +98,22 @@ const SHORTCUTS: ShortcutItem[] = [
     winKeys: ['T'],
   },
   {
+    id: 'tool-frame',
+    category: 'tools',
+    title: 'Frame / Slide',
+    description: 'Create slide frames and section boundaries',
+    macKeys: ['F'],
+    winKeys: ['F'],
+  },
+  {
+    id: 'tool-laser',
+    category: 'tools',
+    title: 'Laser Pointer',
+    description: 'Point and highlight live on canvas with glowing trail',
+    macKeys: ['P'],
+    winKeys: ['P'],
+  },
+  {
     id: 'tool-note',
     category: 'tools',
     title: 'Sticky Note',
@@ -115,6 +131,14 @@ const SHORTCUTS: ShortcutItem[] = [
   },
 
   // Canvas & View
+  {
+    id: 'canvas-presentation-mode',
+    category: 'canvas',
+    title: 'Presentation Mode',
+    description: 'Fullscreen slide show navigating through frames',
+    macKeys: ['⌥', 'P'],
+    winKeys: ['Alt', 'P'],
+  },
   {
     id: 'canvas-pan',
     category: 'canvas',

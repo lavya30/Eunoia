@@ -141,6 +141,8 @@ export type PortNode = {
  * the 4 midpoints. Ports rotate with the node.
  */
 export function getNodePorts(node: PortNode): NodePort[] {
+  // Frames are slide containers, never connector endpoints.
+  if (node.shape === 'frame') return [];
   const cx = node.x + node.width / 2;
   const cy = node.y + node.height / 2;
   const hw = node.width / 2;

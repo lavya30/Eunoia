@@ -255,6 +255,127 @@ export async function buildVectorPdf(
   return doc.save();
 }
 
+export type PresentationPdfInput = {
+  frames: BoardNode[];
+  nodes?: BoardNode[];
+  allNodes?: BoardNode[];
+  arrows?: BoardArrow[];
+  strokes?: BoardStroke[];
+  title: string;
+  imageData?: Map<string, string>;
+  onProgress?: (done: number, total: number) => void;
+};
+
+/**
+ * Multi-page presentation PDF: each frame becomes a dedicated slide page
+ * containing its bounded elements and slide title.
+ */
+export async function buildPresentationPdf(
+  input: PresentationPdfInput,
+): Promise<Uint8Array> {
+  const { frames, title, onProgress } = input;
+  const allNodes = input.nodes ?? input.allNodes ?? [];
+  const doc = await PDFDocument.create();
+  doc.setTitle(`${title} - Presentation`);
+  doc.setCreator('Eunoia Whiteboard');
+
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  const total = frames.length;
+  let done = 0;
+  const tick = () => {
+    done += 1;
+    onProgress?.(done, total);
+  };
+
+  for (const frame of frames) {
+    const pageWidth = Math.max(400, Math.min(2400, frame.width));
+    const pageHeight = Math.max(300, Math.min(1800, frame.height));
+    const page = doc.addPage([pageWidth, pageHeight]);
+
+    // Background
+    page.drawRectangle({
+      x: 0,
+      y: 0,
+      width: pageWidth,
+      height: pageHeight,
+      color: rgb(0.98, 0.98, 0.99),
+    });
+
+    // Header badge
+    const headerTitle = frame.label || 'Slide';
+    page.drawText(headerTitle, {
+      x: 24,
+      y: pageHeight - 32,
+      size: 16,
+      font: bold,
+      color: rgb(0.2, 0.2, 0.3),
+    });
+
+    const tx = (x: number) => x - frame.x;
+    const ty = (y: number) => pageHeight - (y - frame.y);
+
+    // Contained nodes (excluding other frames)
+    const containedNodes = allNodes.filter(
+      (n) =>
+        n.id !== frame.id &&
+        n.shape !== 'frame' &&
+        n.x >= frame.x &&
+        n.x + n.width <= frame.x + frame.width &&
+        n.y >= frame.y &&
+        n.y + n.height <= frame.y + frame.height,
+    );
+
+    for (const node of containedNodes) {
+      const x = tx(node.x);
+      const y = ty(node.y + node.height);
+      const w = node.width;
+      const h = node.height;
+      const fill = pdfColor(node.fill, TONE_FILL[node.tone] ?? '#ede9ff');
+      const stroke = pdfColor(node.stroke, TONE_STROKE[node.tone] ?? '#756bce');
+
+      if (node.shape === 'ellipse') {
+        page.drawEllipse({
+          x: x + w / 2,
+          y: y + h / 2,
+          xScale: w / 2,
+          yScale: h / 2,
+          color: fill,
+          borderColor: stroke,
+          borderWidth: node.strokeWidth ?? 1.5,
+        });
+      } else {
+        page.drawRectangle({
+          x,
+          y,
+          width: w,
+          height: h,
+          color: fill,
+          borderColor: stroke,
+          borderWidth: node.strokeWidth ?? 1.5,
+        });
+      }
+
+      if (node.label) {
+        drawWrappedText(
+          page,
+          node.label,
+          x + 10,
+          y + h - 18,
+          w - 20,
+          Math.min(14, (node.fontSize ?? 14)),
+          bold,
+          pdfColor('#25263a', '#25263a'),
+        );
+      }
+    }
+
+    tick();
+  }
+
+  return doc.save();
+}
+
 function drawWrappedText(
   page: ReturnType<PDFDocument['addPage']>,
   text: string,

@@ -17,7 +17,8 @@ export type BoardNode = {
     | 'text'
     | 'image'
     | 'diamond'
-    | 'line';
+    | 'line'
+    | 'frame';
   href?: string;
   /** Server-side image record id (R2 uploads). Used to refresh/delete. */
   imageId?: string;
@@ -33,7 +34,13 @@ export type BoardNode = {
   z?: number;
   /** Composite group identifier. */
   groupId?: string;
+  /** Frame-only: aspect preset that locks resize proportions. */
+  aspectRatio?: FrameAspectRatio;
+  /** Frame-only: explicit 1-based slide order (spatial order otherwise). */
+  frameIndex?: number;
 };
+
+export type FrameAspectRatio = '16:9' | '4:3' | '1:1' | 'custom';
 
 export type ArrowRouting = 'straight' | 'orthogonal' | 'curved';
 

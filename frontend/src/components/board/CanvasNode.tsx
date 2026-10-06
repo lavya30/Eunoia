@@ -40,11 +40,12 @@ export function CanvasNode({
   const isImage = node.shape === 'image';
   const isDiamond = node.shape === 'diamond';
   const isLine = node.shape === 'line';
+  const isFrame = node.shape === 'frame';
   const shapeStyle = {
-    fill: node.fill,
-    stroke: node.stroke,
-    strokeWidth: node.strokeWidth,
-    strokeDasharray: node.dashed ? '7 5' : undefined,
+    fill: isFrame ? (node.fill ?? 'rgba(247, 246, 252, 0.4)') : node.fill,
+    stroke: isFrame ? (node.stroke ?? (selected ? '#6965db' : '#9b97ac')) : node.stroke,
+    strokeWidth: isFrame ? (node.strokeWidth ?? (selected ? 2.5 : 1.5)) : node.strokeWidth,
+    strokeDasharray: isFrame ? (selected ? undefined : '7 5') : node.dashed ? '7 5' : undefined,
     opacity: node.opacity ?? 1,
   };
 
@@ -191,6 +192,62 @@ export function CanvasNode({
           points={diamondPoints}
           style={shapeStyle}
         />
+      ) : isFrame ? (
+        <>
+          <rect
+            className="node-frame-body"
+            x={node.x}
+            y={node.y}
+            width={node.width}
+            height={node.height}
+            rx="12"
+            style={shapeStyle}
+          />
+          <g className="node-frame-header" pointerEvents="none">
+            <rect
+              x={node.x}
+              y={node.y - 28}
+              width={Math.max(
+                140,
+                Math.min(node.width, (node.label.length || 8) * 8.5 + 70),
+              )}
+              height="28"
+              rx="6"
+              fill={selected ? '#6965db' : '#f0eef8'}
+              stroke={selected ? '#5753c9' : '#d2d0e0'}
+              strokeWidth="1.2"
+            />
+            <text
+              x={node.x + 10}
+              y={node.y - 10}
+              fill={selected ? '#ffffff' : '#3c3858'}
+              fontSize="12"
+              fontWeight="700"
+              fontFamily="system-ui, -apple-system, sans-serif"
+            >
+              #{node.frameIndex ?? 1} {node.label || 'Slide'}
+            </text>
+            {node.aspectRatio && (
+              <text
+                x={
+                  node.x +
+                  Math.max(
+                    140,
+                    Math.min(node.width, (node.label.length || 8) * 8.5 + 70),
+                  ) -
+                  8
+                }
+                y={node.y - 10}
+                fill={selected ? 'rgba(255,255,255,0.75)' : '#7a7690'}
+                fontSize="10"
+                textAnchor="end"
+                fontFamily="system-ui, -apple-system, sans-serif"
+              >
+                {node.aspectRatio}
+              </text>
+            )}
+          </g>
+        </>
       ) : isText ? null : (
         <rect
           className="node-body"
@@ -202,7 +259,7 @@ export function CanvasNode({
           style={shapeStyle}
         />
       )}
-      {!isImage && !isLine && labelLines.length > 0 && (
+      {!isImage && !isLine && !isFrame && labelLines.length > 0 && (
         <text
           className={`node-label ${isText ? 'node-label--text' : ''}`}
           x={node.x + (isText ? 0 : 18)}
@@ -222,7 +279,7 @@ export function CanvasNode({
           ))}
         </text>
       )}
-      {!isText && !isImage && !isLine && detailLines.length > 0 && (
+      {!isText && !isImage && !isLine && !isFrame && detailLines.length > 0 && (
         <text className="node-detail" x={node.x + 18} y={detailStartY}>
           {detailLines.map((line, idx) => (
             <tspan key={idx} x={node.x + 18} dy={idx === 0 ? 0 : '14px'}>
