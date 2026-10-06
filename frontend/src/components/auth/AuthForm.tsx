@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BlurFade } from '@/components/ui/blur-fade';
@@ -343,9 +344,11 @@ export function AuthForm({
   return (
     <div className="auth-page">
       <div className="auth-dot-grid" aria-hidden="true" />
-      <img
+      <Image
         className="auth-doodle-bg"
         src="/images/home-hero.svg"
+        width={1294}
+        height={398}
         alt=""
         aria-hidden="true"
       />

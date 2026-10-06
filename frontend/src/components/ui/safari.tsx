@@ -75,6 +75,7 @@ export function Safari({
             borderRadius: '0 0 11px 11px',
           }}
         >
+          {/* eslint-disable-next-line @next/next/no-img-element -- this component accepts arbitrary media URLs. */}
           <img
             src={imageSrc}
             alt=""

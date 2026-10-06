@@ -1,11 +1,11 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 const MAX_TEXT_LENGTH = 120;
 const MAX_PASSWORD_LENGTH = 256;
 const MAX_ROOM_ID_LENGTH = 256;
 const MAX_IMAGE_KEY_LENGTH = 512;
 
-export const TierSchema = z.enum(["COMMUNITY", "PRO", "ENTERPRISE"]);
+export const TierSchema = z.enum(['COMMUNITY', 'PRO', 'ENTERPRISE']);
 
 export const GenerateDiagramSchema = z
   .object({
@@ -24,14 +24,14 @@ export const SuggestLayoutSchema = z
       .min(1)
       .max(50_000)
       .refine((value) => value.trim().length > 0, {
-        message: "Current D2 must not be empty",
+        message: 'Current D2 must not be empty',
       }),
     instruction: z
       .string()
       .trim()
       .min(1)
       .max(2000)
-      .default("Improve the layout of this diagram"),
+      .default('Improve the layout of this diagram'),
     roomId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
   })
   .strict();
@@ -45,7 +45,7 @@ export const JevVerdictSchema = z
     warnings: z.array(z.string().max(500)),
   })
   .strict();
-export const WorkspaceRoleSchema = z.enum(["ADMIN", "EDITOR", "VIEWER"]);
+export const WorkspaceRoleSchema = z.enum(['ADMIN', 'EDITOR', 'VIEWER']);
 
 export const CreateWorkspaceSchema = z
   .object({
@@ -71,11 +71,11 @@ export const InviteMemberSchema = z
       .email()
       .max(MAX_ROOM_ID_LENGTH)
       .optional(),
-    role: WorkspaceRoleSchema.default("EDITOR"),
+    role: WorkspaceRoleSchema.default('EDITOR'),
   })
   .strict()
   .refine((value) => value.userId !== undefined || value.email !== undefined, {
-    message: "Either userId or email must be provided",
+    message: 'Either userId or email must be provided',
   });
 
 export const UpdateMemberSchema = z
@@ -102,13 +102,13 @@ export const RoomListQuerySchema = z
     workspaceId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
   })
   .strict();
-export const LayoutEngineSchema = z.enum(["dagre", "elk", "tala"]);
-export const ImageKindSchema = z.enum(["image", "thumbnail"]);
+export const LayoutEngineSchema = z.enum(['dagre', 'elk', 'tala']);
+export const ImageKindSchema = z.enum(['image', 'thumbnail']);
 export const ImageContentTypeSchema = z.enum([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
 ]);
 
 export const CreateRoomSchema = z
@@ -137,7 +137,7 @@ export const RegisterUserSchema = z
 
 export const CheckoutSchema = z
   .object({
-    priceKey: z.string().trim().min(1).default("pro"),
+    priceKey: z.string().trim().min(1).default('pro'),
     // Capped: per-seat billing with unbounded quantities is a one-line
     // API call away from absurd invoices; workspace invites enforce
     // against this count, so 100 is generous headroom.
@@ -171,7 +171,7 @@ export const UpdateMeSchema = z
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
-    message: "At least one field must be provided",
+    message: 'At least one field must be provided',
   });
 
 export const UpdateRoomSchema = z
@@ -184,7 +184,7 @@ export const UpdateRoomSchema = z
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
-    message: "At least one field must be provided",
+    message: 'At least one field must be provided',
   });
 
 export const CompileRequestSchema = z
@@ -194,7 +194,7 @@ export const CompileRequestSchema = z
       .min(1)
       .max(900_000)
       .refine((value) => value.trim().length > 0, {
-        message: "D2 source must not be empty",
+        message: 'D2 source must not be empty',
       }),
     engine: LayoutEngineSchema.optional(),
     roomId: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH).optional(),
@@ -211,7 +211,7 @@ export const CompileRequestSchema = z
 export const ImageRequestUploadSchema = z
   .object({
     contentType: ImageContentTypeSchema,
-    kind: ImageKindSchema.default("image"),
+    kind: ImageKindSchema.default('image'),
   })
   .strict();
 
@@ -220,7 +220,7 @@ export const ImageConfirmSchema = z
     key: z.string().min(1).max(MAX_IMAGE_KEY_LENGTH),
     contentType: ImageContentTypeSchema.optional(),
     size: z.number().int().positive().max(50_000_000).optional(),
-    kind: ImageKindSchema.default("image"),
+    kind: ImageKindSchema.default('image'),
   })
   .strict();
 
@@ -239,7 +239,7 @@ export const SnapshotQuerySchema = z
 
 export const CursorTelemetrySchema = z
   .object({
-    type: z.literal("cursor"),
+    type: z.literal('cursor'),
     // Clients may include this legacy field, but the server always replaces it.
     clientId: z.string().trim().max(MAX_ROOM_ID_LENGTH).optional(),
     x: z.number().finite().min(-1_000_000_000).max(1_000_000_000),
@@ -264,7 +264,7 @@ export const CursorTelemetrySchema = z
 export const BusEnvelopeSchema = z
   .object({
     v: z.literal(1),
-    kind: z.enum(["update", "awareness", "control"]),
+    kind: z.enum(['update', 'awareness', 'control']),
     from: z.string().trim().min(1).max(MAX_ROOM_ID_LENGTH),
     data: z.string().min(1).max(8_000_000),
   })
@@ -273,17 +273,17 @@ export const BusEnvelopeSchema = z
 /** Control payloads carried inside a bus envelope (`kind: "control"`). */
 export const BusControlSchema = z
   .object({
-    type: z.enum(["restore"]),
+    type: z.enum(['restore']),
     snapshotId: z.string().trim().min(1).max(MAX_IMAGE_KEY_LENGTH),
   })
   .strict();
 
 export function validationError(error: z.ZodError) {
   return {
-    error: "Invalid request",
-    code: "VALIDATION_ERROR",
+    error: 'Invalid request',
+    code: 'VALIDATION_ERROR',
     issues: error.issues.map((issue) => ({
-      path: issue.path.join("."),
+      path: issue.path.join('.'),
       message: issue.message,
       code: issue.code,
     })),

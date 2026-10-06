@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DocsSidebar } from './DocsSidebar';
 import { CodeBlock } from './CodeBlock';

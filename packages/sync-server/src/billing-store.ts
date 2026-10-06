@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
+import { randomUUID } from 'node:crypto';
+import type { PrismaClient } from '@prisma/client';
 
 /* ── Subscription ────────────────────────────────────────────── */
 
@@ -158,8 +158,8 @@ export class PrismaBillingEventStore implements BillingEventStore {
       // Unique constraint violation → duplicate event.
       if (
         error instanceof Error &&
-        "code" in error &&
-        (error as { code?: string }).code === "P2002"
+        'code' in error &&
+        (error as { code?: string }).code === 'P2002'
       )
         return false;
       throw error;

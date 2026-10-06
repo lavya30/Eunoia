@@ -26,8 +26,8 @@ export const AvatarCircles = ({
           target="_blank"
           rel="noopener noreferrer"
         >
+          {/* eslint-disable-next-line @next/next/no-img-element -- avatar URLs are external and intentionally unoptimized. */}
           <img
-            key={index}
             className="h-10 w-10 rounded-full border-2 border-white dark:border-gray-800"
             src={url.imageUrl}
             width={40}

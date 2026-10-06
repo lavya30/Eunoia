@@ -141,6 +141,10 @@ function randomOf<T>(items: T[]): T {
 }
 
 export function getLocalUser(): PeerUser {
+  // This helper also runs during server rendering. Keep that render
+  // deterministic instead of generating a new random identity per request.
+  if (typeof window === 'undefined')
+    return { id: 'local', name: 'You', color: PEER_COLORS[0] as string };
   try {
     const raw = window.localStorage.getItem(IDENTITY_STORAGE_KEY);
     if (raw) {

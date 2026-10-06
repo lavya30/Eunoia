@@ -1,20 +1,20 @@
-import { decompressSync } from "fflate";
-import * as decoding from "lib0/decoding";
-import * as encoding from "lib0/encoding";
-import * as awarenessProtocol from "y-protocols/awareness";
-import * as syncProtocol from "y-protocols/sync";
-import type * as Y from "yjs";
-import * as Yjs from "yjs";
-import { BusControlSchema } from "./api/schemas.js";
-import type { StoredSnapshot } from "./RoomLoader.js";
-import type { BusMessage, RoomTelemetry } from "./redis.js";
-import type { SnapshotWorker } from "./SnapshotWorker.js";
-import type { CursorTelemetry, RoomClient } from "./types.js";
+import { decompressSync } from 'fflate';
+import * as decoding from 'lib0/decoding';
+import * as encoding from 'lib0/encoding';
+import * as awarenessProtocol from 'y-protocols/awareness';
+import * as syncProtocol from 'y-protocols/sync';
+import type * as Y from 'yjs';
+import * as Yjs from 'yjs';
+import { BusControlSchema } from './api/schemas.js';
+import type { StoredSnapshot } from './RoomLoader.js';
+import type { BusMessage, RoomTelemetry } from './redis.js';
+import type { SnapshotWorker } from './SnapshotWorker.js';
+import type { CursorTelemetry, RoomClient } from './types.js';
 import {
   REDIS_ORIGIN,
   WS_MESSAGE_AWARENESS,
   WS_MESSAGE_SYNC,
-} from "./types.js";
+} from './types.js';
 
 /**
  * Close code sent to peers when their room is restored from a snapshot.
@@ -22,7 +22,7 @@ import {
  * so they must reload and resync from the restored snapshot.
  */
 export const RESTORE_CLOSE_CODE = 4100;
-export const RESTORE_CLOSE_REASON = "Snapshot restored; reload to resync";
+export const RESTORE_CLOSE_REASON = 'Snapshot restored; reload to resync';
 
 /** Presence heartbeat: full awareness republish cadence (also the sweep tick). */
 export const PRESENCE_HEARTBEAT_MS = 10_000;
@@ -94,7 +94,7 @@ export class Room {
   ) {
     this._doc = doc;
     this.awareness = new awarenessProtocol.Awareness(doc);
-    this.instanceId = options?.instanceId ?? "";
+    this.instanceId = options?.instanceId ?? '';
     this.onRestoreRequest = options?.onRestoreRequest;
     this.attach();
     this.unsubscribeRedis = this.telemetry
@@ -110,8 +110,8 @@ export class Room {
   }
 
   private attach(): void {
-    this._doc.on("update", this.handleDocUpdate);
-    this.awareness.on("update", this.handleAwarenessUpdate);
+    this._doc.on('update', this.handleDocUpdate);
+    this.awareness.on('update', this.handleAwarenessUpdate);
   }
 
   private readonly handleDocUpdate = (
@@ -131,7 +131,7 @@ export class Room {
       // above already served this instance's clients).
       if (this.telemetry && this.instanceId) {
         void this.telemetry
-          .publishBus(this.id, "update", update)
+          .publishBus(this.id, 'update', update)
           .catch(() => undefined);
       }
     }
@@ -158,7 +158,7 @@ export class Room {
   ): void => {
     const changed = added.concat(updated, removed);
     if (!changed.length || origin === REDIS_ORIGIN) return;
-    if (origin !== "server-disconnect" && !this.isLiveClient(origin)) return;
+    if (origin !== 'server-disconnect' && !this.isLiveClient(origin)) return;
     if (this.isClient(origin)) {
       let owned = this.awarenessOwners.get(origin.id);
       if (!owned) {
@@ -182,7 +182,7 @@ export class Room {
     // independent sweep timeouts — never here, to avoid double removal.
     if (this.telemetry && this.instanceId && this.isClient(origin)) {
       void this.telemetry
-        .publishBus(this.id, "awareness", update)
+        .publishBus(this.id, 'awareness', update)
         .catch(() => undefined);
     }
   };
@@ -194,22 +194,22 @@ export class Room {
   private readonly handleBusMessage = (message: BusMessage): void => {
     // Own messages are filtered by the transport; defense in depth here.
     if (message.from === this.instanceId) return;
-    if (message.kind === "update") {
+    if (message.kind === 'update') {
       this.applyRemoteUpdate(message.data);
       return;
     }
-    if (message.kind === "awareness") {
+    if (message.kind === 'awareness') {
       this.applyRemoteAwareness(message.data);
       return;
     }
     let control: unknown;
     try {
-      control = JSON.parse(Buffer.from(message.data).toString("utf8"));
+      control = JSON.parse(Buffer.from(message.data).toString('utf8'));
     } catch {
       return;
     }
     const parsed = BusControlSchema.safeParse(control);
-    if (!parsed.success || parsed.data.type !== "restore") return;
+    if (!parsed.success || parsed.data.type !== 'restore') return;
     void this.onRestoreRequest?.(parsed.data.snapshotId)?.catch(
       () => undefined,
     );
@@ -273,7 +273,7 @@ export class Room {
       awarenessProtocol.removeAwarenessStates(
         this.awareness,
         stale,
-        "server-disconnect",
+        'server-disconnect',
       );
     }
   }
@@ -284,7 +284,7 @@ export class Room {
       void this.telemetry
         .publishBus(
           this.id,
-          "awareness",
+          'awareness',
           awarenessProtocol.encodeAwarenessUpdate(this.awareness, states),
         )
         .catch(() => undefined);
@@ -321,15 +321,15 @@ export class Room {
   async restoreSnapshot(snapshot: StoredSnapshot): Promise<void> {
     const doc = new Yjs.Doc();
     try {
-      Yjs.applyUpdate(doc, decompressSync(snapshot.data), "snapshot-restore");
+      Yjs.applyUpdate(doc, decompressSync(snapshot.data), 'snapshot-restore');
     } catch {
       doc.destroy();
-      throw new Error("Snapshot data is corrupt and cannot be restored");
+      throw new Error('Snapshot data is corrupt and cannot be restored');
     }
     await this.snapshotWorker.forceFlush(this._doc);
     const oldDoc = this._doc;
-    oldDoc.off("update", this.handleDocUpdate);
-    this.awareness.off("update", this.handleAwarenessUpdate);
+    oldDoc.off('update', this.handleDocUpdate);
+    this.awareness.off('update', this.handleAwarenessUpdate);
     this.awareness.destroy();
     this._doc = doc;
     this.awareness = new awarenessProtocol.Awareness(doc);
@@ -382,7 +382,7 @@ export class Room {
       awarenessProtocol.removeAwarenessStates(
         this.awareness,
         ids,
-        "server-disconnect",
+        'server-disconnect',
       );
       // Peer replicas can't observe this disconnect: publish the removal
       // explicitly (meta clocks are retained by removeAwarenessStates, so
@@ -392,7 +392,7 @@ export class Room {
         void this.telemetry
           .publishBus(
             this.id,
-            "awareness",
+            'awareness',
             awarenessProtocol.encodeAwarenessUpdate(this.awareness, ids),
           )
           .catch(() => undefined);
@@ -424,7 +424,8 @@ export class Room {
   handleCursor(cursor: CursorTelemetry, source: RoomClient): void {
     if (!this.isLiveClient(source)) return;
     this.broadcastCursor(cursor, source);
-    void this.telemetry?.publish(this.id, cursor);
+    const publish = this.telemetry?.publish(this.id, cursor);
+    if (publish) void publish.catch(() => undefined);
   }
 
   async dispose(): Promise<void> {
@@ -435,7 +436,7 @@ export class Room {
     (await this.unsubscribeRedis)();
     (await this.unsubscribeBus)();
     for (const client of this.clients.values())
-      client.socket.close(1001, "Server shutting down");
+      client.socket.close(1001, 'Server shutting down');
     this.clients.clear();
     this.awareness.destroy();
     await this.snapshotWorker.dispose(this.doc);
@@ -444,10 +445,10 @@ export class Room {
 
   private isClient(value: unknown): value is RoomClient {
     return (
-      typeof value === "object" &&
+      typeof value === 'object' &&
       value !== null &&
-      "id" in value &&
-      "send" in value
+      'id' in value &&
+      'send' in value
     );
   }
 

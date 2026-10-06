@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
-import type { Tier } from "./d2-compiler.js";
+import { randomUUID } from 'node:crypto';
+import type { PrismaClient } from '@prisma/client';
+import type { Tier } from './d2-compiler.js';
 
-export type WorkspaceRole = "ADMIN" | "EDITOR" | "VIEWER";
+export type WorkspaceRole = 'ADMIN' | 'EDITOR' | 'VIEWER';
 
-export const WORKSPACE_ROLES: WorkspaceRole[] = ["ADMIN", "EDITOR", "VIEWER"];
+export const WORKSPACE_ROLES: WorkspaceRole[] = ['ADMIN', 'EDITOR', 'VIEWER'];
 
 const ROLE_RANK: Record<WorkspaceRole, number> = {
   VIEWER: 0,
@@ -22,7 +22,7 @@ export function roleAtLeast(
 }
 
 export function isWorkspaceRole(value: unknown): value is WorkspaceRole {
-  return value === "ADMIN" || value === "EDITOR" || value === "VIEWER";
+  return value === 'ADMIN' || value === 'EDITOR' || value === 'VIEWER';
 }
 
 export type WorkspaceRecord = {
@@ -99,7 +99,7 @@ export class MemoryWorkspaceStore implements WorkspaceStore {
       id: randomUUID(),
       name: input.name,
       ownerId: input.ownerId,
-      tier: input.tier ?? "COMMUNITY",
+      tier: input.tier ?? 'COMMUNITY',
       createdAt: now,
       updatedAt: now,
     };
@@ -115,7 +115,7 @@ export class MemoryWorkspaceStore implements WorkspaceStore {
     const result: WorkspaceWithRole[] = [];
     for (const workspace of this.workspaces.values()) {
       if (workspace.ownerId === userId) {
-        result.push({ workspace, role: "ADMIN" });
+        result.push({ workspace, role: 'ADMIN' });
         continue;
       }
       const membership = this.memberships.get(
@@ -231,7 +231,7 @@ export class PrismaWorkspaceStore implements WorkspaceStore {
       data: {
         name: input.name,
         ownerId: input.ownerId,
-        tier: input.tier ?? "COMMUNITY",
+        tier: input.tier ?? 'COMMUNITY',
       },
     }) as Promise<WorkspaceRecord>;
   }
@@ -247,14 +247,14 @@ export class PrismaWorkspaceStore implements WorkspaceStore {
         OR: [{ ownerId: userId }, { memberships: { some: { userId } } }],
       },
       include: { memberships: { where: { userId } } },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
     });
     return rows.map((row) => ({
       workspace: row as unknown as WorkspaceRecord,
       role:
         row.ownerId === userId
-          ? ("ADMIN" as const)
-          : ((row.memberships[0]?.role ?? "VIEWER") as WorkspaceRole),
+          ? ('ADMIN' as const)
+          : ((row.memberships[0]?.role ?? 'VIEWER') as WorkspaceRole),
     }));
   }
 
@@ -271,7 +271,7 @@ export class PrismaWorkspaceStore implements WorkspaceStore {
   async listFolders(workspaceId: string): Promise<FolderRecord[]> {
     return (await this.prisma.folder.findMany({
       where: { workspaceId },
-      orderBy: { createdAt: "asc" },
+      orderBy: { createdAt: 'asc' },
     })) as unknown as FolderRecord[];
   }
 
@@ -316,7 +316,7 @@ export class PrismaWorkspaceStore implements WorkspaceStore {
   async listMembers(workspaceId: string): Promise<MembershipRecord[]> {
     return (await this.prisma.membership.findMany({
       where: { workspaceId },
-      orderBy: { createdAt: "asc" },
+      orderBy: { createdAt: 'asc' },
     })) as unknown as MembershipRecord[];
   }
 

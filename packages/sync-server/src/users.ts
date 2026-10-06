@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
-import type { Tier } from "./d2-compiler.js";
+import { randomUUID } from 'node:crypto';
+import type { PrismaClient } from '@prisma/client';
+import type { Tier } from './d2-compiler.js';
 
 export type PublicUser = {
   id: string;
@@ -64,7 +64,7 @@ export class MemoryUserStore implements UserStore {
       id: randomUUID(),
       email,
       name: input.name ?? null,
-      tier: "COMMUNITY",
+      tier: 'COMMUNITY',
       passwordHash: input.passwordHash,
     };
     this.byId.set(row.id, row);
@@ -131,7 +131,7 @@ export class MemoryUserStore implements UserStore {
       id: randomUUID(),
       email: normalizeEmail(identity.email),
       name: identity.name ?? null,
-      tier: "COMMUNITY",
+      tier: 'COMMUNITY',
       passwordHash: null,
     };
     this.byId.set(row.id, row);
@@ -157,8 +157,8 @@ export class PrismaUserStore implements UserStore {
     } catch (error) {
       if (
         error instanceof Error &&
-        "code" in error &&
-        (error as { code?: string }).code === "P2002"
+        'code' in error &&
+        (error as { code?: string }).code === 'P2002'
       )
         return null;
       throw error;
@@ -195,8 +195,8 @@ export class PrismaUserStore implements UserStore {
     } catch (error) {
       if (
         error instanceof Error &&
-        "code" in error &&
-        (error as { code?: string }).code === "P2025"
+        'code' in error &&
+        (error as { code?: string }).code === 'P2025'
       )
         return null;
       throw error;
@@ -216,8 +216,8 @@ export class PrismaUserStore implements UserStore {
     } catch (error) {
       if (
         error instanceof Error &&
-        "code" in error &&
-        (error as { code?: string }).code === "P2025"
+        'code' in error &&
+        (error as { code?: string }).code === 'P2025'
       )
         return false;
       throw error;
@@ -246,8 +246,8 @@ export class PrismaUserStore implements UserStore {
     } catch (error) {
       if (
         error instanceof Error &&
-        "code" in error &&
-        (error as { code?: string }).code === "P2025"
+        'code' in error &&
+        (error as { code?: string }).code === 'P2025'
       )
         return null;
       throw error;
@@ -287,7 +287,7 @@ export class PrismaUserStore implements UserStore {
       },
     });
     const fresh = await this.prisma.user.findUnique({ where: { id: user.id } });
-    if (!fresh) throw new Error("OAuth user vanished after linking");
+    if (!fresh) throw new Error('OAuth user vanished after linking');
     return toPublicUser(fresh);
   }
 }

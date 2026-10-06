@@ -1,11 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { z } from "zod";
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
-  HOST: z.string().default("0.0.0.0"),
+  HOST: z.string().default('0.0.0.0'),
   DATABASE_URL: z.string().optional(),
   REDIS_URL: z.string().optional(),
   D2_COMPILER_URL: z.string().url().optional(),
@@ -32,7 +32,7 @@ const envSchema = z.object({
   JEV_API_BASE_URL: z.string().url().optional(),
   JEV_MODEL: z.string().optional(),
   JEV_TIMEOUT_MS: z.coerce.number().int().positive().default(1500),
-  JEV_FAIL_OPEN: z.enum(["true", "false", "1", "0"]).optional(),
+  JEV_FAIL_OPEN: z.enum(['true', 'false', '1', '0']).optional(),
   JEV_JAILBREAK_THRESHOLD: z.coerce.number().min(0).max(1).default(0.85),
   JEV_MIN_INTENT: z.coerce.number().min(0).max(1).default(0.25),
   OIDC_ISSUER: z.string().url().optional(),
@@ -44,12 +44,9 @@ const envSchema = z.object({
   RAZORPAY_KEY_SECRET: z.string().optional(),
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
   RAZORPAY_PLAN_PRO: z.string().optional(),
-  BILLING_SUCCESS_URL: z.string().url().optional(),
-  BILLING_CANCEL_URL: z.string().url().optional(),
-  BILLING_RETURN_URL: z.string().url().optional(),
   NODE_ENV: z
-    .enum(["development", "test", "production"])
-    .default("development"),
+    .enum(['development', 'test', 'production'])
+    .default('development'),
 });
 
 export type Config = {
@@ -95,10 +92,7 @@ export type Config = {
   razorpayKeySecret?: string;
   razorpayWebhookSecret?: string;
   razorpayPlanPro?: string;
-  billingSuccessUrl?: string;
-  billingCancelUrl?: string;
-  billingReturnUrl?: string;
-  nodeEnv: "development" | "test" | "production";
+  nodeEnv: 'development' | 'test' | 'production';
 };
 
 /**
@@ -109,24 +103,24 @@ export type Config = {
  */
 function loadDotEnv(): void {
   const candidates = [
-    resolve(process.cwd(), ".env"),
-    resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env"),
+    resolve(process.cwd(), '.env'),
+    resolve(dirname(fileURLToPath(import.meta.url)), '..', '.env'),
   ];
   for (const path of candidates) {
     let text: string;
     try {
       if (!existsSync(path)) continue;
-      text = readFileSync(path, "utf8");
+      text = readFileSync(path, 'utf8');
     } catch {
       continue;
     }
-    for (const line of text.split("\n")) {
+    for (const line of text.split('\n')) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const body = trimmed.startsWith("export ")
-        ? trimmed.slice("export ".length).trimStart()
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const body = trimmed.startsWith('export ')
+        ? trimmed.slice('export '.length).trimStart()
         : trimmed;
-      const eq = body.indexOf("=");
+      const eq = body.indexOf('=');
       if (eq <= 0) continue;
       const key = body.slice(0, eq).trim();
       if (!key || process.env[key] !== undefined) continue;
@@ -152,12 +146,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const normalized = Object.fromEntries(
     Object.entries(env).map(([key, value]) => [
       key,
-      value === "" ? undefined : value,
+      value === '' ? undefined : value,
     ]),
   );
   const parsed = envSchema.parse(normalized);
-  if (parsed.NODE_ENV === "production" && !parsed.DATABASE_URL) {
-    throw new Error("DATABASE_URL is required in production");
+  if (parsed.NODE_ENV === 'production' && !parsed.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required in production');
   }
 
   return {
@@ -185,7 +179,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     aiApiBaseUrl: parsed.AI_API_BASE_URL,
     aiModel: parsed.AI_MODEL,
     aiModels: parsed.AI_MODELS
-      ? parsed.AI_MODELS.split(",")
+      ? parsed.AI_MODELS.split(',')
           .map((m) => m.trim())
           .filter((m) => m.length > 0)
       : undefined,
@@ -196,7 +190,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     jevFailOpen:
       parsed.JEV_FAIL_OPEN === undefined
         ? undefined
-        : parsed.JEV_FAIL_OPEN === "true" || parsed.JEV_FAIL_OPEN === "1",
+        : parsed.JEV_FAIL_OPEN === 'true' || parsed.JEV_FAIL_OPEN === '1',
     jevJailbreakThreshold: parsed.JEV_JAILBREAK_THRESHOLD,
     jevMinIntent: parsed.JEV_MIN_INTENT,
     oidcIssuer: parsed.OIDC_ISSUER,
@@ -208,9 +202,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     razorpayKeySecret: parsed.RAZORPAY_KEY_SECRET,
     razorpayWebhookSecret: parsed.RAZORPAY_WEBHOOK_SECRET,
     razorpayPlanPro: parsed.RAZORPAY_PLAN_PRO,
-    billingSuccessUrl: parsed.BILLING_SUCCESS_URL,
-    billingCancelUrl: parsed.BILLING_CANCEL_URL,
-    billingReturnUrl: parsed.BILLING_RETURN_URL,
     nodeEnv: parsed.NODE_ENV,
   };
 }

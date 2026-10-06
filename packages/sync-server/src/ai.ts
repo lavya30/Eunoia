@@ -1,6 +1,6 @@
-import type { PrismaClient } from "@prisma/client";
-import type { Config } from "./config.js";
-import type { Tier } from "./d2-compiler.js";
+import type { PrismaClient } from '@prisma/client';
+import type { Config } from './config.js';
+import type { Tier } from './d2-compiler.js';
 
 /** Monthly generation budgets by tier. Community gets a trial taste. */
 export const AI_QUOTA: Record<Tier, number> = {
@@ -12,7 +12,7 @@ export const AI_QUOTA: Record<Tier, number> = {
 /** Curated model suggestions for the frontend picker. The provider is any
  * OpenAI-compatible endpoint, so callers may still request other model ids
  * (custom deployments, proxies); this list only drives the UI. */
-export const FALLBACK_AI_MODELS = ["openai/gpt-oss-120b"] as const;
+export const FALLBACK_AI_MODELS = ['openai/gpt-oss-120b'] as const;
 
 export const DEFAULT_AI_MODEL = FALLBACK_AI_MODELS[0];
 
@@ -46,7 +46,7 @@ export type AiUsageStore = {
 
 export function currentMonth(now = new Date()): string {
   const year = now.getUTCFullYear();
-  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
   return `${year}-${month}`;
 }
 
@@ -98,7 +98,7 @@ const MAX_LAYOUT_D2_CHARS = 8000;
 const MAX_D2_CHARS = 50_000;
 
 /** Default directive when the client sends no layout instruction. */
-export const DEFAULT_LAYOUT_INSTRUCTION = "Improve the layout of this diagram.";
+export const DEFAULT_LAYOUT_INSTRUCTION = 'Improve the layout of this diagram.';
 
 /**
  * Generates D2 source from natural language via any OpenAI-compatible
@@ -110,18 +110,18 @@ export async function generateD2(
   config: Config,
 ): Promise<AiGenerateResult> {
   const apiKey = config.aiApiKey;
-  if (!apiKey) throw new Error("AI is not configured");
+  if (!apiKey) throw new Error('AI is not configured');
   const trimmed = prompt.trim();
-  if (!trimmed) throw new Error("Prompt must not be empty");
+  if (!trimmed) throw new Error('Prompt must not be empty');
   if (trimmed.length > MAX_PROMPT_CHARS)
-    throw new Error("Prompt exceeds the 4000 character limit");
+    throw new Error('Prompt exceeds the 4000 character limit');
   const content = await chatCompletion(config, [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: trimmed },
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: trimmed },
   ]);
   const d2 = extractD2(content);
   if (d2.length > MAX_D2_CHARS)
-    throw new Error("Generated diagram exceeds the size limit");
+    throw new Error('Generated diagram exceeds the size limit');
   return { d2, model: resolveAiModel(config) };
 }
 
@@ -143,22 +143,22 @@ export async function suggestLayoutD2(
   config: Config,
 ): Promise<AiGenerateResult> {
   const apiKey = config.aiApiKey;
-  if (!apiKey) throw new Error("AI is not configured");
+  if (!apiKey) throw new Error('AI is not configured');
   const source = currentD2.trim();
-  if (!source) throw new Error("Current diagram must not be empty");
+  if (!source) throw new Error('Current diagram must not be empty');
   if (source.length > MAX_LAYOUT_D2_CHARS)
-    throw new Error("Current diagram exceeds the 8000 character limit");
+    throw new Error('Current diagram exceeds the 8000 character limit');
   const directive = instruction?.trim() || DEFAULT_LAYOUT_INSTRUCTION;
   const content = await chatCompletion(config, [
-    { role: "system", content: LAYOUT_SYSTEM_PROMPT },
+    { role: 'system', content: LAYOUT_SYSTEM_PROMPT },
     {
-      role: "user",
+      role: 'user',
       content: `Instruction: ${directive}\n\n\`\`\`d2\n${source}\n\`\`\``,
     },
   ]);
   const d2 = extractD2(content);
   if (d2.length > MAX_D2_CHARS)
-    throw new Error("Generated diagram exceeds the size limit");
+    throw new Error('Generated diagram exceeds the size limit');
   return { d2, model: resolveAiModel(config) };
 }
 
@@ -168,16 +168,16 @@ async function chatCompletion(
   messages: Array<{ role: string; content: string }>,
 ): Promise<string> {
   const apiKey = config.aiApiKey;
-  if (!apiKey) throw new Error("AI is not configured");
+  if (!apiKey) throw new Error('AI is not configured');
   const useModel = resolveAiModel(config);
-  const baseUrl = (config.aiApiBaseUrl ?? "https://api.openai.com/v1").replace(
+  const baseUrl = (config.aiApiBaseUrl ?? 'https://api.openai.com/v1').replace(
     /\/+$/,
-    "",
+    '',
   );
   const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
+    method: 'POST',
     headers: {
-      "content-type": "application/json",
+      'content-type': 'application/json',
       authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
@@ -195,8 +195,8 @@ async function chatCompletion(
     choices?: Array<{ message?: { content?: unknown } }>;
   };
   const content = data.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim())
-    throw new Error("AI provider returned an empty response");
+  if (typeof content !== 'string' || !content.trim())
+    throw new Error('AI provider returned an empty response');
   return content;
 }
 
@@ -208,6 +208,6 @@ async function chatCompletion(
 export function extractD2(content: string): string {
   const fenced = content.match(/```(?:d2)?\s*\n([\s\S]*?)```/);
   const candidate = (fenced ? fenced[1] : content).trim();
-  if (!candidate) throw new Error("AI provider returned an empty response");
+  if (!candidate) throw new Error('AI provider returned an empty response');
   return candidate;
 }

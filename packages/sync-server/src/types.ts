@@ -1,4 +1,4 @@
-import type { WebSocket } from "ws";
+import type { WebSocket } from 'ws';
 
 export type CanvasElement = {
   id: string;
@@ -14,11 +14,11 @@ export type RoomInfo = {
   id: string;
   name: string;
   ownerId: string;
-  tier: "COMMUNITY" | "PRO" | "ENTERPRISE";
+  tier: 'COMMUNITY' | 'PRO' | 'ENTERPRISE';
 };
 
 export type CursorTelemetry = {
-  type: "cursor";
+  type: 'cursor';
   clientId: string;
   x: number;
   y: number;
@@ -42,4 +42,4 @@ export const WS_MESSAGE_CURSOR = 2;
  * Redis room bus. Remote-origin updates fan out to local sockets but are
  * never republished — the tag is what breaks the broadcast loop.
  */
-export const REDIS_ORIGIN = "redis";
+export const REDIS_ORIGIN = 'redis';

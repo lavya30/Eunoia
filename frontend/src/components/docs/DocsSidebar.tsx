@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 import { Search, BookOpen, ExternalLink } from 'lucide-react';
 
 export interface NavItem {

@@ -60,7 +60,7 @@ function buildPayload(nodeCount: number) {
   return { nodes, edges, engine: 'dagre' };
 }
 
-const anchorOf = (node: BoardNode, _target: { x: number; y: number }) => ({
+const anchorOf = (node: BoardNode) => ({
   x: node.x + node.width / 2,
   y: node.y + node.height / 2,
 });

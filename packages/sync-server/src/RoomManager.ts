@@ -1,21 +1,21 @@
-import { randomUUID } from "node:crypto";
-import type { Config } from "./config.js";
-import { Room } from "./Room.js";
+import { randomUUID } from 'node:crypto';
+import type { Config } from './config.js';
+import { Room } from './Room.js';
 import {
   loadRoomDoc,
   type RoomMetadata,
   type SnapshotListOptions,
   type SnapshotStore,
   type StoredSnapshot,
-} from "./RoomLoader.js";
-import { RedisTelemetry, type RoomTelemetry } from "./redis.js";
-import { hashPassword, verifyPassword } from "./room-auth.js";
-import type { SnapshotFlushReport } from "./SnapshotWorker.js";
-import { SnapshotWorker } from "./SnapshotWorker.js";
+} from './RoomLoader.js';
+import { RedisTelemetry, type RoomTelemetry } from './redis.js';
+import { hashPassword, verifyPassword } from './room-auth.js';
+import type { SnapshotFlushReport } from './SnapshotWorker.js';
+import { SnapshotWorker } from './SnapshotWorker.js';
 
 export interface BusEvent {
-  direction: "published" | "received" | "dropped";
-  kind: "update" | "awareness" | "control" | "unknown";
+  direction: 'published' | 'received' | 'dropped';
+  kind: 'update' | 'awareness' | 'control' | 'unknown';
   bytes: number;
 }
 
@@ -43,16 +43,16 @@ export class RoomManager {
     this.telemetry.busSenderId = this.instanceId;
     this.telemetry.busHooks = {
       onPublish: (kind, bytes) =>
-        this.onBusEvent?.({ direction: "published", kind, bytes }),
+        this.onBusEvent?.({ direction: 'published', kind, bytes }),
       onReceive: (kind, bytes) =>
-        this.onBusEvent?.({ direction: "received", kind, bytes }),
+        this.onBusEvent?.({ direction: 'received', kind, bytes }),
       onDrop: (kind) =>
-        this.onBusEvent?.({ direction: "dropped", kind, bytes: 0 }),
+        this.onBusEvent?.({ direction: 'dropped', kind, bytes: 0 }),
     };
   }
 
   async getOrCreate(roomId: string): Promise<Room> {
-    if (this.closing) throw new Error("Server is shutting down");
+    if (this.closing) throw new Error('Server is shutting down');
     const existing = this.rooms.get(roomId);
     if (existing) {
       this.cancelIdle(roomId);
@@ -80,9 +80,9 @@ export class RoomManager {
     const passwordHash = password ? hashPassword(password) : undefined;
     const metadata: RoomMetadata = {
       id: input?.id ?? randomUUID(),
-      name: input?.name ?? "Untitled room",
-      ownerId: input?.ownerId ?? "anonymous",
-      tier: input?.tier ?? "COMMUNITY",
+      name: input?.name ?? 'Untitled room',
+      ownerId: input?.ownerId ?? 'anonymous',
+      tier: input?.tier ?? 'COMMUNITY',
       workspaceId: input?.workspaceId ?? null,
       folderId: input?.folderId ?? null,
       hasPassword: passwordHash !== undefined,
@@ -105,7 +105,7 @@ export class RoomManager {
     updates: {
       name?: string;
       ownerId?: string;
-      tier?: RoomMetadata["tier"];
+      tier?: RoomMetadata['tier'];
       workspaceId?: string | null;
       folderId?: string | null;
     },
@@ -162,10 +162,10 @@ export class RoomManager {
     const room = await this.getOrCreate(roomId);
     await room.restoreSnapshot(snapshot);
     const control = Buffer.from(
-      JSON.stringify({ type: "restore", snapshotId }),
-      "utf8",
+      JSON.stringify({ type: 'restore', snapshotId }),
+      'utf8',
     );
-    await this.telemetry.publishBus(roomId, "control", control).catch(() => {
+    await this.telemetry.publishBus(roomId, 'control', control).catch(() => {
       // The local restore already happened; a missed broadcast only delays
       // convergence until the next flush or reconnect (accepted degradation,
       // same as cursor telemetry).
@@ -226,9 +226,9 @@ export class RoomManager {
   private async loadRoom(roomId: string): Promise<Room> {
     await this.store.ensureRoom({
       id: roomId,
-      name: "Untitled room",
-      ownerId: "anonymous",
-      tier: "COMMUNITY",
+      name: 'Untitled room',
+      ownerId: 'anonymous',
+      tier: 'COMMUNITY',
       workspaceId: null,
       folderId: null,
       hasPassword: false,

@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
+import { randomUUID } from 'node:crypto';
+import type { PrismaClient } from '@prisma/client';
 
 export type AuditRecord = {
   id: string;
@@ -30,7 +30,7 @@ export interface AuditStore {
 const DEFAULT_LIMIT = 50;
 
 function clampLimit(limit: number | undefined): number {
-  if (typeof limit !== "number" || !Number.isFinite(limit))
+  if (typeof limit !== 'number' || !Number.isFinite(limit))
     return DEFAULT_LIMIT;
   return Math.min(200, Math.max(1, Math.floor(limit)));
 }
@@ -94,7 +94,7 @@ export class PrismaAuditStore implements AuditStore {
         ...(query.actorId !== undefined ? { actorId: query.actorId } : {}),
         ...(query.before ? { createdAt: { lt: query.before } } : {}),
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
       take: clampLimit(query.limit),
     })) as AuditRecord[];
   }

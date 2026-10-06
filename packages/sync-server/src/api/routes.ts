@@ -1,21 +1,21 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
-import type pino from "pino";
-import type { Config } from "../config.js";
-import type { ImageDeps } from "../images.js";
-import type { RoomManager } from "../RoomManager.js";
-import type { UserStore } from "../users.js";
-import { handleBillingWebhook, type BillingDeps } from "../billing.js";
-import { type ApiDeps, createApiApp } from "./app.js";
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type pino from 'pino';
+import { type BillingDeps, handleBillingWebhook } from '../billing.js';
+import type { Config } from '../config.js';
+import type { ImageDeps } from '../images.js';
+import type { RoomManager } from '../RoomManager.js';
+import type { UserStore } from '../users.js';
+import { type ApiDeps, createApiApp } from './app.js';
 
 const MAX_BODY_BYTES = 1_000_000;
 
 /** Thrown when a request body exceeds MAX_BODY_BYTES. Carries a stable
  * code so the server boundary can answer 413 instead of a bare 400. */
 export class BodyTooLargeError extends Error {
-  readonly code = "BODY_TOO_LARGE";
+  readonly code = 'BODY_TOO_LARGE';
   constructor(readonly receivedBytes: number) {
     super(`Request body exceeds the ${MAX_BODY_BYTES} byte limit`);
-    this.name = "BodyTooLargeError";
+    this.name = 'BodyTooLargeError';
   }
 }
 
@@ -39,16 +39,16 @@ export async function handleApiRequest(
   options: ApiBridgeOptions = {},
 ): Promise<void> {
   const started = Date.now();
-  if (req.method === "OPTIONS") {
+  if (req.method === 'OPTIONS') {
     res.statusCode = 204;
-    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader('access-control-allow-origin', '*');
     res.setHeader(
-      "access-control-allow-headers",
-      "content-type, authorization, x-user-token, x-razorpay-signature, x-billing-signature, stripe-signature",
+      'access-control-allow-headers',
+      'content-type, authorization, x-user-token, x-razorpay-signature, x-billing-signature, stripe-signature',
     );
     res.setHeader(
-      "access-control-allow-methods",
-      "GET, POST, PATCH, DELETE, OPTIONS",
+      'access-control-allow-methods',
+      'GET, POST, PATCH, DELETE, OPTIONS',
     );
     res.end();
     return;
@@ -57,7 +57,7 @@ export async function handleApiRequest(
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (value)
-      headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+      headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
   // Track length incrementally: re-concatenating per chunk is O(n²) on
   // large bodies and invites slow-loris memory pressure.
@@ -71,20 +71,20 @@ export async function handleApiRequest(
     chunks.push(buf);
   }
   const body =
-    chunks.length && req.method !== "GET" && req.method !== "HEAD"
+    chunks.length && req.method !== 'GET' && req.method !== 'HEAD'
       ? Buffer.concat(chunks)
       : undefined;
 
-  const pathname = req.url?.split("?")[0];
-  if (req.method === "POST" && pathname === "/api/billing/webhook") {
+  const pathname = req.url?.split('?')[0];
+  if (req.method === 'POST' && pathname === '/api/billing/webhook') {
     if (!options.billing) {
       res.statusCode = 503;
-      res.setHeader("access-control-allow-origin", "*");
-      res.setHeader("content-type", "application/json");
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('content-type', 'application/json');
       res.end(
         JSON.stringify({
-          error: "Billing is not configured",
-          code: "BILLING_NOT_CONFIGURED",
+          error: 'Billing is not configured',
+          code: 'BILLING_NOT_CONFIGURED',
         }),
       );
       options.log?.info(
@@ -94,7 +94,7 @@ export async function handleApiRequest(
           status: 503,
           durationMs: Date.now() - started,
         },
-        "http request",
+        'http request',
       );
       return;
     }
@@ -102,20 +102,20 @@ export async function handleApiRequest(
     // Razorpay posts x-razorpay-signature; accept the legacy
     // x-billing-signature / stripe-signature aliases too.
     const sigHeader =
-      req.headers["x-razorpay-signature"] ??
-      req.headers["x-billing-signature"] ??
-      req.headers["stripe-signature"];
+      req.headers['x-razorpay-signature'] ??
+      req.headers['x-billing-signature'] ??
+      req.headers['stripe-signature'];
     const signature = Array.isArray(sigHeader)
-      ? (sigHeader[0] ?? "")
-      : (sigHeader ?? "");
+      ? (sigHeader[0] ?? '')
+      : (sigHeader ?? '');
     const result = await handleBillingWebhook(
       body ?? new Uint8Array(0),
       signature,
       options.billing,
     );
     res.statusCode = result.status;
-    res.setHeader("access-control-allow-origin", "*");
-    res.setHeader("content-type", "application/json");
+    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify(result.body));
     options.log?.info(
       {
@@ -124,7 +124,7 @@ export async function handleApiRequest(
         status: result.status,
         durationMs: Date.now() - started,
       },
-      "http request",
+      'http request',
     );
     return;
   }
@@ -134,7 +134,7 @@ export async function handleApiRequest(
     billing: options.billing ?? options.apiDeps?.billing,
   };
   const request = new Request(
-    `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`,
+    `http://${req.headers.host ?? 'localhost'}${req.url ?? '/'}`,
     { method: req.method, headers, body },
   );
   const response = await createApiApp(
@@ -145,14 +145,14 @@ export async function handleApiRequest(
     apiDeps,
   ).handle(request);
   res.statusCode = response.status;
-  res.setHeader("access-control-allow-origin", "*");
+  res.setHeader('access-control-allow-origin', '*');
   res.setHeader(
-    "access-control-allow-headers",
-    "content-type, authorization, x-user-token",
+    'access-control-allow-headers',
+    'content-type, authorization, x-user-token',
   );
   res.setHeader(
-    "access-control-allow-methods",
-    "GET, POST, PATCH, DELETE, OPTIONS",
+    'access-control-allow-methods',
+    'GET, POST, PATCH, DELETE, OPTIONS',
   );
   response.headers.forEach((value, key) => {
     res.setHeader(key, value);
@@ -161,10 +161,10 @@ export async function handleApiRequest(
   options.log?.info(
     {
       method: req.method,
-      path: req.url?.split("?")[0],
+      path: req.url?.split('?')[0],
       status: response.status,
       durationMs: Date.now() - started,
     },
-    "http request",
+    'http request',
   );
 }

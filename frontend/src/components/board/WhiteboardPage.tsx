@@ -1128,7 +1128,7 @@ export function WhiteboardPage({
     const stored = window.localStorage.getItem('eunoia:gridMode');
     return stored === 'lines' || stored === 'none' ? stored : 'dots';
   });
-  const [gridSize, setGridSize] = useState<number>(() => {
+  const [gridSize] = useState<number>(() => {
     if (typeof window === 'undefined') return 24;
     const stored = Number(window.localStorage.getItem('eunoia:gridSize'));
     return stored === 8 || stored === 16 || stored === 24 || stored === 32
@@ -1737,7 +1737,7 @@ export function WhiteboardPage({
   // Dashboard handoff: templates stash D2 source and imports stash board
   // JSON in sessionStorage under a per-room key (see DashboardPage). Apply
   // once when the room becomes ready, then clear the key.
-  /* eslint-disable react-hooks/set-state-in-effect -- one-shot handoff applied on room-ready, not a render loop. */
+  /* eslint-disable react-hooks/set-state-in-effect -- hydrate one-shot dashboard handoff from sessionStorage. */
   useEffect(() => {
     if (!roomId || roomStatus !== 'ready') return;
     try {
@@ -1764,13 +1764,11 @@ export function WhiteboardPage({
     } catch {
       // Best-effort handoff; the board is usable without it.
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, roomStatus]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Follow mode: track the followed peer's cursor by centering the camera
   // on it. Any manual pan/zoom interaction clears the follow.
-  /* eslint-disable react-hooks/set-state-in-effect -- follow-mode camera tracking driven by peer telemetry. */
   useEffect(() => {
     if (followedPeerId === null) return;
     const peer = peers.find((entry) => entry.clientId === followedPeerId);
@@ -1783,7 +1781,6 @@ export function WhiteboardPage({
       y: cursor.y - viewport.height / 2 / current.zoom,
     }));
   }, [peers, followedPeerId]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (
@@ -4192,7 +4189,8 @@ export function WhiteboardPage({
           ),
         });
         flushPendingRemote();
-        setActiveTool('select');
+        // Drawing is a continuous tool: keep the pencil active for the next
+        // stroke. One-shot creation tools still return to Select below.
         gestureBaseRef.current = null;
         if (event.currentTarget.hasPointerCapture(event.pointerId))
           event.currentTarget.releasePointerCapture(event.pointerId);
@@ -5055,6 +5053,7 @@ export function WhiteboardPage({
     duplicateSelected,
     editingNode,
     exportMenuOpen,
+    groupSelected,
     locked,
     moveSelectedLayer,
     pasteClipboard,
@@ -5067,6 +5066,7 @@ export function WhiteboardPage({
     showSearch,
     showShortcuts,
     undo,
+    ungroupSelected,
   ]);
 
   // Broadcast our canvas cursor to peers at ~20Hz. Uses refs only so
@@ -5791,7 +5791,7 @@ export function WhiteboardPage({
     return (
       <UnlockDialog
         roomId={lockedRoomId}
-        onUnlocked={(meta, _nextTicket) => {
+        onUnlocked={(meta) => {
           // Ticket already stored by the dialog; flipping to ready
           // reconnects the sync session, which reads the store live.
           setRoomMeta(meta);

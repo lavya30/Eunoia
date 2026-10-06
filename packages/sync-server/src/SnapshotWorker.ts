@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { compressSync } from "fflate";
-import * as Y from "yjs";
-import type { SnapshotStore } from "./RoomLoader.js";
+import { randomUUID } from 'node:crypto';
+import { compressSync } from 'fflate';
+import * as Y from 'yjs';
+import type { SnapshotStore } from './RoomLoader.js';
 
 export type SnapshotFlushReport = {
   roomId: string;
-  outcome: "success" | "error";
+  outcome: 'success' | 'error';
   durationMs: number;
   bytes: number;
 };
@@ -27,7 +27,7 @@ export class SnapshotWorker {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.flush(doc);
+      void this.flush(doc).catch(() => undefined);
     }, this.debounceMs);
   }
 
@@ -50,7 +50,7 @@ export class SnapshotWorker {
         const started = Date.now();
         const state = Y.encodeStateAsUpdate(doc);
         const version = Buffer.from(Y.encodeStateVector(doc)).toString(
-          "base64url",
+          'base64url',
         );
         const compressed = compressSync(state);
         try {
@@ -63,14 +63,18 @@ export class SnapshotWorker {
           });
           this.onFlush?.({
             roomId: this.roomId,
-            outcome: "success",
+            outcome: 'success',
             durationMs: Date.now() - started,
             bytes: compressed.length,
           });
         } catch (error) {
+          // Keep the document dirty so the next flush attempt retries this
+          // state instead of silently dropping the only durable copy after a
+          // transient persistence failure.
+          this.dirty = true;
           this.onFlush?.({
             roomId: this.roomId,
-            outcome: "error",
+            outcome: 'error',
             durationMs: Date.now() - started,
             bytes: compressed.length,
           });

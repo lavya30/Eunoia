@@ -57,7 +57,7 @@ export function DashboardPage() {
   const [query, setQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [trash, setTrash] = useState<LocalTrashEntry[]>([]);
-  const [favoritesTick, setFavoritesTick] = useState(0);
+  const [, setFavoritesTick] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -104,19 +104,18 @@ export function DashboardPage() {
     const seen = new Map<string, DashboardRoom>();
     for (const room of [...rooms, ...teamRooms]) seen.set(room.id, room);
     return [...seen.values()];
-  }, [rooms, teamRooms, favoritesTick]);
+  }, [rooms, teamRooms]);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return allBoards.filter((room) => {
-      if (tab === 'starred' && !getFavoriteRoomIds().includes(room.id))
-        return false;
-      if (!showArchived && isRoomArchived(room.id)) return false;
-      if (needle && !`${room.name} ${room.id}`.toLowerCase().includes(needle))
-        return false;
-      return true;
-    });
-  }, [allBoards, query, showArchived, tab, favoritesTick]);
+  const favoriteRoomIds = new Set(getFavoriteRoomIds());
+  const needle = query.trim().toLowerCase();
+
+  const filtered = allBoards.filter((room) => {
+    if (tab === 'starred' && !favoriteRoomIds.has(room.id)) return false;
+    if (!showArchived && isRoomArchived(room.id)) return false;
+    if (needle && !`${room.name} ${room.id}`.toLowerCase().includes(needle))
+      return false;
+    return true;
+  });
 
   const createBoard = useCallback(
     async (name: string, d2?: string) => {
@@ -340,11 +339,9 @@ export function DashboardPage() {
                       toggleRoomFavorite(room.id);
                       refresh();
                     }}
-                    aria-pressed={getFavoriteRoomIds().includes(room.id)}
+                    aria-pressed={favoriteRoomIds.has(room.id)}
                   >
-                    {getFavoriteRoomIds().includes(room.id)
-                      ? '★ Unstar'
-                      : '☆ Star'}
+                    {favoriteRoomIds.has(room.id) ? '★ Unstar' : '☆ Star'}
                   </button>
                   <button
                     type="button"

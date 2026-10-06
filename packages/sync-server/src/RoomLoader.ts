@@ -1,6 +1,6 @@
-import type { PrismaClient } from "@prisma/client";
-import { decompressSync } from "fflate";
-import * as Y from "yjs";
+import type { PrismaClient } from '@prisma/client';
+import { decompressSync } from 'fflate';
+import * as Y from 'yjs';
 
 export type StoredSnapshot = {
   id: string;
@@ -55,7 +55,7 @@ export type RoomMetadata = {
   id: string;
   name: string;
   ownerId: string;
-  tier: "COMMUNITY" | "PRO" | "ENTERPRISE";
+  tier: 'COMMUNITY' | 'PRO' | 'ENTERPRISE';
   hasPassword: boolean;
   /** Null for personal rooms outside any workspace. */
   workspaceId: string | null;
@@ -94,7 +94,7 @@ export interface SnapshotStore {
 export type RoomUpdate = {
   name?: string;
   ownerId?: string;
-  tier?: RoomMetadata["tier"];
+  tier?: RoomMetadata['tier'];
   passwordHash?: string | null;
   workspaceId?: string | null;
   folderId?: string | null;
@@ -240,7 +240,7 @@ export class PrismaSnapshotStore implements SnapshotStore {
   async getLatestSnapshot(roomId: string): Promise<StoredSnapshot | null> {
     const snapshot = await this.prisma.snapshot.findFirst({
       where: { roomId },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
     });
     return snapshot ? toStoredSnapshot(snapshot) : null;
   }
@@ -259,7 +259,7 @@ export class PrismaSnapshotStore implements SnapshotStore {
         roomId,
         ...(options.before ? { createdAt: { lt: options.before } } : {}),
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
       ...(options.limit !== undefined ? { take: options.limit } : {}),
     });
     return snapshots.map(toStoredSnapshot);
@@ -289,12 +289,12 @@ export class PrismaSnapshotStore implements SnapshotStore {
     const [newest, recent, inWindow] = await Promise.all([
       this.prisma.snapshot.findFirst({
         where: { roomId },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         select: { id: true },
       }),
       this.prisma.snapshot.findMany({
         where: { roomId },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         take: this.retention.maxPerRoom,
         select: { id: true },
       }),
@@ -368,7 +368,7 @@ export class PrismaSnapshotStore implements SnapshotStore {
           : {}),
         ...(filter.ownerId !== undefined ? { ownerId: filter.ownerId } : {}),
       },
-      orderBy: { updatedAt: "desc" },
+      orderBy: { updatedAt: 'desc' },
       select: {
         id: true,
         name: true,
@@ -431,8 +431,8 @@ export class PrismaSnapshotStore implements SnapshotStore {
         // Missing row (P2025). Anything else is a real failure.
         if (
           error instanceof Error &&
-          "code" in error &&
-          (error as { code?: string }).code === "P2025"
+          'code' in error &&
+          (error as { code?: string }).code === 'P2025'
         )
           return null;
         throw error;
@@ -503,10 +503,10 @@ export async function loadRoomDoc(
   const snapshots = await store.listSnapshots(roomId, { limit: 10 });
   for (const snapshot of snapshots) {
     try {
-      Y.applyUpdate(doc, decompressSync(snapshot.data), "room-loader");
+      Y.applyUpdate(doc, decompressSync(snapshot.data), 'room-loader');
       return doc;
     } catch {
-      continue;
+      // Try the next older snapshot.
     }
   }
   return doc;

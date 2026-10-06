@@ -1,8 +1,8 @@
-import { z } from "zod";
+import { z } from 'zod';
 
-export type LayoutEngine = "dagre" | "elk" | "tala";
+export type LayoutEngine = 'dagre' | 'elk' | 'tala';
 
-export type Tier = "COMMUNITY" | "PRO" | "ENTERPRISE";
+export type Tier = 'COMMUNITY' | 'PRO' | 'ENTERPRISE';
 
 export type CompileRequest = {
   source: string;
@@ -42,14 +42,14 @@ export class CompileRequestError extends Error {
     readonly details?: Record<string, unknown>,
   ) {
     super(message);
-    this.name = "CompileRequestError";
+    this.name = 'CompileRequestError';
   }
 }
 
 export class TierUpgradeError extends CompileRequestError {
   constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 403, "TIER_UPGRADE_REQUIRED", details);
-    this.name = "TierUpgradeError";
+    super(message, 403, 'TIER_UPGRADE_REQUIRED', details);
+    this.name = 'TierUpgradeError';
   }
 }
 
@@ -58,25 +58,25 @@ export class InvalidEngineError extends CompileRequestError {
     super(
       `Unknown layout engine: ${JSON.stringify(engine)}`,
       400,
-      "INVALID_ENGINE",
+      'INVALID_ENGINE',
       {
         engine,
       },
     );
-    this.name = "InvalidEngineError";
+    this.name = 'InvalidEngineError';
   }
 }
 
-const LAYOUT_ENGINES: LayoutEngine[] = ["dagre", "elk", "tala"];
+const LAYOUT_ENGINES: LayoutEngine[] = ['dagre', 'elk', 'tala'];
 
 /** ELK and TALA require PRO or ENTERPRISE (Community gets dagre + node cap). */
-const PRO_ENGINES: LayoutEngine[] = ["elk", "tala"];
+const PRO_ENGINES: LayoutEngine[] = ['elk', 'tala'];
 
 const CompileResponseSchema = z
   .object({
     nodes: z.array(z.record(z.unknown())),
     edges: z.array(z.record(z.unknown())),
-    engine: z.enum(["dagre", "elk", "tala"]),
+    engine: z.enum(['dagre', 'elk', 'tala']),
     placeholder: z.boolean().optional(),
     fallback: z.boolean().optional(),
     svg: z.string().max(5_000_000).optional(),
@@ -109,18 +109,18 @@ function compilerRequestError(
       ? `D2 compilation failed (compiler returned ${status}): ${snippet}`
       : `D2 compilation failed (compiler returned ${status})`);
   if (status === 429 || status >= 500)
-    return new CompileRequestError(message, 502, "D2_COMPILER_UNAVAILABLE", {
+    return new CompileRequestError(message, 502, 'D2_COMPILER_UNAVAILABLE', {
       status,
     });
   const code =
-    parsed.success && parsed.data.code ? parsed.data.code : "D2_COMPILE_FAILED";
+    parsed.success && parsed.data.code ? parsed.data.code : 'D2_COMPILE_FAILED';
   return new CompileRequestError(message, 400, code, { status });
 }
 
 export function parseEngine(value: unknown): LayoutEngine {
-  if (value === undefined) return "dagre";
+  if (value === undefined) return 'dagre';
   if (
-    typeof value === "string" &&
+    typeof value === 'string' &&
     LAYOUT_ENGINES.includes(value as LayoutEngine)
   )
     return value as LayoutEngine;
@@ -128,7 +128,7 @@ export function parseEngine(value: unknown): LayoutEngine {
 }
 
 export function assertEngineAllowed(engine: LayoutEngine, tier: Tier): void {
-  if (tier === "COMMUNITY" && PRO_ENGINES.includes(engine))
+  if (tier === 'COMMUNITY' && PRO_ENGINES.includes(engine))
     throw new TierUpgradeError(
       `The '${engine}' layout engine requires a Pro or Enterprise tier`,
       { engine, tier },
@@ -140,7 +140,7 @@ export function assertNodeCountAllowed(
   tier: Tier,
   nodeLimit: number,
 ): void {
-  if (tier === "COMMUNITY" && nodeCount > nodeLimit)
+  if (tier === 'COMMUNITY' && nodeCount > nodeLimit)
     throw new TierUpgradeError(
       `Community diagrams are limited to ${nodeLimit} nodes (got ${nodeCount})`,
       { nodeCount, limit: nodeLimit, tier },
@@ -159,9 +159,9 @@ export async function compileD2(
   if (!compilerUrl) {
     if (!isDevelopment) {
       throw new CompileRequestError(
-        "D2 compiler is not configured",
+        'D2 compiler is not configured',
         502,
-        "D2_COMPILER_UNAVAILABLE",
+        'D2_COMPILER_UNAVAILABLE',
       );
     }
     const fallback = fallbackLayout(request.source, engine);
@@ -173,8 +173,8 @@ export async function compileD2(
     // A hung compiler must not exhaust the request worker pool: bound the
     // upstream call (the health check already uses the same budget).
     const response = await fetch(compilerUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         source: request.source,
         engine,
@@ -198,7 +198,7 @@ export async function compileD2(
     if (!response.ok) throw compilerRequestError(response.status, data, raw);
     const parsed = CompileResponseSchema.safeParse(data);
     if (!parsed.success)
-      throw new Error("D2 compiler returned an invalid response");
+      throw new Error('D2 compiler returned an invalid response');
     const compiled = parsed.data;
     assertNodeCountAllowed(compiled.nodes.length, tier, nodeLimit);
     return compiled;
@@ -214,22 +214,18 @@ export async function compileD2(
       return {
         ...fallback,
         error:
-          error instanceof Error ? error.message : "D2 compiler unavailable",
+          error instanceof Error ? error.message : 'D2 compiler unavailable',
       };
     }
     if (error instanceof Error) {
       throw new CompileRequestError(
         error.message,
         502,
-        "D2_COMPILER_UNAVAILABLE",
+        'D2_COMPILER_UNAVAILABLE',
       );
     }
     throw error;
   }
-}
-
-function placeholderLayout(engine: LayoutEngine): CompileResponse {
-  return { nodes: [], edges: [], engine, placeholder: true };
 }
 
 /**
@@ -250,7 +246,7 @@ export function fallbackLayout(
   const { nodeKeys, nodeLabels, edges } = parseD2Source(source);
   const nodes: Array<Record<string, unknown>> = nodeKeys.map((key, index) => ({
     key,
-    label: nodeLabels.get(key) ?? key.split(".").pop() ?? key,
+    label: nodeLabels.get(key) ?? key.split('.').pop() ?? key,
     x: 120 + (index % 5) * 240,
     y: 160 + Math.floor(index / 5) * 160,
     width: 190,
@@ -270,18 +266,18 @@ export function fallbackLayout(
 }
 
 const FALLBACK_DIRECTIVES = new Set([
-  "direction",
-  "title",
-  "theme",
-  "sketch",
-  "layout",
-  "pad",
-  "center",
-  "classes",
-  "vars",
-  "layers",
-  "scenarios",
-  "steps",
+  'direction',
+  'title',
+  'theme',
+  'sketch',
+  'layout',
+  'pad',
+  'center',
+  'classes',
+  'vars',
+  'layers',
+  'scenarios',
+  'steps',
 ]);
 
 const MAX_FALLBACK_NODES = 500;
@@ -294,7 +290,7 @@ function stripInlineComment(line: string): string {
     const ch = line[i];
     if (ch === "'" && !inDouble) inSingle = !inSingle;
     else if (ch === '"' && !inSingle) inDouble = !inDouble;
-    else if (ch === "#" && !inSingle && !inDouble) return line.slice(0, i);
+    else if (ch === '#' && !inSingle && !inDouble) return line.slice(0, i);
   }
   return line;
 }
@@ -352,11 +348,11 @@ export function parseD2Source(source: string): {
     if (!key || key.length > 200) return null;
     // Dotted paths create their container prefixes so `a.b: x` still shows `a`.
     const segments = key
-      .split(".")
+      .split('.')
       .map((s) => s.trim())
       .filter(Boolean);
     if (segments.length === 0) return null;
-    let prefix = "";
+    let prefix = '';
     for (const segment of segments) {
       prefix = prefix ? `${prefix}.${segment}` : segment;
       if (!seen.has(prefix)) {
@@ -366,10 +362,10 @@ export function parseD2Source(source: string): {
       if (nodeKeys.length >= MAX_FALLBACK_NODES) break;
     }
     if (label !== undefined && segments.length > 0) {
-      const full = segments.join(".");
+      const full = segments.join('.');
       if (!nodeLabels.has(full)) nodeLabels.set(full, label.slice(0, 500));
     }
-    return segments.join(".");
+    return segments.join('.');
   };
 
   const addEdge = (from: string, to: string, label?: string) => {
@@ -385,19 +381,19 @@ export function parseD2Source(source: string): {
     edges.push({ key, from, to, label: label?.slice(0, 200) });
   };
 
-  for (const rawLine of source.split("\n")) {
+  for (const rawLine of source.split('\n')) {
     const withoutComment = stripInlineComment(rawLine).trim();
     if (!withoutComment) continue;
     // Split off a trailing `: edge label` only for edge lines; node labels
     // are handled per-branch below.
-    let line = withoutComment;
+    const line = withoutComment;
     let trailingLabel: string | undefined;
 
     const chain = splitEdgeChain(line);
     if (chain) {
       // A trailing `: label` belongs to the last edge (`a -> b: hello`).
       const lastPart = chain.parts[chain.parts.length - 1];
-      const colon = lastPart.indexOf(":");
+      const colon = lastPart.indexOf(':');
       if (colon >= 0) {
         trailingLabel = lastPart.slice(colon + 1).trim() || undefined;
         chain.parts[chain.parts.length - 1] = lastPart.slice(0, colon);
@@ -408,7 +404,7 @@ export function parseD2Source(source: string): {
       for (const part of chain.parts) {
         // Edge endpoints may carry inline labels (`a: A -> b: B`); keep the
         // key before the colon for graph structure.
-        const endpoint = part.split(":")[0] ?? "";
+        const endpoint = part.split(':')[0] ?? '';
         const key = ensureNode(endpoint);
         if (!key) {
           valid = false;
@@ -427,21 +423,21 @@ export function parseD2Source(source: string): {
       continue;
     }
 
-    const colon = line.indexOf(":");
+    const colon = line.indexOf(':');
     if (colon >= 0) {
       const rawKey = line.slice(0, colon).trim();
       const value = line.slice(colon + 1).trim();
-      const topKey = unquoteKey(rawKey.split(".")[0] ?? "").toLowerCase();
+      const topKey = unquoteKey(rawKey.split('.')[0] ?? '').toLowerCase();
       if (FALLBACK_DIRECTIVES.has(topKey)) continue;
       // Attribute lines (`a.style.fill: ...`, `a.shape: ...`) declare `a`.
-      const baseKey = rawKey.split(":")[0] ?? rawKey;
-      const owner = unquoteKey((baseKey.split(".")[0] ?? "").trim());
-      const second = (rawKey.split(".")[1] ?? "").trim().toLowerCase();
-      if (second === "shape" || second === "style" || second === "icon") {
+      const baseKey = rawKey.split(':')[0] ?? rawKey;
+      const owner = unquoteKey((baseKey.split('.')[0] ?? '').trim());
+      const second = (rawKey.split('.')[1] ?? '').trim().toLowerCase();
+      if (second === 'shape' || second === 'style' || second === 'icon') {
         ensureNode(owner);
         continue;
       }
-      if (!rawKey.includes(" ") || /^[\w."'\-/\s]+$/.test(rawKey)) {
+      if (!rawKey.includes(' ') || /^[\w."'\-/\s]+$/.test(rawKey)) {
         ensureNode(rawKey, value || undefined);
         continue;
       }
@@ -449,14 +445,14 @@ export function parseD2Source(source: string): {
       continue;
     }
 
-    const topKey = unquoteKey(line.split(".")[0] ?? "").toLowerCase();
+    const topKey = unquoteKey(line.split('.')[0] ?? '').toLowerCase();
     if (FALLBACK_DIRECTIVES.has(topKey)) continue;
     ensureNode(line);
   }
 
   if (nodeKeys.length === 0 && source.trim()) {
-    const label = source.trim().split("\n")[0]?.slice(0, 500) ?? "diagram";
-    ensureNode("diagram", label);
+    const label = source.trim().split('\n')[0]?.slice(0, 500) ?? 'diagram';
+    ensureNode('diagram', label);
   }
 
   return { nodeKeys, nodeLabels, edges };

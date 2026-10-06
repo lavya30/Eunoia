@@ -1,10 +1,10 @@
-import { Redis } from "ioredis";
-import { BusEnvelopeSchema, CursorTelemetrySchema } from "./api/schemas.js";
-import type { CursorTelemetry } from "./types.js";
+import { Redis } from 'ioredis';
+import { BusEnvelopeSchema, CursorTelemetrySchema } from './api/schemas.js';
+import type { CursorTelemetry } from './types.js';
 
 export type CursorListener = (cursor: CursorTelemetry) => void;
 
-export type BusKind = "update" | "awareness" | "control";
+export type BusKind = 'update' | 'awareness' | 'control';
 
 export interface BusMessage {
   kind: BusKind;
@@ -16,7 +16,7 @@ export interface BusMessage {
 export interface BusHooks {
   onPublish?: (kind: BusKind, bytes: number) => void;
   onReceive?: (kind: BusKind, bytes: number) => void;
-  onDrop?: (kind: BusKind | "unknown") => void;
+  onDrop?: (kind: BusKind | 'unknown') => void;
 }
 
 /**
@@ -74,12 +74,12 @@ export class RedisTelemetry implements RoomTelemetry {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
     });
-    this.subscriber.on("message", (channel, message) => {
-      if (channel.startsWith("bus:")) {
-        this.handleBusMessage(channel.slice("bus:".length), message);
+    this.subscriber.on('message', (channel, message) => {
+      if (channel.startsWith('bus:')) {
+        this.handleBusMessage(channel.slice('bus:'.length), message);
         return;
       }
-      const roomId = channel.slice("cursor:".length);
+      const roomId = channel.slice('cursor:'.length);
       // Cross-instance data is untrusted: a rogue or outdated producer must
       // not be able to inject malformed cursors into live rooms.
       try {
@@ -89,7 +89,7 @@ export class RedisTelemetry implements RoomTelemetry {
         // payload without one is unattributable and must not fan out.
         // Missing timestamps are filled with receipt time (same rule as
         // the local WebSocket path in WebSocketHandler).
-        if (typeof parsed.data.clientId !== "string") return;
+        if (typeof parsed.data.clientId !== 'string') return;
         const cursor: CursorTelemetry = {
           ...parsed.data,
           clientId: parsed.data.clientId,
@@ -178,7 +178,7 @@ export class RedisTelemetry implements RoomTelemetry {
       v: 1,
       kind,
       from: this.busSenderId,
-      data: Buffer.from(data).toString("base64"),
+      data: Buffer.from(data).toString('base64'),
     });
     try {
       await this.publisher.connect();
@@ -196,7 +196,7 @@ export class RedisTelemetry implements RoomTelemetry {
    * messages (Redis delivers our publishes back to our subscriber
    * connection). Set once per process by RoomManager.
    */
-  busSenderId = "";
+  busSenderId = '';
   /** Optional observability sink for bus traffic; set by RoomManager. */
   busHooks?: BusHooks;
 
@@ -205,19 +205,19 @@ export class RedisTelemetry implements RoomTelemetry {
     try {
       envelope = JSON.parse(message);
     } catch {
-      this.busHooks?.onDrop?.("unknown");
+      this.busHooks?.onDrop?.('unknown');
       return;
     }
     const result = BusEnvelopeSchema.safeParse(envelope);
     if (!result.success) {
-      this.busHooks?.onDrop?.("unknown");
+      this.busHooks?.onDrop?.('unknown');
       return;
     }
     const { kind, from, data } = result.data;
     if (from === this.busSenderId) return;
     let bytes: Uint8Array;
     try {
-      bytes = Buffer.from(data, "base64");
+      bytes = Buffer.from(data, 'base64');
     } catch {
       this.busHooks?.onDrop?.(kind);
       return;

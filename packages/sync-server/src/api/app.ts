@@ -9,7 +9,7 @@ import {
   generateD2,
   listAiModels,
   suggestLayoutD2,
-} from "../ai.js";
+} from '../ai.js';
 import { type AuditStore, recordAudit } from '../audit.js';
 import type { BillingDeps } from '../billing.js';
 import type { Config } from '../config.js';
@@ -37,7 +37,7 @@ import {
   type JevVerdict,
   resolveFailOpen,
   resolveJevTimeout,
-} from "../jev.js";
+} from '../jev.js';
 import { Metrics } from '../metrics.js';
 import type { RoomMetadata } from '../RoomLoader.js';
 import type { RoomManager } from '../RoomManager.js';
@@ -60,8 +60,8 @@ import {
   verifyIdToken,
 } from '../sso.js';
 import {
-  issueUserToken,
   issuePasswordResetToken,
+  issueUserToken,
   verifyPasswordResetToken,
   verifyUserToken,
 } from '../user-auth.js';
@@ -117,9 +117,7 @@ async function requestAccess(
     manager,
     roomId,
     extractTicket(headers, query),
-    typeof query['ticket'] === 'string' && query['ticket']
-      ? query['ticket']
-      : undefined,
+    typeof query.ticket === 'string' && query.ticket ? query.ticket : undefined,
     secret,
   );
   if (access.status === 'ok') return { room: access.room };
@@ -181,7 +179,7 @@ async function requestUser(
 
 function bearerToken(authorization: string | undefined): string | undefined {
   if (typeof authorization !== 'string') return undefined;
-  const [scheme, token] = authorization.split(' ');
+  const [scheme, token] = authorization.trim().split(/\s+/);
   return scheme?.toLowerCase() === 'bearer' && token ? token : undefined;
 }
 
@@ -337,7 +335,7 @@ export type ApiDeps = {
 
 /** Post-auth landing path: same rules as the frontend AuthForm. */
 function sanitizeNext(next: string | null): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//')) return '/board';
+  if (!next?.startsWith('/') || next.startsWith('//')) return '/board';
   return next.slice(0, 500);
 }
 
@@ -448,7 +446,6 @@ export function createApiApp(
     checkDatabase: skippedCheck,
     checkRedis: skippedCheck,
     checkCompiler: skippedCheck,
-    checkImageStorage: skippedCheck,
   };
   const metrics = deps.metrics ?? new Metrics();
   const startedAt = deps.startedAt ?? Date.now();
@@ -490,8 +487,7 @@ export function createApiApp(
         args.secret,
         'read',
       );
-      if ('body' in access)
-        return { status: access.status, body: access.body };
+      if ('body' in access) return { status: access.status, body: access.body };
       tier = higherTier(access.room.tier, tier);
     }
     const used = await args.aiUsage.getUsage(args.caller.id, currentMonth());
@@ -522,12 +518,12 @@ export function createApiApp(
         );
         if (!decision.allowed) {
           metrics.incJev(
-            decision.code === "JEV_BLOCKED" ? "blocked" : "low_intent",
+            decision.code === 'JEV_BLOCKED' ? 'blocked' : 'low_intent',
           );
           await recordAudit(deps.audit, {
             actorId: args.caller.id,
             workspaceId: null,
-            action: "ai.jev_blocked",
+            action: 'ai.jev_blocked',
             target: args.roomId ?? null,
           });
           return {
@@ -537,10 +533,10 @@ export function createApiApp(
         }
         preWarnings = decision.warnings;
         jevUsable = true;
-        metrics.incJev("pregate_pass");
+        metrics.incJev('pregate_pass');
       } catch (error) {
         if (error instanceof JevError) {
-          metrics.incJev("skipped");
+          metrics.incJev('skipped');
           log?.warn(
             { err: error instanceof Error ? error.message : error },
             'jev pre-gate skipped; continuing fail-open',
@@ -549,8 +545,8 @@ export function createApiApp(
             return {
               status: 503,
               body: {
-                error: "AI guardrails are temporarily unavailable",
-                code: "JEV_UNAVAILABLE",
+                error: 'AI guardrails are temporarily unavailable',
+                code: 'JEV_UNAVAILABLE',
               },
             };
           }
@@ -572,19 +568,15 @@ export function createApiApp(
       if (!jevUsable) {
         // Pre-gate "skipped" is already counted; QA never ran.
       } else if (preGateElapsedMs > resolveJevTimeout(config)) {
-        metrics.incJev("qa_skipped");
+        metrics.incJev('qa_skipped');
         log?.warn(
           { preGateElapsedMs },
           'jev post-QA skipped after a slow pre-gate',
         );
       } else {
         try {
-          const qa = await evaluatePostQa(
-            args.gatePrompt,
-            result.d2,
-            config,
-          );
-          metrics.incJev("success");
+          const qa = await evaluatePostQa(args.gatePrompt, result.d2, config);
+          metrics.incJev('success');
           jev = {
             matchesIntent: qa.matchesIntent,
             likelyValid: qa.likelyValid,
@@ -593,7 +585,7 @@ export function createApiApp(
           };
         } catch (error) {
           if (!(error instanceof JevError)) throw error;
-          metrics.incJev("qa_skipped");
+          metrics.incJev('qa_skipped');
           log?.warn(
             { err: error instanceof Error ? error.message : error },
             'jev post-QA skipped',
@@ -610,7 +602,7 @@ export function createApiApp(
       }
       // Count only successful generations against the quota.
       await args.aiUsage.incrementUsage(args.caller.id, currentMonth());
-      metrics.incAi("success");
+      metrics.incAi('success');
       await recordAudit(deps.audit, {
         actorId: args.caller.id,
         workspaceId: null,
@@ -733,40 +725,50 @@ export function createApiApp(
       .get('/readyz', async ({ set }) => {
         // Readiness for orchestrators and external probers: every check is
         // bounded and never throws, so this endpoint always answers.
-        const [database, redis, compiler, jev] = await Promise.all([
-          health.checkDatabase().catch(
-            (): DependencyCheck => ({
-              status: 'error',
-              detail: 'check failed',
-            }),
-          ),
-          health.checkRedis().catch(
-            (): DependencyCheck => ({
-              status: 'error',
-              detail: 'check failed',
-            }),
-          ),
-          health.checkCompiler().catch(
-            (): DependencyCheck => ({
-              status: 'error',
-              detail: 'check failed',
-            }),
-          ),
-          (health.checkJev
-            ? health.checkJev()
-            : Promise.resolve(jevCheck(config))
-          ).catch(
-            (): DependencyCheck => ({
-              status: 'error',
-              detail: 'check failed',
-            }),
-          ),
-        ]);
+        const [database, redis, compiler, imageStorage, jev] =
+          await Promise.all([
+            health.checkDatabase().catch(
+              (): DependencyCheck => ({
+                status: 'error',
+                detail: 'check failed',
+              }),
+            ),
+            health.checkRedis().catch(
+              (): DependencyCheck => ({
+                status: 'error',
+                detail: 'check failed',
+              }),
+            ),
+            health.checkCompiler().catch(
+              (): DependencyCheck => ({
+                status: 'error',
+                detail: 'check failed',
+              }),
+            ),
+            (health.checkImageStorage
+              ? health.checkImageStorage()
+              : Promise.resolve(imageStorageCheck(config))
+            ).catch(
+              (): DependencyCheck => ({
+                status: 'error',
+                detail: 'check failed',
+              }),
+            ),
+            (health.checkJev
+              ? health.checkJev()
+              : Promise.resolve(jevCheck(config))
+            ).catch(
+              (): DependencyCheck => ({
+                status: 'error',
+                detail: 'check failed',
+              }),
+            ),
+          ]);
         const readiness = summarizeReadiness(
           database,
           redis,
           compiler,
-          imageStorageCheck(config),
+          imageStorage,
           version,
           (Date.now() - startedAt) / 1000,
           jev,
@@ -1140,7 +1142,8 @@ export function createApiApp(
         // self-hosters without a mailer can still complete the flow from
         // server logs or the API response.
         const user = await users.findByEmail(parsed.data.email);
-        if (!user) return { message: 'If that email exists, a reset was issued' };
+        if (!user)
+          return { message: 'If that email exists, a reset was issued' };
         const { token, expiresIn } = issuePasswordResetToken(
           ticketSecret,
           user.email,
@@ -1165,20 +1168,26 @@ export function createApiApp(
             };
           return validationError(parsed.error);
         }
-        const email = verifyPasswordResetToken(
-          ticketSecret,
-          parsed.data.token,
-        );
+        const email = verifyPasswordResetToken(ticketSecret, parsed.data.token);
         if (!email) {
           set.status = 401;
-          return { error: 'Invalid or expired reset token', code: 'INVALID_TOKEN' };
+          return {
+            error: 'Invalid or expired reset token',
+            code: 'INVALID_TOKEN',
+          };
         }
         const user = await users.findByEmail(email);
         if (!user) {
           set.status = 401;
-          return { error: 'Invalid or expired reset token', code: 'INVALID_TOKEN' };
+          return {
+            error: 'Invalid or expired reset token',
+            code: 'INVALID_TOKEN',
+          };
         }
-        await users.updatePasswordHash(user.id, hashPassword(parsed.data.password));
+        await users.updatePasswordHash(
+          user.id,
+          hashPassword(parsed.data.password),
+        );
         return { message: 'Password has been reset' };
       })
       .get('/api/auth/sso/start', async ({ query, set }) => {
@@ -1194,7 +1203,7 @@ export function createApiApp(
         const next = sanitizeNext(
           typeof params.next === 'string' ? params.next : null,
         );
-        let discovery;
+        let discovery: Awaited<ReturnType<typeof discoveryDocument>>;
         try {
           discovery = await discoveryDocument(oidc.issuer);
         } catch {
@@ -1244,7 +1253,7 @@ export function createApiApp(
         const cookieHeader = headers.cookie ?? headers.Cookie;
         const cookieState = parseCookies(
           typeof cookieHeader === 'string' ? cookieHeader : '',
-        )['eunoia_oauth_state'];
+        ).eunoia_oauth_state;
         if (!code || !state || cookieState !== state) {
           return fail('sso_state_mismatch');
         }
@@ -1479,12 +1488,15 @@ export function createApiApp(
       .post(
         '/api/rooms/:roomId/images/request-upload',
         async ({ params, body, headers, query, set }) => {
-          const access = await requestAccess(
+          const access = await requestRoomAccess(
             manager,
+            deps.workspaces,
+            users,
             params.roomId,
             headers as Record<string, string | undefined>,
             query as Record<string, unknown>,
             ticketSecret,
+            'write',
           );
           if ('body' in access) {
             set.status = access.status;
@@ -1527,12 +1539,15 @@ export function createApiApp(
       .post(
         '/api/rooms/:roomId/images/confirm',
         async ({ params, body, headers, query, set }) => {
-          const access = await requestAccess(
+          const access = await requestRoomAccess(
             manager,
+            deps.workspaces,
+            users,
             params.roomId,
             headers as Record<string, string | undefined>,
             query as Record<string, unknown>,
             ticketSecret,
+            'write',
           );
           if ('body' in access) {
             set.status = access.status;
@@ -1637,12 +1652,15 @@ export function createApiApp(
       .get(
         '/api/rooms/:roomId/images',
         async ({ params, headers, query, set }) => {
-          const access = await requestAccess(
+          const access = await requestRoomAccess(
             manager,
+            deps.workspaces,
+            users,
             params.roomId,
             headers as Record<string, string | undefined>,
             query as Record<string, unknown>,
             ticketSecret,
+            'read',
           );
           if ('body' in access) {
             set.status = access.status;
@@ -1692,12 +1710,15 @@ export function createApiApp(
       .get(
         '/api/rooms/:roomId/images/:imageId/url',
         async ({ params, headers, query, set }) => {
-          const access = await requestAccess(
+          const access = await requestRoomAccess(
             manager,
+            deps.workspaces,
+            users,
             params.roomId,
             headers as Record<string, string | undefined>,
             query as Record<string, unknown>,
             ticketSecret,
+            'read',
           );
           if ('body' in access) {
             set.status = access.status;
@@ -1731,12 +1752,15 @@ export function createApiApp(
       .delete(
         '/api/rooms/:roomId/images/:imageId',
         async ({ params, headers, query, set }) => {
-          const access = await requestAccess(
+          const access = await requestRoomAccess(
             manager,
+            deps.workspaces,
+            users,
             params.roomId,
             headers as Record<string, string | undefined>,
             query as Record<string, unknown>,
             ticketSecret,
+            'write',
           );
           if ('body' in access) {
             set.status = access.status;
@@ -1770,12 +1794,15 @@ export function createApiApp(
       .get(
         '/api/rooms/:roomId/images/:imageId/bytes',
         async ({ params, headers, query, set }) => {
-          const access = await requestAccess(
+          const access = await requestRoomAccess(
             manager,
+            deps.workspaces,
+            users,
             params.roomId,
             headers as Record<string, string | undefined>,
             query as Record<string, unknown>,
             ticketSecret,
+            'read',
           );
           if ('body' in access) {
             set.status = access.status;
@@ -1830,12 +1857,15 @@ export function createApiApp(
       .get(
         '/api/rooms/:roomId/snapshots',
         async ({ params, headers, query, set }) => {
-          const access = await requestAccess(
+          const access = await requestRoomAccess(
             manager,
+            deps.workspaces,
+            users,
             params.roomId,
             headers as Record<string, string | undefined>,
             query as Record<string, unknown>,
             ticketSecret,
+            'read',
           );
           if ('body' in access) {
             set.status = access.status;
@@ -1867,12 +1897,15 @@ export function createApiApp(
       .post(
         '/api/rooms/:roomId/snapshots/:snapshotId/restore',
         async ({ params, headers, query, set }) => {
-          const access = await requestAccess(
+          const access = await requestRoomAccess(
             manager,
+            deps.workspaces,
+            users,
             params.roomId,
             headers as Record<string, string | undefined>,
             query as Record<string, unknown>,
             ticketSecret,
+            'write',
           );
           if ('body' in access) {
             set.status = access.status;

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from 'node:crypto';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -6,22 +6,22 @@ import {
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { PrismaClient } from "@prisma/client";
-import type { Config } from "./config.js";
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import type { PrismaClient } from '@prisma/client';
+import type { Config } from './config.js';
 
 /** Content types accepted for room image uploads. */
 export const IMAGE_CONTENT_TYPES = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
 } as const;
 
 export type ImageContentType = keyof typeof IMAGE_CONTENT_TYPES;
-export type ImageKind = "image" | "thumbnail";
-export const IMAGE_KINDS: ImageKind[] = ["image", "thumbnail"];
+export type ImageKind = 'image' | 'thumbnail';
+export const IMAGE_KINDS: ImageKind[] = ['image', 'thumbnail'];
 
 export type StoredImage = {
   id: string;
@@ -107,7 +107,7 @@ export class PrismaImageStore implements ImageStore {
   async listImages(roomId: string, kind?: ImageKind): Promise<StoredImage[]> {
     return this.prisma.imageAsset.findMany({
       where: { roomId, ...(kind ? { kind } : {}) },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
@@ -194,9 +194,9 @@ export class S3R2Client implements R2Client {
 
   constructor(config: R2Config) {
     this.bucket = config.bucket;
-    this.publicBaseUrl = config.publicBaseUrl?.replace(/\/+$/, "");
+    this.publicBaseUrl = config.publicBaseUrl?.replace(/\/+$/, '');
     this.client = new S3Client({
-      region: "auto",
+      region: 'auto',
       endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
       credentials: {
         accessKeyId: config.accessKeyId,
@@ -256,7 +256,7 @@ export class S3R2Client implements R2Client {
         body: new Uint8Array(body),
         contentType: out.ContentType,
         size:
-          typeof out.ContentLength === "number" ? out.ContentLength : undefined,
+          typeof out.ContentLength === 'number' ? out.ContentLength : undefined,
       };
     } catch (error) {
       if (isR2NotFound(error)) return null;
@@ -277,16 +277,16 @@ export class S3R2Client implements R2Client {
 
 /** True for object-absence failures (as opposed to credential/network errors). */
 export function isR2NotFound(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
+  if (!error || typeof error !== 'object') return false;
   const candidate = error as {
     name?: unknown;
     Code?: unknown;
     $metadata?: { httpStatusCode?: unknown };
   };
   return (
-    candidate.name === "NotFound" ||
-    candidate.name === "NoSuchKey" ||
-    candidate.Code === "NoSuchKey" ||
+    candidate.name === 'NotFound' ||
+    candidate.name === 'NoSuchKey' ||
+    candidate.Code === 'NoSuchKey' ||
     candidate.$metadata?.httpStatusCode === 404
   );
 }
@@ -358,11 +358,11 @@ export class MemoryR2Client implements R2Client {
 }
 
 export function isImageContentType(value: unknown): value is ImageContentType {
-  return typeof value === "string" && value in IMAGE_CONTENT_TYPES;
+  return typeof value === 'string' && value in IMAGE_CONTENT_TYPES;
 }
 
 export function isImageKind(value: unknown): value is ImageKind {
-  return value === "image" || value === "thumbnail";
+  return value === 'image' || value === 'thumbnail';
 }
 
 /** Server-generated keys are namespaced per room so ownership is checkable. */

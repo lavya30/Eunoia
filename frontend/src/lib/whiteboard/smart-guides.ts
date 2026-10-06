@@ -5,7 +5,7 @@
  * and nearby static nodes on the canvas.
  */
 
-import type { Aabb, Point } from './geometry';
+import type { Aabb } from './geometry';
 
 export type SmartGuide = {
   id: string;

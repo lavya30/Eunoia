@@ -1,14 +1,14 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import WebSocket from "ws";
-import { createSyncServer, type SyncServer } from "../src/index.js";
-import { MemorySnapshotStore } from "../src/RoomLoader.js";
-import { MemoryWorkspaceStore, roleAtLeast } from "../src/workspaces.js";
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import WebSocket from 'ws';
+import { createSyncServer, type SyncServer } from '../src/index.js';
+import { MemorySnapshotStore } from '../src/RoomLoader.js';
+import { MemoryWorkspaceStore, roleAtLeast } from '../src/workspaces.js';
 
 function testConfig() {
   return {
     port: 0,
-    host: "127.0.0.1",
-    nodeEnv: "test" as const,
+    host: '127.0.0.1',
+    nodeEnv: 'test' as const,
     snapshotDebounceMs: 10,
     roomIdleTimeoutMs: 10,
     d2CommunityNodeLimit: 30,
@@ -21,46 +21,46 @@ function testConfig() {
   };
 }
 
-describe("workspace role math", () => {
-  test("roleAtLeast ranks VIEWER < EDITOR < ADMIN", () => {
-    expect(roleAtLeast("VIEWER", "VIEWER")).toBe(true);
-    expect(roleAtLeast("VIEWER", "EDITOR")).toBe(false);
-    expect(roleAtLeast("EDITOR", "EDITOR")).toBe(true);
-    expect(roleAtLeast("EDITOR", "ADMIN")).toBe(false);
-    expect(roleAtLeast("ADMIN", "VIEWER")).toBe(true);
-    expect(roleAtLeast(null, "VIEWER")).toBe(false);
+describe('workspace role math', () => {
+  test('roleAtLeast ranks VIEWER < EDITOR < ADMIN', () => {
+    expect(roleAtLeast('VIEWER', 'VIEWER')).toBe(true);
+    expect(roleAtLeast('VIEWER', 'EDITOR')).toBe(false);
+    expect(roleAtLeast('EDITOR', 'EDITOR')).toBe(true);
+    expect(roleAtLeast('EDITOR', 'ADMIN')).toBe(false);
+    expect(roleAtLeast('ADMIN', 'VIEWER')).toBe(true);
+    expect(roleAtLeast(null, 'VIEWER')).toBe(false);
   });
 
-  test("memory store lists owned and member workspaces", async () => {
+  test('memory store lists owned and member workspaces', async () => {
     const store = new MemoryWorkspaceStore();
     const owned = await store.createWorkspace({
-      name: "Owned",
-      ownerId: "u1",
+      name: 'Owned',
+      ownerId: 'u1',
     });
     const other = await store.createWorkspace({
-      name: "Other",
-      ownerId: "u2",
+      name: 'Other',
+      ownerId: 'u2',
     });
     await store.upsertMembership({
       workspaceId: other.id,
-      userId: "u1",
-      role: "EDITOR",
+      userId: 'u1',
+      role: 'EDITOR',
     });
-    const listed = await store.listWorkspacesForUser("u1");
+    const listed = await store.listWorkspacesForUser('u1');
     expect(listed).toHaveLength(2);
     expect(listed.find((entry) => entry.workspace.id === owned.id)?.role).toBe(
-      "ADMIN",
+      'ADMIN',
     );
     expect(listed.find((entry) => entry.workspace.id === other.id)?.role).toBe(
-      "EDITOR",
+      'EDITOR',
     );
     expect(await store.countMembers(other.id)).toBe(1);
-    await store.removeMembership(other.id, "u1");
-    expect(await store.getMembership(other.id, "u1")).toBeNull();
+    await store.removeMembership(other.id, 'u1');
+    expect(await store.getMembership(other.id, 'u1')).toBeNull();
   });
 });
 
-describe("workspace HTTP API", () => {
+describe('workspace HTTP API', () => {
   let app: SyncServer;
   let baseUrl: string;
 
@@ -75,11 +75,11 @@ describe("workspace HTTP API", () => {
       new MemoryWorkspaceStore(),
     );
     await new Promise<void>((resolve) =>
-      app.server.listen(0, "127.0.0.1", resolve),
+      app.server.listen(0, '127.0.0.1', resolve),
     );
     const address = app.server.address();
-    if (!address || typeof address === "string")
-      throw new Error("Server did not bind");
+    if (!address || typeof address === 'string')
+      throw new Error('Server did not bind');
     baseUrl = `http://127.0.0.1:${address.port}`;
   });
 
@@ -87,9 +87,9 @@ describe("workspace HTTP API", () => {
 
   async function register(email: string) {
     const res = await fetch(`${baseUrl}/api/auth/register`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password: "password123" }),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password: 'password123' }),
     });
     expect(res.status).toBe(201);
     return (await res.json()) as { user: { id: string }; token: string };
@@ -97,14 +97,14 @@ describe("workspace HTTP API", () => {
 
   function auth(token: string) {
     return {
-      "content-type": "application/json",
+      'content-type': 'application/json',
       authorization: `Bearer ${token}`,
     };
   }
 
-  async function createWorkspace(token: string, name = "Team") {
+  async function createWorkspace(token: string, name = 'Team') {
     const res = await fetch(`${baseUrl}/api/workspaces`, {
-      method: "POST",
+      method: 'POST',
       headers: auth(token),
       body: JSON.stringify({ name }),
     });
@@ -115,8 +115,8 @@ describe("workspace HTTP API", () => {
     };
   }
 
-  test("creates and lists workspaces for members", async () => {
-    const owner = await register("owner-ws@test.com");
+  test('creates and lists workspaces for members', async () => {
+    const owner = await register('owner-ws@test.com');
     const { workspace } = await createWorkspace(owner.token);
     expect(workspace.ownerId).toBe(owner.user.id);
 
@@ -128,44 +128,44 @@ describe("workspace HTTP API", () => {
       workspaces: Array<{ workspace: { id: string }; role: string }>;
     };
     expect(body.workspaces).toHaveLength(1);
-    expect(body.workspaces[0].role).toBe("ADMIN");
+    expect(body.workspaces[0].role).toBe('ADMIN');
   });
 
-  test("anonymous workspace creation is rejected", async () => {
+  test('anonymous workspace creation is rejected', async () => {
     const res = await fetch(`${baseUrl}/api/workspaces`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Nope" }),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Nope' }),
     });
     expect(res.status).toBe(401);
   });
 
-  test("Community owners cannot invite: seats exhausted at 1", async () => {
-    const owner = await register("seats@test.com");
-    const stranger = await register("stranger@test.com");
+  test('Community owners cannot invite: seats exhausted at 1', async () => {
+    const owner = await register('seats@test.com');
+    const stranger = await register('stranger@test.com');
     const { workspace } = await createWorkspace(owner.token);
 
     const invite = await fetch(
       `${baseUrl}/api/workspaces/${workspace.id}/members`,
       {
-        method: "POST",
+        method: 'POST',
         headers: auth(owner.token),
-        body: JSON.stringify({ userId: stranger.user.id, role: "EDITOR" }),
+        body: JSON.stringify({ userId: stranger.user.id, role: 'EDITOR' }),
       },
     );
     expect(invite.status).toBe(403);
     expect(((await invite.json()) as { code: string }).code).toBe(
-      "SEATS_EXHAUSTED",
+      'SEATS_EXHAUSTED',
     );
   });
 
-  test("VIEWER cannot invite, EDITOR cannot manage members", async () => {
-    const owner = await register("roles@test.com");
+  test('VIEWER cannot invite, EDITOR cannot manage members', async () => {
+    const owner = await register('roles@test.com');
     const { workspace } = await createWorkspace(owner.token);
     // Bypass the seat gate by seeding memberships directly at the store
     // level: this test targets role gating, not billing.
-    const second = await register("second@test.com");
-    const third = await register("third@test.com");
+    const second = await register('second@test.com');
+    const third = await register('third@test.com');
 
     // Owner invites via direct store would skip HTTP; instead give the
     // workspace fake seats by promoting through updateTier-independent
@@ -174,46 +174,46 @@ describe("workspace HTTP API", () => {
     const viewerInvite = await fetch(
       `${baseUrl}/api/workspaces/${workspace.id}/members`,
       {
-        method: "POST",
+        method: 'POST',
         headers: auth(second.token),
-        body: JSON.stringify({ userId: third.user.id, role: "VIEWER" }),
+        body: JSON.stringify({ userId: third.user.id, role: 'VIEWER' }),
       },
     );
     // Second user is not a member at all → 403.
     expect(viewerInvite.status).toBe(403);
   });
 
-  test("room move validates workspace and folder scope", async () => {
-    const owner = await register("move@test.com");
+  test('room move validates workspace and folder scope', async () => {
+    const owner = await register('move@test.com');
     const { workspace } = await createWorkspace(owner.token);
     const roomRes = await fetch(`${baseUrl}/api/rooms`, {
-      method: "POST",
+      method: 'POST',
       headers: auth(owner.token),
-      body: JSON.stringify({ name: "Movable" }),
+      body: JSON.stringify({ name: 'Movable' }),
     });
     const room = (await roomRes.json()) as { id: string };
 
     // Unknown workspace → 404.
     const badWs = await fetch(`${baseUrl}/api/rooms/${room.id}/move`, {
-      method: "POST",
+      method: 'POST',
       headers: auth(owner.token),
-      body: JSON.stringify({ workspaceId: "ws_missing", folderId: null }),
+      body: JSON.stringify({ workspaceId: 'ws_missing', folderId: null }),
     });
     expect(badWs.status).toBe(404);
 
     // Folder from another workspace → 400.
-    const other = await createWorkspace(owner.token, "Other");
+    const other = await createWorkspace(owner.token, 'Other');
     const folderRes = await fetch(
       `${baseUrl}/api/workspaces/${other.workspace.id}/folders`,
       {
-        method: "POST",
+        method: 'POST',
         headers: auth(owner.token),
-        body: JSON.stringify({ name: "Docs" }),
+        body: JSON.stringify({ name: 'Docs' }),
       },
     );
     const folder = (await folderRes.json()) as { folder: { id: string } };
     const badFolder = await fetch(`${baseUrl}/api/rooms/${room.id}/move`, {
-      method: "POST",
+      method: 'POST',
       headers: auth(owner.token),
       body: JSON.stringify({
         workspaceId: workspace.id,
@@ -222,23 +222,23 @@ describe("workspace HTTP API", () => {
     });
     expect(badFolder.status).toBe(400);
     expect(((await badFolder.json()) as { code: string }).code).toBe(
-      "INVALID_FOLDER",
+      'INVALID_FOLDER',
     );
 
     // Happy path: move in, list shows it, move back out clears folder.
     const goodFolderRes = await fetch(
       `${baseUrl}/api/workspaces/${workspace.id}/folders`,
       {
-        method: "POST",
+        method: 'POST',
         headers: auth(owner.token),
-        body: JSON.stringify({ name: "Design" }),
+        body: JSON.stringify({ name: 'Design' }),
       },
     );
     const goodFolder = (await goodFolderRes.json()) as {
       folder: { id: string };
     };
     const moved = await fetch(`${baseUrl}/api/rooms/${room.id}/move`, {
-      method: "POST",
+      method: 'POST',
       headers: auth(owner.token),
       body: JSON.stringify({
         workspaceId: workspace.id,
@@ -274,7 +274,7 @@ describe("workspace HTTP API", () => {
     ).not.toContain(room.id);
 
     const out = await fetch(`${baseUrl}/api/rooms/${room.id}/move`, {
-      method: "POST",
+      method: 'POST',
       headers: auth(owner.token),
       body: JSON.stringify({ workspaceId: null }),
     });
@@ -287,9 +287,9 @@ describe("workspace HTTP API", () => {
     expect(outBody.folderId).toBeNull();
   });
 
-  test("workspace detail requires membership", async () => {
-    const owner = await register("detail@test.com");
-    const outsider = await register("outsider@test.com");
+  test('workspace detail requires membership', async () => {
+    const owner = await register('detail@test.com');
+    const outsider = await register('outsider@test.com');
     const { workspace } = await createWorkspace(owner.token);
 
     const forbidden = await fetch(`${baseUrl}/api/workspaces/${workspace.id}`, {
@@ -306,25 +306,25 @@ describe("workspace HTTP API", () => {
       folders: unknown[];
       rooms: unknown[];
     };
-    expect(body.role).toBe("ADMIN");
+    expect(body.role).toBe('ADMIN');
     expect(body.folders).toEqual([]);
     expect(body.rooms).toEqual([]);
   });
 
-  test("workspace members sync locked rooms without a ticket", async () => {
+  test('workspace members sync locked rooms without a ticket', async () => {
     // NOTE: this test needs its own server: the owner requires a seat
     // budget above Community, granted here by a fake billing provider
     // (no network; the Razorpay provider shape is what matters).
     const fakeProvider = {
-      name: "test",
+      name: 'test',
       plans: () => [
-        { key: "pro", name: "Pro", pricePerSeat: 1200, currency: "usd" },
+        { key: 'pro', name: 'Pro', pricePerSeat: 1200, currency: 'usd' },
       ],
       createCheckoutSession: async () => ({
-        url: "https://test/checkout",
-        sessionId: "cs_test",
+        url: 'https://test/checkout',
+        sessionId: 'cs_test',
       }),
-      cancelSubscription: async () => ({ status: "cancelled" }),
+      cancelSubscription: async () => ({ status: 'cancelled' }),
       verifyWebhook: () => true,
       parseEvent: (raw: Uint8Array) =>
         JSON.parse(new TextDecoder().decode(raw)),
@@ -338,50 +338,50 @@ describe("workspace HTTP API", () => {
       { provider: fakeProvider },
     );
     await new Promise<void>((resolve) =>
-      paid.server.listen(0, "127.0.0.1", resolve),
+      paid.server.listen(0, '127.0.0.1', resolve),
     );
     try {
       const addr = paid.server.address();
-      if (!addr || typeof addr === "string")
-        throw new Error("Server did not bind");
+      if (!addr || typeof addr === 'string')
+        throw new Error('Server did not bind');
       const base = `http://127.0.0.1:${addr.port}`;
       const authed = (token: string) => ({
-        "content-type": "application/json",
+        'content-type': 'application/json',
         authorization: `Bearer ${token}`,
       });
       const reg = async (email: string) =>
         (await (
           await fetch(`${base}/api/auth/register`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ email, password: "password123" }),
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ email, password: 'password123' }),
           })
         ).json()) as { user: { id: string }; token: string };
 
-      const owner = await reg("paid-owner@test.com");
-      const member = await reg("paid-member@test.com");
-      const outsider = await reg("paid-outsider@test.com");
+      const owner = await reg('paid-owner@test.com');
+      const member = await reg('paid-member@test.com');
+      const outsider = await reg('paid-outsider@test.com');
 
       // Grant the owner 5 seats through the (fake) billing webhook.
       const upgrade = await fetch(`${base}/api/billing/webhook`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          eventId: "evt_seats_1",
-          type: "subscription.activated",
+          eventId: 'evt_seats_1',
+          type: 'subscription.activated',
           userId: owner.user.id,
-          customerId: "cus_paid",
-          subscriptionId: "sub_paid",
+          customerId: 'cus_paid',
+          subscriptionId: 'sub_paid',
           seats: 5,
-          status: "active",
+          status: 'active',
         }),
       });
       expect(upgrade.status).toBe(200);
 
       const wsRes = await fetch(`${base}/api/workspaces`, {
-        method: "POST",
+        method: 'POST',
         headers: authed(owner.token),
-        body: JSON.stringify({ name: "Paid team" }),
+        body: JSON.stringify({ name: 'Paid team' }),
       });
       const { workspace } = (await wsRes.json()) as {
         workspace: { id: string };
@@ -391,45 +391,45 @@ describe("workspace HTTP API", () => {
       const invite = await fetch(
         `${base}/api/workspaces/${workspace.id}/members`,
         {
-          method: "POST",
+          method: 'POST',
           headers: authed(owner.token),
-          body: JSON.stringify({ userId: member.user.id, role: "EDITOR" }),
+          body: JSON.stringify({ userId: member.user.id, role: 'EDITOR' }),
         },
       );
       expect(invite.status).toBe(201);
 
       // Locked room moved into the workspace.
       const roomRes = await fetch(`${base}/api/rooms`, {
-        method: "POST",
+        method: 'POST',
         headers: authed(owner.token),
-        body: JSON.stringify({ name: "Team vault", password: "password123" }),
+        body: JSON.stringify({ name: 'Team vault', password: 'password123' }),
       });
       const room = (await roomRes.json()) as { id: string };
       const moved = await fetch(`${base}/api/rooms/${room.id}/move`, {
-        method: "POST",
+        method: 'POST',
         headers: authed(owner.token),
         body: JSON.stringify({ workspaceId: workspace.id }),
       });
       expect(moved.status).toBe(200);
 
-      const wsBase = base.replace("http://", "ws://");
+      const wsBase = base.replace('http://', 'ws://');
       // Failed upgrades surface as 'unexpected-response' (with the HTTP
       // status), not as clean closes — resolve on whichever fires first.
       // A persistent noop error handler avoids unhandled-error flakes.
       const openSocket = (query: string) =>
-        new Promise<{ socket: WebSocket; outcome: number | "open" }>(
+        new Promise<{ socket: WebSocket; outcome: number | 'open' }>(
           (resolve) => {
             const socket = new WebSocket(`${wsBase}/sync/${room.id}${query}`);
             let settled = false;
-            const settle = (outcome: number | "open") => {
+            const settle = (outcome: number | 'open') => {
               if (!settled) {
                 settled = true;
                 resolve({ socket, outcome });
               }
             };
-            socket.on("error", () => settle(-1));
-            socket.once("open", () => settle("open"));
-            socket.once("unexpected-response", (_req, res) => {
+            socket.on('error', () => settle(-1));
+            socket.once('open', () => settle('open'));
+            socket.once('unexpected-response', (_req, res) => {
               socket.close();
               settle(res.statusCode);
             });
@@ -437,7 +437,7 @@ describe("workspace HTTP API", () => {
         );
 
       // No credential at all → 401.
-      const anon = await openSocket("");
+      const anon = await openSocket('');
       expect(anon.outcome).toBe(401);
 
       // Outsider's user token is not a membership → 401.
@@ -446,12 +446,12 @@ describe("workspace HTTP API", () => {
 
       // Member (EDITOR, non-owner) passes via userToken alone.
       const memberSocket = await openSocket(`?userToken=${member.token}`);
-      expect(memberSocket.outcome).toBe("open");
+      expect(memberSocket.outcome).toBe('open');
       memberSocket.socket.close();
 
       // Owner (ADMIN by ownership) passes too.
       const owned = await openSocket(`?userToken=${owner.token}`);
-      expect(owned.outcome).toBe("open");
+      expect(owned.outcome).toBe('open');
       owned.socket.close();
 
       // Member reads the room over HTTP without a ticket as well.
@@ -460,6 +460,24 @@ describe("workspace HTTP API", () => {
       });
       expect(memberRead.status).toBe(200);
 
+      // The same workspace membership grants room-scoped HTTP access. The
+      // upload request reaches the unconfigured-storage response instead of
+      // being rejected as a locked room, while snapshot listing succeeds.
+      const memberSnapshots = await fetch(
+        `${base}/api/rooms/${room.id}/snapshots`,
+        { headers: authed(member.token) },
+      );
+      expect(memberSnapshots.status).toBe(200);
+      const memberUpload = await fetch(
+        `${base}/api/rooms/${room.id}/images/request-upload`,
+        {
+          method: 'POST',
+          headers: authed(member.token),
+          body: JSON.stringify({ contentType: 'image/png' }),
+        },
+      );
+      expect(memberUpload.status).toBe(503);
+
       anon.socket.close();
       outside.socket.close();
     } finally {
@@ -467,19 +485,19 @@ describe("workspace HTTP API", () => {
     }
   });
 
-  test("only the owner can delete a workspace", async () => {
-    const owner = await register("delowner@test.com");
-    const outsider = await register("deloutsider@test.com");
+  test('only the owner can delete a workspace', async () => {
+    const owner = await register('delowner@test.com');
+    const outsider = await register('deloutsider@test.com');
     const { workspace } = await createWorkspace(owner.token);
 
     const forbidden = await fetch(`${baseUrl}/api/workspaces/${workspace.id}`, {
-      method: "DELETE",
+      method: 'DELETE',
       headers: auth(outsider.token),
     });
     expect(forbidden.status).toBe(403);
 
     const ok = await fetch(`${baseUrl}/api/workspaces/${workspace.id}`, {
-      method: "DELETE",
+      method: 'DELETE',
       headers: auth(owner.token),
     });
     expect(ok.status).toBe(204);

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { LAYOUT_ENGINES } from './docs-content';
 import { Check } from 'lucide-react';
 

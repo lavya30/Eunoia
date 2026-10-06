@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Runtime version for /health and /readyz. Reads the package version next
@@ -14,18 +14,18 @@ export function appVersion(): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     for (const candidate of [
-      resolve(here, "..", "package.json"),
-      resolve(here, "..", "..", "package.json"),
+      resolve(here, '..', 'package.json'),
+      resolve(here, '..', '..', 'package.json'),
     ]) {
       if (!existsSync(candidate)) continue;
-      const parsed = JSON.parse(readFileSync(candidate, "utf8")) as {
+      const parsed = JSON.parse(readFileSync(candidate, 'utf8')) as {
         version?: unknown;
       };
-      if (typeof parsed.version === "string" && parsed.version.trim())
+      if (typeof parsed.version === 'string' && parsed.version.trim())
         return parsed.version.trim();
     }
   } catch {
     // Fall through to the dev fallback.
   }
-  return "dev";
+  return 'dev';
 }

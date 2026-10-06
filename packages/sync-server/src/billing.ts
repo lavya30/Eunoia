@@ -1,13 +1,13 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import Razorpay from "razorpay";
-import type { Config } from "./config.js";
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import Razorpay from 'razorpay';
 import type {
   BillingEventStore,
   SubscriptionStore,
   UpsertSubscription,
-} from "./billing-store.js";
-import type { UserStore } from "./users.js";
-import type { Tier } from "./d2-compiler.js";
+} from './billing-store.js';
+import type { Config } from './config.js';
+import type { Tier } from './d2-compiler.js';
+import type { UserStore } from './users.js';
 
 /* ── Types ───────────────────────────────────────────────────── */
 
@@ -79,17 +79,6 @@ export type RazorpayClient = {
 
 /* ── Razorpay provider ───────────────────────────────────────── */
 
-const RAZORPAY_UPGRADE_STATUSES = new Set([
-  "authenticated",
-  "active",
-  "charged",
-]);
-const RAZORPAY_DOWNGRADE_STATUSES = new Set([
-  "cancelled",
-  "completed",
-  "expired",
-]);
-
 /**
  * Razorpay billing provider (UPI + domestic cards + international cards,
  * INR settlement, RBI-compliant mandates). Recurring auth, pre-debit
@@ -97,26 +86,23 @@ const RAZORPAY_DOWNGRADE_STATUSES = new Set([
  * subscriptions, verifies webhooks, and flips tiers.
  */
 export class RazorpayBillingProvider implements BillingProvider {
-  readonly name = "razorpay";
+  readonly name = 'razorpay';
   private readonly webhookSecret: string;
-  private readonly successUrl: string;
   private readonly planPro: string;
   private readonly client: RazorpayClient;
 
   constructor(config: Config, client?: RazorpayClient) {
     if (!config.razorpayWebhookSecret)
-      throw new Error("RAZORPAY_WEBHOOK_SECRET is required");
+      throw new Error('RAZORPAY_WEBHOOK_SECRET is required');
     if (!config.razorpayPlanPro)
-      throw new Error("RAZORPAY_PLAN_PRO is required");
+      throw new Error('RAZORPAY_PLAN_PRO is required');
     this.webhookSecret = config.razorpayWebhookSecret;
-    this.successUrl =
-      config.billingSuccessUrl ?? "http://localhost:3000/billing?success=true";
     this.planPro = config.razorpayPlanPro;
     this.client =
       client ??
       (new Razorpay({
-        key_id: config.razorpayKeyId ?? "",
-        key_secret: config.razorpayKeySecret ?? "",
+        key_id: config.razorpayKeyId ?? '',
+        key_secret: config.razorpayKeySecret ?? '',
       }) as unknown as RazorpayClient);
   }
 
@@ -126,16 +112,16 @@ export class RazorpayBillingProvider implements BillingProvider {
     // working without an extra API call per page view.
     return [
       {
-        key: "pro",
-        name: "Pro",
+        key: 'pro',
+        name: 'Pro',
         pricePerSeat: 1200,
-        currency: "usd",
+        currency: 'usd',
       },
     ];
   }
 
   private priceIdFor(priceKey: string): string {
-    if (priceKey === "pro") return this.planPro;
+    if (priceKey === 'pro') return this.planPro;
     throw new Error(`Unknown price: ${priceKey}`);
   }
 
@@ -162,7 +148,7 @@ export class RazorpayBillingProvider implements BillingProvider {
       notes: { userId },
     });
     if (!subscription.short_url)
-      throw new Error("Razorpay did not return a checkout URL");
+      throw new Error('Razorpay did not return a checkout URL');
     return { url: subscription.short_url, sessionId: subscription.id };
   }
 
@@ -171,15 +157,15 @@ export class RazorpayBillingProvider implements BillingProvider {
       subscriptionId,
       true,
     );
-    return { status: cancelled.status ?? "cancelled" };
+    return { status: cancelled.status ?? 'cancelled' };
   }
 
   verifyWebhook(rawBody: Uint8Array, signature: string): boolean {
-    const expected = createHmac("sha256", this.webhookSecret)
+    const expected = createHmac('sha256', this.webhookSecret)
       .update(rawBody)
-      .digest("hex");
-    const actual = Buffer.from(signature, "utf8");
-    const expectedBuf = Buffer.from(expected, "utf8");
+      .digest('hex');
+    const actual = Buffer.from(signature, 'utf8');
+    const expectedBuf = Buffer.from(expected, 'utf8');
     // Constant-time compare: webhook endpoints are unauthenticated, so a
     // naive === would leak the secret byte-by-byte to timing probes.
     // Same HMAC-hex scheme as Razorpay's own validateWebhookSignature.
@@ -195,44 +181,44 @@ export class RazorpayBillingProvider implements BillingProvider {
     // id, so idempotency keys are composite (type:entity:created_at).
     const text = new TextDecoder().decode(rawBody);
     const data = JSON.parse(text) as Record<string, unknown>;
-    const type = typeof data.event === "string" ? data.event : "unknown";
+    const type = typeof data.event === 'string' ? data.event : 'unknown';
     const createdAt =
-      typeof data.created_at === "number" ? data.created_at : undefined;
+      typeof data.created_at === 'number' ? data.created_at : undefined;
     const entity = extractEntity(data);
     const entityId =
-      entity && typeof entity.id === "string" ? entity.id : undefined;
+      entity && typeof entity.id === 'string' ? entity.id : undefined;
     const eventId =
       entityId !== undefined
-        ? `${type}:${entityId}:${createdAt ?? ""}`
+        ? `${type}:${entityId}:${createdAt ?? ''}`
         : undefined;
     const planId =
-      entity && typeof entity.plan_id === "string" ? entity.plan_id : undefined;
+      entity && typeof entity.plan_id === 'string' ? entity.plan_id : undefined;
     const currentEnd =
-      entity && typeof entity.current_end === "number"
+      entity && typeof entity.current_end === 'number'
         ? entity.current_end
         : undefined;
     return {
-      eventId: eventId ?? "",
+      eventId: eventId ?? '',
       type,
       customerId:
-        entity && typeof entity.customer_id === "string"
+        entity && typeof entity.customer_id === 'string'
           ? entity.customer_id
           : undefined,
       subscriptionId: entityId,
       userId:
         entity &&
-        typeof entity.notes === "object" &&
+        typeof entity.notes === 'object' &&
         entity.notes !== null &&
-        typeof (entity.notes as Record<string, unknown>).userId === "string"
+        typeof (entity.notes as Record<string, unknown>).userId === 'string'
           ? ((entity.notes as Record<string, unknown>).userId as string)
           : undefined,
-      priceKey: planId === this.planPro ? "pro" : planId,
+      priceKey: planId === this.planPro ? 'pro' : planId,
       seats:
-        entity && typeof entity.quantity === "number"
+        entity && typeof entity.quantity === 'number'
           ? entity.quantity
           : undefined,
       status:
-        entity && typeof entity.status === "string" ? entity.status : undefined,
+        entity && typeof entity.status === 'string' ? entity.status : undefined,
       periodEnd:
         currentEnd !== undefined ? new Date(currentEnd * 1000) : undefined,
     };
@@ -243,7 +229,7 @@ function extractEntity(
   data: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const payload =
-    data.payload && typeof data.payload === "object"
+    data.payload && typeof data.payload === 'object'
       ? (data.payload as Record<string, unknown>)
       : null;
   if (!payload) return null;
@@ -251,25 +237,25 @@ function extractEntity(
     ? (data.contains as unknown[])
     : [];
   for (const kind of contains) {
-    if (typeof kind !== "string") continue;
+    if (typeof kind !== 'string') continue;
     const section =
-      payload[kind] && typeof payload[kind] === "object"
+      payload[kind] && typeof payload[kind] === 'object'
         ? (payload[kind] as Record<string, unknown>)
         : null;
     const entity =
-      section && typeof section.entity === "object" && section.entity !== null
+      section && typeof section.entity === 'object' && section.entity !== null
         ? (section.entity as Record<string, unknown>)
         : null;
     if (entity) return entity;
   }
   // Fallback for compact fixtures: payload.subscription.entity.
   const fallback =
-    payload.subscription && typeof payload.subscription === "object"
+    payload.subscription && typeof payload.subscription === 'object'
       ? (payload.subscription as Record<string, unknown>)
       : null;
   if (
     fallback &&
-    typeof fallback.entity === "object" &&
+    typeof fallback.entity === 'object' &&
     fallback.entity !== null
   )
     return fallback.entity as Record<string, unknown>;
@@ -300,8 +286,8 @@ export type WebhookResult = {
 // successful billing cycle (idempotent confirm-active); `halted` means
 // repeated auth failures — deliberately skipped, not a downgrade, so a
 // payment hiccup never yanks PRO before Razorpay's own dunning ends.
-const ACTIVE_STATUSES = new Set(["authenticated", "active", "charged"]);
-const DOWNGRADE_STATUSES = new Set(["cancelled", "completed", "expired"]);
+const ACTIVE_STATUSES = new Set(['authenticated', 'active', 'charged']);
+const DOWNGRADE_STATUSES = new Set(['cancelled', 'completed', 'expired']);
 
 /**
  * Processes a raw billing webhook. Called from the `routes.ts` bridge
@@ -319,7 +305,7 @@ export async function handleBillingWebhook(
   if (!provider.verifyWebhook(rawBody, signature)) {
     return {
       status: 401,
-      body: { error: "Invalid webhook signature", code: "INVALID_SIGNATURE" },
+      body: { error: 'Invalid webhook signature', code: 'INVALID_SIGNATURE' },
     };
   }
 
@@ -330,14 +316,14 @@ export async function handleBillingWebhook(
   } catch {
     return {
       status: 400,
-      body: { error: "Malformed webhook payload", code: "PARSE_ERROR" },
+      body: { error: 'Malformed webhook payload', code: 'PARSE_ERROR' },
     };
   }
 
   // Razorpay sends no delivery id; envelopes without an entity produce an
   // empty composite key, which would collide idempotency across events.
   if (!event.eventId) {
-    return { status: 200, body: { received: true, skipped: "no eventId" } };
+    return { status: 200, body: { received: true, skipped: 'no eventId' } };
   }
 
   // 3. Idempotency check
@@ -354,14 +340,14 @@ export async function handleBillingWebhook(
     userId = mapped?.userId;
   }
   if (!userId) {
-    return { status: 200, body: { received: true, skipped: "no userId" } };
+    return { status: 200, body: { received: true, skipped: 'no userId' } };
   }
 
   // Never default a missing status to active: an event without one must
   // not mint PRO.
   const eventStatus = event.status;
   if (!eventStatus) {
-    return { status: 200, body: { received: true, skipped: "no status" } };
+    return { status: 200, body: { received: true, skipped: 'no status' } };
   }
 
   if (ACTIVE_STATUSES.has(eventStatus)) {
@@ -380,19 +366,19 @@ export async function handleBillingWebhook(
       provider: provider.name,
       customerId: evt.customerId,
       providerSubId: evt.subscriptionId,
-      status: "active",
-      priceKey: evt.priceKey ?? "pro",
+      status: 'active',
+      priceKey: evt.priceKey ?? 'pro',
       seats: evt.seats ?? 1,
       periodEnd: evt.periodEnd,
     };
     await subscriptionStore.upsertByUserId(upsert);
-    await userStore.updateTier(uid, "PRO" as Tier);
+    await userStore.updateTier(uid, 'PRO' as Tier);
     await deps.recordAudit?.({
       actorId: uid,
-      action: "billing.tier.upgraded",
+      action: 'billing.tier.upgraded',
       target: evt.subscriptionId,
     });
-    return { status: 200, body: { received: true, action: "upgraded" } };
+    return { status: 200, body: { received: true, action: 'upgraded' } };
   }
 
   if (DOWNGRADE_STATUSES.has(eventStatus)) {
@@ -404,13 +390,13 @@ export async function handleBillingWebhook(
         status: eventStatus,
       });
     }
-    await userStore.updateTier(userId, "COMMUNITY" as Tier);
+    await userStore.updateTier(userId, 'COMMUNITY' as Tier);
     await deps.recordAudit?.({
       actorId: userId,
-      action: "billing.tier.downgraded",
+      action: 'billing.tier.downgraded',
       target: event.subscriptionId,
     });
-    return { status: 200, body: { received: true, action: "downgraded" } };
+    return { status: 200, body: { received: true, action: 'downgraded' } };
   }
 
   return { status: 200, body: { received: true, skipped: event.type } };
@@ -423,5 +409,5 @@ export async function handleBillingWebhook(
  * Useful in tests to simulate realistic webhook calls.
  */
 export function signWebhookBody(rawBody: Uint8Array, secret: string): string {
-  return createHmac("sha256", secret).update(rawBody).digest("hex");
+  return createHmac('sha256', secret).update(rawBody).digest('hex');
 }

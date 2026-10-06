@@ -26,7 +26,8 @@ import {
   ScrollVelocityContainer,
   ScrollVelocityRow,
 } from '@/components/ui/scroll-based-velocity';
-import React, { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { DiaTextReveal } from '@/components/ui/dia-text-reveal';
 import './landing.css';
@@ -521,7 +522,7 @@ function FeatureStep({
         }`}
       >
         <div className="eunoia-feature-rail" aria-hidden="true">
-          <img src={icon} alt="" />
+          <Image src={icon} width={51} height={51} alt="" />
         </div>
         <span className="eunoia-drawn-label">{tag}</span>
         <TextAnimate as="h2" by="word" animation="blurInUp" startOnView once>
@@ -543,7 +544,13 @@ function DoodleSection({
 }) {
   return (
     <section className={`eunoia-doodle-section ${className}`}>
-      <img className="eunoia-doodle-bg" src={assets.doodles} alt="" />
+      <Image
+        className="eunoia-doodle-bg"
+        src={assets.doodles}
+        width={1294}
+        height={398}
+        alt=""
+      />
       {children}
     </section>
   );
@@ -1085,10 +1092,22 @@ export function LandingPage() {
         {/* Whiteboard Callout — CSS dot grid + Shimmer */}
         <section className="eunoia-whiteboard-callout">
           <div className="eunoia-dot-grid" aria-hidden="true" />
-          <img className="callout-bg" src={assets.doodles} alt="" />
+          <Image
+            className="callout-bg"
+            src={assets.doodles}
+            width={1294}
+            height={398}
+            alt=""
+          />
           <BlurFade inView>
             <div className="eunoia-whiteboard-callout__content">
-              <img className="callout-icon" src={assets.logoIcon} alt="" />
+              <Image
+                className="callout-icon"
+                src={assets.logoIcon}
+                width={50}
+                height={49}
+                alt=""
+              />
               <h2>
                 Architecture{' '}
                 <em>
