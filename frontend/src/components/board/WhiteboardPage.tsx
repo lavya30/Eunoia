@@ -117,6 +117,7 @@ import {
   getLocalUser,
   resolveSyncHttpUrl,
   resolveSyncServerUrl,
+  type OfflineSyncState,
   type PeerInfo,
   type SyncBoardState,
   type SyncStatus,
@@ -1181,6 +1182,43 @@ export function WhiteboardPage({
   const [hasHydrated, setHasHydrated] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('offline');
   const [syncReady, setSyncReady] = useState(false);
+  const [offlineSyncState, setOfflineSyncState] = useState<OfflineSyncState>({
+    hydrated: false,
+    persisted: false,
+    pending: false,
+    storageAvailable: false,
+    error: false,
+  });
+  const syncLabel = useMemo(() => {
+    if (persistenceState === 'loading') return 'Loading board';
+    if (persistenceState === 'error') return 'Local save unavailable';
+    if (offlineSyncState.error) return 'Offline storage unavailable';
+    if (syncStatus === 'connected') {
+      return offlineSyncState.pending ? 'Syncing changes…' : 'Synced';
+    }
+    if (syncStatus === 'reconnecting') {
+      return offlineSyncState.pending
+        ? 'Offline · saved locally'
+        : 'Reconnecting…';
+    }
+    if (syncStatus === 'offline') {
+      return offlineSyncState.storageAvailable
+        ? offlineSyncState.persisted
+          ? 'Saved on device'
+          : 'Saving offline…'
+        : 'Local mode';
+    }
+    return 'Connecting…';
+  }, [offlineSyncState, persistenceState, syncStatus]);
+  const syncDotState =
+    persistenceState === 'error' || offlineSyncState.error
+      ? 'error'
+      : persistenceState === 'loading' ||
+          persistenceState === 'saving' ||
+          offlineSyncState.pending ||
+          (offlineSyncState.storageAvailable && !offlineSyncState.persisted)
+        ? 'saving'
+        : 'saved';
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [copied, setCopied] = useState(false);
   const [activeColor, setActiveColor] = useState('#25263a');
@@ -1533,6 +1571,13 @@ export function WhiteboardPage({
     legacyCommentsRef.current = [];
     setComments([]);
     setCommentAnchor(null);
+    setOfflineSyncState({
+      hydrated: false,
+      persisted: false,
+      pending: false,
+      storageAvailable: false,
+      error: false,
+    });
     setUndoDepth(0);
     setRedoDepth(0);
     try {
@@ -1744,17 +1789,13 @@ export function WhiteboardPage({
     if (
       !hasHydrated ||
       !roomId ||
-      // Local-only rooms have no server counterpart: syncing them just
-      // 404s the upgrade forever, and onAccessLost would then misfile
-      // them as missing server rooms.
-      roomId.startsWith('local-') ||
       roomStatus === 'locked' ||
       roomStatus === 'missing'
     )
       return;
     const session = createBoardSync({
       roomId,
-      serverUrl: resolveSyncServerUrl(),
+      serverUrl: roomId.startsWith('local-') ? null : resolveSyncServerUrl(),
       ticket: resolveRoomTicket(),
       // Workspace members sync locked team rooms through this token
       // (see sync.ts); harmless for personal rooms.
@@ -1769,6 +1810,7 @@ export function WhiteboardPage({
         setSyncStatus(status);
         if (status === 'offline') setSyncReady(false);
       },
+      onOfflineState: (state) => setOfflineSyncState(state),
       onError: (message) => setBoardError(message),
       onPeers: (next) => setPeers(next),
       onClose: (code) => {
@@ -1845,13 +1887,15 @@ export function WhiteboardPage({
   ]);
 
   useEffect(() => {
-    if (!hasHydrated || !syncReady) return;
+    if (!hasHydrated || !roomId) return;
     const timeoutId = window.setTimeout(() => {
-      syncRef.current?.publish(boardStateRef.current);
+      const session = syncRef.current;
+      if (!session) return;
+      session.publish(boardStateRef.current);
       legacyCommentsRef.current = [];
     }, 120);
     return () => window.clearTimeout(timeoutId);
-  }, [arrows, code, comments, hasHydrated, nodes, strokes, syncReady]);
+  }, [arrows, code, comments, hasHydrated, nodes, roomId, strokes]);
 
   // Track server-room visits for the board switcher's recent list. The
   // switcher dialog reads the list lazily on open, so no state sync here.
@@ -5798,17 +5842,9 @@ export function WhiteboardPage({
         </div>
 
         <div className="board-header-center">
-          <div className="save-state">
-            <span className={`save-dot save-dot--${persistenceState}`} />
-            <span>
-              {persistenceState === 'loading'
-                ? 'Loading board'
-                : persistenceState === 'saving'
-                  ? 'Saving locally'
-                  : persistenceState === 'error'
-                    ? 'Save unavailable'
-                    : 'All changes saved'}
-            </span>
+          <div className="save-state" title={syncLabel}>
+            <span className={`save-dot save-dot--${syncDotState}`} />
+            <span>{syncLabel}</span>
           </div>
           <span className="header-location">
             workspace / {roomMeta?.name ?? roomId ?? 'loading'}
@@ -5826,7 +5862,9 @@ export function WhiteboardPage({
                 : syncStatus === 'connected'
                   ? 'Live room: connected'
                   : syncStatus === 'offline'
-                    ? 'Local room: changes stay in this browser'
+                    ? offlineSyncState.persisted
+                      ? 'Offline room: changes are saved on this device'
+                      : 'Offline room: saving changes on this device'
                     : 'Room: connecting'
             }
             title={
@@ -5835,7 +5873,7 @@ export function WhiteboardPage({
                 : syncStatus === 'connected'
                   ? 'Live room: connected'
                   : syncStatus === 'offline'
-                    ? 'Local room'
+                    ? syncLabel
                     : 'Connecting…'
             }
           >
@@ -6910,7 +6948,13 @@ export function WhiteboardPage({
                 <span className="canvas-caption__meta">
                   {nodes.length} objects · {connectors.length + arrows.length}{' '}
                   connections ·{' '}
-                  {syncStatus === 'connected' ? 'synced' : 'local mode'}
+                  {syncStatus === 'connected'
+                    ? offlineSyncState.pending
+                      ? 'saving locally · waiting to sync'
+                      : 'synced'
+                    : offlineSyncState.persisted
+                      ? 'saved locally'
+                      : 'saving locally'}
                 </span>
               </div>
               <span className="canvas-caption__tag">
@@ -6918,7 +6962,7 @@ export function WhiteboardPage({
                 {syncStatus === 'connected'
                   ? 'Live room'
                   : syncStatus === 'offline'
-                    ? 'Local room'
+                    ? 'Offline backup'
                     : 'Connecting'}
               </span>
             </div>

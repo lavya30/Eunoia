@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { parseBoardExport, parseD2Import } from './board-import';
 import { extractMentions, sanitizeComment, sanitizeComments } from './comments';
+import {
+  loadOfflineSnapshot,
+  offlineStorageAvailable,
+  saveOfflineSnapshot,
+} from './offline-storage';
 import { BOARD_TEMPLATES } from './templates';
 
 describe('board-import', () => {
@@ -67,6 +72,17 @@ describe('comments', () => {
     ]);
     expect(comments.length).toBe(2);
     expect(comments[1]).toMatchObject({ parentId: 'root', x: 10, y: 20 });
+  });
+});
+
+describe('offline storage', () => {
+  test('degrades safely when IndexedDB is unavailable', async () => {
+    if (typeof indexedDB !== 'undefined') return;
+    expect(offlineStorageAvailable()).toBe(false);
+    expect(await loadOfflineSnapshot('test-room')).toBeNull();
+    expect(
+      await saveOfflineSnapshot('test-room', new Uint8Array([1, 2, 3])),
+    ).toBe(false);
   });
 });
 

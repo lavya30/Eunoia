@@ -4,11 +4,17 @@ import * as awarenessProtocol from 'y-protocols/awareness';
 import * as syncProtocol from 'y-protocols/sync';
 import * as Y from 'yjs';
 import type { BoardComment } from './board-types';
+import {
+  loadOfflineSnapshot,
+  offlineStorageAvailable,
+  saveOfflineSnapshot,
+} from './offline-storage';
 
 const WS_MESSAGE_SYNC = 0;
 const WS_MESSAGE_AWARENESS = 1;
 const REMOTE_ORIGIN = Symbol('remote-sync');
 const LOCAL_ORIGIN = 'local-ui';
+const OFFLINE_RESTORE_ORIGIN = Symbol('offline-restore');
 const IDENTITY_STORAGE_KEY = 'eunoia:identity:v1';
 /** Peers unseen for longer than this are treated as gone (the server does
  *  not prune awareness states on disconnect, so the client must). */
@@ -26,6 +32,14 @@ export type SyncBoardState = {
 
 export type SyncStatus =
   'offline' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+
+export type OfflineSyncState = {
+  hydrated: boolean;
+  persisted: boolean;
+  pending: boolean;
+  storageAvailable: boolean;
+  error: boolean;
+};
 
 export type PeerUser = {
   id: string;
@@ -59,6 +73,7 @@ type SyncSessionOptions = {
   getInitialState?: () => SyncBoardState;
   onState: (state: SyncBoardState) => void;
   onStatus: (status: SyncStatus) => void;
+  onOfflineState?: (state: OfflineSyncState) => void;
   onReady?: () => void;
   onError?: (message: string) => void;
   onPeers?: (peers: PeerInfo[]) => void;
@@ -295,6 +310,7 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
     onError,
     onPeers,
     onReady,
+    onOfflineState,
     onState,
     onStatus,
     roomId,
@@ -302,24 +318,24 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
     ticket,
     userToken,
   } = options;
-  if (
-    !serverUrl ||
-    typeof window === 'undefined' ||
-    typeof WebSocket === 'undefined'
-  ) {
-    onStatus('offline');
-    const offlineUser =
-      typeof window !== 'undefined'
-        ? getLocalUser()
-        : { id: 'local', name: 'You', color: '#7c5cff' };
-    return {
-      publish: () => undefined,
-      setLocalCursor: () => undefined,
-      setLocalPresenceMeta: () => undefined,
-      getLocalUser: () => offlineUser,
-      destroy: () => undefined,
-    };
-  }
+  const canConnect = Boolean(
+    serverUrl &&
+    typeof window !== 'undefined' &&
+    typeof WebSocket !== 'undefined',
+  );
+  const storageAvailable = offlineStorageAvailable();
+  let offlineState: OfflineSyncState = {
+    hydrated: false,
+    persisted: false,
+    pending: false,
+    storageAvailable,
+    error: false,
+  };
+  const emitOfflineState = (patch: Partial<OfflineSyncState> = {}) => {
+    offlineState = { ...offlineState, ...patch };
+    onOfflineState?.(offlineState);
+  };
+  onOfflineState?.(offlineState);
 
   const doc = new Y.Doc();
   const board = doc.getMap<string>('board');
@@ -332,9 +348,60 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
   let destroyed = false;
   let attempts = 0;
   let opened = false;
+  let hydrated = false;
+  let pendingPublish: SyncBoardState | null = null;
+  let persistTimer: number | null = null;
+  let persistInFlight = false;
+  let persistAgain = false;
+  let dirtyForStorage = false;
 
-  const send = (message: Uint8Array) => {
-    if (socket?.readyState === WebSocket.OPEN) socket.send(message);
+  const persistNow = async () => {
+    if (!storageAvailable || !dirtyForStorage || persistInFlight) {
+      if (persistInFlight) persistAgain = true;
+      return;
+    }
+    dirtyForStorage = false;
+    persistInFlight = true;
+    const saved = await saveOfflineSnapshot(roomId, Y.encodeStateAsUpdate(doc));
+    persistInFlight = false;
+    if (!destroyed) {
+      if (saved) {
+        emitOfflineState({ persisted: true, error: false });
+      } else {
+        dirtyForStorage = true;
+        emitOfflineState({ persisted: false, error: true });
+      }
+    }
+    if (persistAgain || dirtyForStorage) {
+      persistAgain = false;
+      if (!destroyed && typeof window !== 'undefined') {
+        if (persistTimer !== null) window.clearTimeout(persistTimer);
+        persistTimer = window.setTimeout(() => void persistNow(), 250);
+      }
+    }
+  };
+
+  const schedulePersist = () => {
+    if (!storageAvailable || destroyed || typeof window === 'undefined') return;
+    dirtyForStorage = true;
+    emitOfflineState({ persisted: false, error: false });
+    if (persistTimer !== null) window.clearTimeout(persistTimer);
+    persistTimer = window.setTimeout(() => void persistNow(), 250);
+  };
+
+  const setPendingUpload = (pending: boolean) => {
+    if (offlineState.pending === pending) return;
+    emitOfflineState({ pending });
+  };
+
+  const send = (message: Uint8Array): boolean => {
+    if (
+      typeof WebSocket === 'undefined' ||
+      socket?.readyState !== WebSocket.OPEN
+    )
+      return false;
+    socket.send(message);
+    return true;
   };
 
   const sendAwarenessUpdate = (clients: number[]) => {
@@ -349,6 +416,10 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
   };
 
   const publish = (state: SyncBoardState) => {
+    if (!hydrated) {
+      pendingPublish = state;
+      return;
+    }
     doc.transact(() => {
       for (const [key, value] of stateEntries(state)) {
         if (board.get(key) !== value) board.set(key, value);
@@ -415,7 +486,10 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
   };
 
   const handleUpdate = (update: Uint8Array, origin: unknown) => {
-    if (origin !== REMOTE_ORIGIN) send(encodeSyncUpdate(update));
+    if (origin === OFFLINE_RESTORE_ORIGIN) return;
+    schedulePersist();
+    if (origin === REMOTE_ORIGIN || !canConnect) return;
+    setPendingUpload(!send(encodeSyncUpdate(update)));
   };
 
   const handleBoardChange = () => {
@@ -455,6 +529,7 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
         // Read the latest local state at fire time: the snapshot captured
         // when the session was created may already be stale.
         if (board.size === 0) publish(getInitialState?.() ?? initialState);
+        setPendingUpload(false);
         onReady?.();
       }, 900);
     };
@@ -517,11 +592,59 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
   doc.on('update', handleUpdate);
   awareness.on('update', handleAwarenessUpdate);
   awareness.on('change', handleAwarenessChange);
-  connect();
+
+  const hydrateOfflineDocument = async (): Promise<boolean> => {
+    const update = await loadOfflineSnapshot(roomId);
+    if (destroyed) return false;
+    let restored = false;
+    if (update) {
+      try {
+        Y.applyUpdate(doc, update, OFFLINE_RESTORE_ORIGIN);
+        handleBoardChange();
+        restored = true;
+        emitOfflineState({ persisted: true, error: false });
+      } catch {
+        emitOfflineState({ error: true });
+      }
+    }
+    hydrated = true;
+    emitOfflineState({ hydrated: true });
+    if (pendingPublish) {
+      const state = pendingPublish;
+      pendingPublish = null;
+      publish(state);
+    }
+    return restored;
+  };
+
+  const handlePageHide = () => {
+    if (dirtyForStorage) void persistNow();
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', handlePageHide);
+  }
 
   // Periodically re-emit so stale peers (never pruned server-side) drop
   // off even without further awareness traffic.
-  const peerSweepTimer = window.setInterval(emitPeers, 10_000);
+  const peerSweepTimer = canConnect
+    ? window.setInterval(emitPeers, 10_000)
+    : null;
+
+  if (!canConnect) {
+    onStatus('offline');
+    void hydrateOfflineDocument().then((restored) => {
+      if (destroyed) return;
+      if (!restored && !pendingPublish)
+        publish(getInitialState?.() ?? initialState);
+      setPendingUpload(false);
+      onReady?.();
+    });
+  } else {
+    void hydrateOfflineDocument().then(() => {
+      if (!destroyed) connect();
+    });
+  }
 
   return {
     publish,
@@ -529,10 +652,15 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
     setLocalPresenceMeta,
     getLocalUser: () => localUser,
     destroy: () => {
+      if (dirtyForStorage) void persistNow();
       destroyed = true;
-      if (retryTimer !== null) window.clearTimeout(retryTimer);
-      if (initialStateTimer !== null) window.clearTimeout(initialStateTimer);
-      window.clearInterval(peerSweepTimer);
+      if (typeof window !== 'undefined') {
+        if (retryTimer !== null) window.clearTimeout(retryTimer);
+        if (initialStateTimer !== null) window.clearTimeout(initialStateTimer);
+        if (persistTimer !== null) window.clearTimeout(persistTimer);
+        if (peerSweepTimer !== null) window.clearInterval(peerSweepTimer);
+        window.removeEventListener('pagehide', handlePageHide);
+      }
       // Best-effort presence removal while the update handler (and socket)
       // are still live.
       awarenessProtocol.removeAwarenessStates(
