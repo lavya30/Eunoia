@@ -70,3 +70,19 @@ export type BoardStroke = {
   /** Composite group identifier. */
   groupId?: string;
 };
+
+export type BoardComment = {
+  id: string;
+  /** Null for a root pin; replies inherit the root pin's position. */
+  parentId: string | null;
+  x: number;
+  y: number;
+  body: string;
+  author: string;
+  authorId: string;
+  mentions: string[];
+  resolved: boolean;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+};

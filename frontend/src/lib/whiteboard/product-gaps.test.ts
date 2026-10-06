@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseBoardExport, parseD2Import } from './board-import';
-import { extractMentions } from './comments';
+import { extractMentions, sanitizeComment, sanitizeComments } from './comments';
 import { BOARD_TEMPLATES } from './templates';
 
 describe('board-import', () => {
@@ -38,6 +38,35 @@ describe('comments', () => {
       'bex-2',
     ]);
     expect(extractMentions('no mentions')).toEqual([]);
+  });
+
+  test('normalizes legacy comments into anchored, thread-ready records', () => {
+    const comment = sanitizeComment({
+      id: 'legacy',
+      x: 24,
+      y: -8,
+      body: 'Review this @ada',
+    });
+    expect(comment).toMatchObject({
+      id: 'legacy',
+      parentId: null,
+      x: 24,
+      y: -8,
+      author: 'Anonymous',
+      authorId: 'anonymous',
+      mentions: ['ada'],
+      resolved: false,
+    });
+  });
+
+  test('sanitizes comments, removes duplicate ids, and preserves replies', () => {
+    const comments = sanitizeComments([
+      { id: 'root', x: 10, y: 20, body: 'Root' },
+      { id: 'root', x: 30, y: 40, body: 'Duplicate' },
+      { id: 'reply', parentId: 'root', x: 10, y: 20, body: 'Reply' },
+    ]);
+    expect(comments.length).toBe(2);
+    expect(comments[1]).toMatchObject({ parentId: 'root', x: 10, y: 20 });
   });
 });
 

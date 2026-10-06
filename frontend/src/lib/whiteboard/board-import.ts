@@ -1,6 +1,12 @@
 'use client';
 
-import type { BoardArrow, BoardNode, BoardStroke } from './board-types';
+import type {
+  BoardArrow,
+  BoardComment,
+  BoardNode,
+  BoardStroke,
+} from './board-types';
+import { sanitizeComments } from './comments';
 
 export type BoardExportJson = {
   kind: 'eunoia-board';
@@ -8,6 +14,7 @@ export type BoardExportJson = {
   nodes: BoardNode[];
   arrows: BoardArrow[];
   strokes: BoardStroke[];
+  comments?: BoardComment[];
   code?: string;
 };
 
@@ -67,6 +74,9 @@ export function parseBoardExport(text: string): BoardExportJson | null {
     nodes: parseNodes(payload.nodes),
     arrows: parseArrows(payload.arrows),
     strokes: parseStrokes(payload.strokes),
+    comments: Array.isArray(payload.comments)
+      ? sanitizeComments(payload.comments)
+      : undefined,
     code: typeof payload.code === 'string' ? payload.code : undefined,
   };
 }

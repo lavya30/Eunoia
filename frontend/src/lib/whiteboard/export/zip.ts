@@ -1,7 +1,12 @@
 'use client';
 
 import JSZip from 'jszip';
-import type { BoardArrow, BoardNode, BoardStroke } from '../board-types';
+import type {
+  BoardArrow,
+  BoardComment,
+  BoardNode,
+  BoardStroke,
+} from '../board-types';
 import type { Camera } from '../geometry';
 
 export type BoardBundleInput = {
@@ -11,6 +16,7 @@ export type BoardBundleInput = {
   nodes: BoardNode[];
   arrows: BoardArrow[];
   strokes: BoardStroke[];
+  comments: BoardComment[];
   camera: Camera;
   svgString: string;
   pngBlob: Blob;
@@ -25,6 +31,7 @@ export async function buildBoardBundle(input: BoardBundleInput): Promise<Blob> {
       nodes: input.nodes,
       arrows: input.arrows,
       strokes: input.strokes,
+      comments: input.comments,
       camera: input.camera,
     },
     null,
@@ -48,6 +55,7 @@ export async function buildBoardBundle(input: BoardBundleInput): Promise<Blob> {
           nodes: input.nodes.length,
           arrows: input.arrows.length,
           strokes: input.strokes.length,
+          comments: input.comments.length,
         },
       },
       null,

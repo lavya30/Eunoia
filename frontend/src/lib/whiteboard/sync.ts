@@ -3,6 +3,7 @@ import * as encoding from 'lib0/encoding';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as syncProtocol from 'y-protocols/sync';
 import * as Y from 'yjs';
+import type { BoardComment } from './board-types';
 
 const WS_MESSAGE_SYNC = 0;
 const WS_MESSAGE_AWARENESS = 1;
@@ -20,6 +21,7 @@ export type SyncBoardState = {
   arrows: unknown[];
   strokes: unknown[];
   code: string;
+  comments: BoardComment[];
 };
 
 export type SyncStatus =
@@ -219,15 +221,23 @@ function readBoardState(board: Y.Map<string>): SyncBoardState | null {
     const nodes = JSON.parse(board.get('nodes') ?? 'null');
     const arrows = JSON.parse(board.get('arrows') ?? 'null');
     const strokes = JSON.parse(board.get('strokes') ?? 'null');
+    const comments = JSON.parse(board.get('comments') ?? '[]');
     const code = board.get('code');
     if (
       !Array.isArray(nodes) ||
       !Array.isArray(arrows) ||
       !Array.isArray(strokes) ||
+      !Array.isArray(comments) ||
       typeof code !== 'string'
     )
       return null;
-    return { nodes, arrows, strokes, code };
+    return {
+      nodes,
+      arrows,
+      strokes,
+      code,
+      comments: comments as BoardComment[],
+    };
   } catch {
     return null;
   }
@@ -239,6 +249,7 @@ function stateEntries(state: SyncBoardState): Array<[string, string]> {
     ['arrows', JSON.stringify(state.arrows)],
     ['strokes', JSON.stringify(state.strokes)],
     ['code', state.code],
+    ['comments', JSON.stringify(state.comments)],
   ];
 }
 

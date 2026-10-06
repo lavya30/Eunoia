@@ -10,7 +10,10 @@ import {
   ToolButton,
   initialsForName,
 } from './board-ui';
-import { parseD2Diagnostics, type D2Diagnostic } from '@/lib/whiteboard/d2-diagnostics';
+import {
+  parseD2Diagnostics,
+  type D2Diagnostic,
+} from '@/lib/whiteboard/d2-diagnostics';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -31,6 +34,7 @@ import {
   LockKeyhole,
   Map as MapIcon,
   Maximize2,
+  MessageCircle,
   Minus,
   MousePointer2,
   MoveHorizontal,
@@ -91,6 +95,7 @@ import { SpatialIndex } from '@/lib/whiteboard/spatial-index';
 import type {
   ArrowRouting,
   BoardArrow,
+  BoardComment,
   BoardNode,
   BoardStroke,
   InkPoint,
@@ -109,12 +114,18 @@ import {
 } from '@/lib/whiteboard/d2-adapter';
 import {
   createBoardSync,
+  getLocalUser,
   resolveSyncHttpUrl,
   resolveSyncServerUrl,
   type PeerInfo,
   type SyncBoardState,
   type SyncStatus,
 } from '@/lib/whiteboard/sync';
+import {
+  extractMentions,
+  getComments,
+  sanitizeComments,
+} from '@/lib/whiteboard/comments';
 import {
   ApiError,
   confirmImageUpload,
@@ -186,7 +197,8 @@ type ToolId =
   | 'arrow'
   | 'draw'
   | 'eraser'
-  | 'text';
+  | 'text'
+  | 'comment';
 
 type Interaction =
   | { kind: 'pan'; pointerId: number; lastScreen: Point }
@@ -230,7 +242,7 @@ type Interaction =
   | {
       kind: 'create';
       pointerId: number;
-      tool: Exclude<ToolId, 'select' | 'hand'>;
+      tool: Exclude<ToolId, 'select' | 'hand' | 'comment'>;
       startWorld: Point;
       currentWorld: Point;
       color: string;
@@ -355,6 +367,7 @@ type PersistedBoard = {
   arrows: BoardArrow[];
   strokes: BoardStroke[];
   code: string;
+  comments: BoardComment[];
 };
 
 const CONNECTOR_SPECS = [
@@ -406,7 +419,8 @@ function isPersistedBoard(value: unknown): value is PersistedBoard {
     Array.isArray(board.nodes) &&
     Array.isArray(board.arrows) &&
     Array.isArray(board.strokes) &&
-    typeof board.code === 'string'
+    typeof board.code === 'string' &&
+    (board.comments === undefined || Array.isArray(board.comments))
   );
 }
 
@@ -1019,6 +1033,7 @@ function sanitizeBoardState(value: unknown): PersistedBoard | null {
       return clean ? [clean] : [];
     }),
     code: value.code.slice(0, 500_000),
+    comments: sanitizeComments(value.comments ?? []),
   };
 }
 
@@ -1088,6 +1103,7 @@ export function WhiteboardPage({
   const [session, setSession] = useState<AuthSession | null>(() =>
     typeof window === 'undefined' ? null : loadSession(),
   );
+  const localIdentity = useMemo(() => getLocalUser(), []);
   // Session storage is client-only (SSR always renders signed-out), so the
   // account-menu branch below waits for mount to keep hydration identical.
   // Sync/auth logic keeps using `session` synchronously — only rendering
@@ -1103,6 +1119,7 @@ export function WhiteboardPage({
   const [nodes, setNodes] = useState(INITIAL_NODES);
   const [arrows, setArrows] = useState<BoardArrow[]>([]);
   const [strokes, setStrokes] = useState<BoardStroke[]>([]);
+  const [comments, setComments] = useState<BoardComment[]>([]);
   const [camera, setCamera] = useState<Camera>(INITIAL_CAMERA);
   const [canvasViewport, setCanvasViewport] = useState(WORLD_VIEWPORT);
   const [gridMode, setGridMode] = useState<'dots' | 'lines' | 'none'>(() => {
@@ -1113,7 +1130,9 @@ export function WhiteboardPage({
   const [gridSize, setGridSize] = useState<number>(() => {
     if (typeof window === 'undefined') return 24;
     const stored = Number(window.localStorage.getItem('eunoia:gridSize'));
-    return stored === 8 || stored === 16 || stored === 24 || stored === 32 ? stored : 24;
+    return stored === 8 || stored === 16 || stored === 24 || stored === 32
+      ? stored
+      : 24;
   });
   const [showMinimap, setShowMinimap] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
@@ -1176,7 +1195,7 @@ export function WhiteboardPage({
     value: string;
   } | null>(null);
   const [createPreview, setCreatePreview] = useState<{
-    tool: Exclude<ToolId, 'select' | 'hand'>;
+    tool: Exclude<ToolId, 'select' | 'hand' | 'comment'>;
     start: Point;
     end: Point;
     color: string;
@@ -1233,6 +1252,8 @@ export function WhiteboardPage({
   const nodesRef = useRef<BoardNode[]>(nodes);
   const arrowsRef = useRef<BoardArrow[]>(arrows);
   const strokesRef = useRef<BoardStroke[]>(strokes);
+  const commentsRef = useRef<BoardComment[]>(comments);
+  const legacyCommentsRef = useRef<BoardComment[]>([]);
   const [svgPixelSize, setSvgPixelSize] = useState<{
     width: number;
     height: number;
@@ -1242,6 +1263,7 @@ export function WhiteboardPage({
     arrows,
     strokes,
     code,
+    comments,
   });
   const arrowRoutingRef = useRef<ArrowRouting>(arrowRouting);
 
@@ -1266,14 +1288,15 @@ export function WhiteboardPage({
   const [showSearch, setShowSearch] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [commentAnchor, setCommentAnchor] = useState<Point | null>(null);
   const [followedPeerId, setFollowedPeerId] = useState<number | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
   /* eslint-disable react-hooks/set-state-in-effect -- hydrate and persist an external browser store. */
   useEffect(() => {
-    boardStateRef.current = { nodes, arrows, strokes, code };
-  }, [arrows, code, nodes, strokes]);
+    boardStateRef.current = { nodes, arrows, strokes, code, comments };
+  }, [arrows, code, comments, nodes, strokes]);
 
   useEffect(() => {
     cameraRef.current = camera;
@@ -1302,6 +1325,10 @@ export function WhiteboardPage({
   useEffect(() => {
     strokesRef.current = strokes;
   }, [strokes]);
+
+  useEffect(() => {
+    commentsRef.current = comments;
+  }, [comments]);
 
   // Track the SVG element's pixel size without reading refs during render,
   // so the in-place text editor stays aligned on resize/zoom.
@@ -1450,6 +1477,11 @@ export function WhiteboardPage({
     setArrows(clean.arrows);
     setStrokes(clean.strokes);
     setCode(clean.code);
+    setComments(
+      clean.comments.length > 0 || legacyCommentsRef.current.length === 0
+        ? clean.comments
+        : legacyCommentsRef.current,
+    );
     setPersistenceState('saved');
   }, []);
 
@@ -1498,14 +1530,19 @@ export function WhiteboardPage({
     gestureBaseRef.current = null;
     createCommitRef.current = null;
     pendingRemoteRef.current = null;
+    legacyCommentsRef.current = [];
+    setComments([]);
+    setCommentAnchor(null);
     setUndoDepth(0);
     setRedoDepth(0);
     try {
       const key = storageKeyFor(roomId);
       let raw = window.localStorage.getItem(key);
+      let migratedLegacyRoom = false;
       // One-time migration from the pre-multi-room hardcoded room key.
       if (!raw && roomId !== LEGACY_ROOM_ID) {
         raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+        migratedLegacyRoom = Boolean(raw);
       }
       if (raw) {
         const parsed: unknown = JSON.parse(raw);
@@ -1516,7 +1553,21 @@ export function WhiteboardPage({
           setArrows(clean.arrows);
           setStrokes(clean.strokes);
           setCode(clean.code);
+          const parsedBoard = parsed as { comments?: unknown };
+          const hasPersistedComments = Object.prototype.hasOwnProperty.call(
+            parsedBoard,
+            'comments',
+          );
+          const legacy = sanitizeComments(
+            getComments(migratedLegacyRoom ? LEGACY_ROOM_ID : roomId),
+          );
+          legacyCommentsRef.current = hasPersistedComments ? [] : legacy;
+          setComments(hasPersistedComments ? clean.comments : legacy);
         }
+      } else {
+        const legacy = sanitizeComments(getComments(roomId));
+        legacyCommentsRef.current = legacy;
+        setComments(legacy);
       }
       setPersistenceState('saved');
     } catch {
@@ -1533,7 +1584,13 @@ export function WhiteboardPage({
     if (!hasHydrated || !roomId) return;
     setPersistenceState('saving');
     const timeoutId = window.setTimeout(() => {
-      const fullPayload: PersistedBoard = { nodes, arrows, strokes, code };
+      const fullPayload: PersistedBoard = {
+        nodes,
+        arrows,
+        strokes,
+        code,
+        comments,
+      };
       try {
         window.localStorage.setItem(
           roomId ? storageKeyFor(roomId) : LEGACY_STORAGE_KEY,
@@ -1556,6 +1613,7 @@ export function WhiteboardPage({
               arrows,
               strokes,
               code,
+              comments,
             };
             window.localStorage.setItem(
               roomId ? storageKeyFor(roomId) : LEGACY_STORAGE_KEY,
@@ -1577,7 +1635,7 @@ export function WhiteboardPage({
       }
     }, 250);
     return () => window.clearTimeout(timeoutId);
-  }, [arrows, code, hasHydrated, nodes, roomId, strokes]);
+  }, [arrows, code, comments, hasHydrated, nodes, roomId, strokes]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Room bootstrap: auto-create a room when the URL carries none, and
@@ -1654,6 +1712,7 @@ export function WhiteboardPage({
           setNodes(parsed.nodes);
           setArrows(parsed.arrows);
           setStrokes(parsed.strokes);
+          if (parsed.comments) setComments(parsed.comments);
           if (parsed.code) setCode(parsed.code);
         }
       }
@@ -1789,9 +1848,10 @@ export function WhiteboardPage({
     if (!hasHydrated || !syncReady) return;
     const timeoutId = window.setTimeout(() => {
       syncRef.current?.publish(boardStateRef.current);
+      legacyCommentsRef.current = [];
     }, 120);
     return () => window.clearTimeout(timeoutId);
-  }, [arrows, code, hasHydrated, nodes, strokes, syncReady]);
+  }, [arrows, code, comments, hasHydrated, nodes, strokes, syncReady]);
 
   // Track server-room visits for the board switcher's recent list. The
   // switcher dialog reads the list lazily on open, so no state sync here.
@@ -1913,40 +1973,55 @@ export function WhiteboardPage({
    */
   const layeredElements = useMemo(() => {
     type Layered =
-      | { kind: 'stroke'; kindOrder: 0; id: string; z: number; order: number; stroke: BoardStroke }
-      | { kind: 'arrow'; kindOrder: 1; id: string; z: number; order: number; arrow: BoardArrow }
-      | { kind: 'node'; kindOrder: 2; id: string; z: number; order: number; node: BoardNode };
+      | {
+          kind: 'stroke';
+          kindOrder: 0;
+          id: string;
+          z: number;
+          order: number;
+          stroke: BoardStroke;
+        }
+      | {
+          kind: 'arrow';
+          kindOrder: 1;
+          id: string;
+          z: number;
+          order: number;
+          arrow: BoardArrow;
+        }
+      | {
+          kind: 'node';
+          kindOrder: 2;
+          id: string;
+          z: number;
+          order: number;
+          node: BoardNode;
+        };
     const elements: Layered[] = [
-      ...visibleStrokes.map(
-        (stroke, order): Layered => ({
-          kind: 'stroke',
-          kindOrder: 0,
-          id: stroke.id,
-          z: stroke.z ?? 0,
-          order,
-          stroke,
-        }),
-      ),
-      ...visibleArrows.map(
-        (arrow, order): Layered => ({
-          kind: 'arrow',
-          kindOrder: 1,
-          id: arrow.id,
-          z: arrow.z ?? 0,
-          order,
-          arrow,
-        }),
-      ),
-      ...visibleNodes.map(
-        (node, order): Layered => ({
-          kind: 'node',
-          kindOrder: 2,
-          id: node.id,
-          z: node.z ?? 0,
-          order,
-          node,
-        }),
-      ),
+      ...visibleStrokes.map((stroke, order): Layered => ({
+        kind: 'stroke',
+        kindOrder: 0,
+        id: stroke.id,
+        z: stroke.z ?? 0,
+        order,
+        stroke,
+      })),
+      ...visibleArrows.map((arrow, order): Layered => ({
+        kind: 'arrow',
+        kindOrder: 1,
+        id: arrow.id,
+        z: arrow.z ?? 0,
+        order,
+        arrow,
+      })),
+      ...visibleNodes.map((node, order): Layered => ({
+        kind: 'node',
+        kindOrder: 2,
+        id: node.id,
+        z: node.z ?? 0,
+        order,
+        node,
+      })),
     ];
     elements.sort(
       (a, b) => a.z - b.z || a.kindOrder - b.kindOrder || a.order - b.order,
@@ -2168,6 +2243,130 @@ export function WhiteboardPage({
     setActiveTool(tool);
     if (tool !== 'select' && tool !== 'hand') setSelectedIds([]);
   }, []);
+
+  const commentAuthorId = session?.user.id ?? localIdentity.id;
+  const commentAuthor =
+    session?.user.name ?? session?.user.email ?? localIdentity.name;
+  const mentionHandles = useMemo(
+    () =>
+      new Set(
+        [
+          commentAuthor,
+          session?.user.email,
+          session?.user.name,
+          localIdentity.name,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .map((value) => value.replace(/^@/, '').toLowerCase()),
+      ),
+    [
+      commentAuthor,
+      localIdentity.name,
+      session?.user.email,
+      session?.user.name,
+    ],
+  );
+  const mentionCount = useMemo(
+    () =>
+      comments.filter(
+        (comment) =>
+          !comment.deletedAt &&
+          comment.authorId !== commentAuthorId &&
+          comment.mentions.some((mention) =>
+            mentionHandles.has(mention.replace(/^@/, '').toLowerCase()),
+          ),
+      ).length,
+    [commentAuthorId, comments, mentionHandles],
+  );
+  const rootComments = useMemo(
+    () =>
+      comments.filter(
+        (comment) => comment.parentId === null && !comment.deletedAt,
+      ),
+    [comments],
+  );
+
+  const focusComment = useCallback((comment: BoardComment) => {
+    setShowComments(true);
+    setCommentAnchor(null);
+    const viewport = canvasViewportRef.current;
+    setCamera((current) => ({
+      ...current,
+      x: comment.x - viewport.width / 2 / current.zoom,
+      y: comment.y - viewport.height / 2 / current.zoom,
+    }));
+  }, []);
+
+  const addComment = useCallback(
+    (body: string, parentId: string | null, point: Point | null) => {
+      const parent = parentId
+        ? commentsRef.current.find((comment) => comment.id === parentId)
+        : null;
+      const anchor = parent ? { x: parent.x, y: parent.y } : point;
+      const trimmed = body.trim().slice(0, 4_000);
+      if (!trimmed || !anchor) {
+        setBoardError('Choose a point on the canvas before adding a comment.');
+        return;
+      }
+      const now = Date.now();
+      const next: BoardComment = {
+        id: nextId('comment'),
+        parentId,
+        x: anchor.x,
+        y: anchor.y,
+        body: trimmed,
+        author: commentAuthor.trim() || 'Anonymous',
+        authorId: commentAuthorId,
+        mentions: extractMentions(trimmed),
+        resolved: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setComments((current) => [...current, next]);
+      setCommentAnchor(null);
+      setShowComments(true);
+      selectTool('select');
+    },
+    [commentAuthor, commentAuthorId, selectTool],
+  );
+
+  const updateComment = useCallback(
+    (commentId: string, patch: { body?: string; resolved?: boolean }) => {
+      setComments((current) =>
+        current.map((comment) => {
+          if (comment.id !== commentId) return comment;
+          if (patch.body !== undefined && comment.authorId !== commentAuthorId)
+            return comment;
+          const body = patch.body?.trim().slice(0, 4_000);
+          if (patch.body !== undefined && !body) return comment;
+          return {
+            ...comment,
+            ...(body === undefined
+              ? {}
+              : { body, mentions: extractMentions(body) }),
+            ...(patch.resolved === undefined
+              ? {}
+              : { resolved: patch.resolved }),
+            updatedAt: Date.now(),
+          };
+        }),
+      );
+    },
+    [commentAuthorId],
+  );
+
+  const deleteComment = useCallback(
+    (commentId: string) => {
+      setComments((current) =>
+        current.map((comment) =>
+          comment.id === commentId && comment.authorId === commentAuthorId
+            ? { ...comment, deletedAt: Date.now(), updatedAt: Date.now() }
+            : comment,
+        ),
+      );
+    },
+    [commentAuthorId],
+  );
 
   const adjustZoom = useCallback((amount: number) => {
     setCamera((current) => ({
@@ -2447,21 +2646,35 @@ export function WhiteboardPage({
       setArrows((curr) => {
         const updated = curr.map((arrow) => {
           if (!arrow.startNodeId && !arrow.endNodeId) return arrow;
-          const sNode = arrow.startNodeId ? nodeMap.get(arrow.startNodeId) : undefined;
-          const eNode = arrow.endNodeId ? nodeMap.get(arrow.endNodeId) : undefined;
+          const sNode = arrow.startNodeId
+            ? nodeMap.get(arrow.startNodeId)
+            : undefined;
+          const eNode = arrow.endNodeId
+            ? nodeMap.get(arrow.endNodeId)
+            : undefined;
           let nextStart = arrow.start;
           let nextEnd = arrow.end;
           if (sNode) {
             nextStart = getRoutedAnchor(
               sNode,
-              eNode ? { x: eNode.x + eNode.width / 2, y: eNode.y + eNode.height / 2 } : arrow.end,
+              eNode
+                ? {
+                    x: eNode.x + eNode.width / 2,
+                    y: eNode.y + eNode.height / 2,
+                  }
+                : arrow.end,
               arrow.routing,
             );
           }
           if (eNode) {
             nextEnd = getRoutedAnchor(
               eNode,
-              sNode ? { x: sNode.x + sNode.width / 2, y: sNode.y + sNode.height / 2 } : arrow.start,
+              sNode
+                ? {
+                    x: sNode.x + sNode.width / 2,
+                    y: sNode.y + sNode.height / 2,
+                  }
+                : arrow.start,
               arrow.routing,
             );
           }
@@ -2476,7 +2689,14 @@ export function WhiteboardPage({
         arrows: nextArrows,
       });
     },
-    [arrows, captureBoardSnapshot, locked, nodes, pushDiscreteChange, selectedNodes],
+    [
+      arrows,
+      captureBoardSnapshot,
+      locked,
+      nodes,
+      pushDiscreteChange,
+      selectedNodes,
+    ],
   );
 
   const distributeSelectedNodes = useCallback(
@@ -2493,21 +2713,35 @@ export function WhiteboardPage({
       setArrows((curr) => {
         const updated = curr.map((arrow) => {
           if (!arrow.startNodeId && !arrow.endNodeId) return arrow;
-          const sNode = arrow.startNodeId ? nodeMap.get(arrow.startNodeId) : undefined;
-          const eNode = arrow.endNodeId ? nodeMap.get(arrow.endNodeId) : undefined;
+          const sNode = arrow.startNodeId
+            ? nodeMap.get(arrow.startNodeId)
+            : undefined;
+          const eNode = arrow.endNodeId
+            ? nodeMap.get(arrow.endNodeId)
+            : undefined;
           let nextStart = arrow.start;
           let nextEnd = arrow.end;
           if (sNode) {
             nextStart = getRoutedAnchor(
               sNode,
-              eNode ? { x: eNode.x + eNode.width / 2, y: eNode.y + eNode.height / 2 } : arrow.end,
+              eNode
+                ? {
+                    x: eNode.x + eNode.width / 2,
+                    y: eNode.y + eNode.height / 2,
+                  }
+                : arrow.end,
               arrow.routing,
             );
           }
           if (eNode) {
             nextEnd = getRoutedAnchor(
               eNode,
-              sNode ? { x: sNode.x + sNode.width / 2, y: sNode.y + sNode.height / 2 } : arrow.start,
+              sNode
+                ? {
+                    x: sNode.x + sNode.width / 2,
+                    y: sNode.y + sNode.height / 2,
+                  }
+                : arrow.start,
               arrow.routing,
             );
           }
@@ -2522,7 +2756,14 @@ export function WhiteboardPage({
         arrows: nextArrows,
       });
     },
-    [arrows, captureBoardSnapshot, locked, nodes, pushDiscreteChange, selectedNodes],
+    [
+      arrows,
+      captureBoardSnapshot,
+      locked,
+      nodes,
+      pushDiscreteChange,
+      selectedNodes,
+    ],
   );
 
   const hasGroupedSelection = useMemo(() => {
@@ -2560,7 +2801,15 @@ export function WhiteboardPage({
       arrows: nextArrows,
       strokes: nextStrokes,
     });
-  }, [arrows, captureBoardSnapshot, locked, nodes, pushDiscreteChange, selectedIds, strokes]);
+  }, [
+    arrows,
+    captureBoardSnapshot,
+    locked,
+    nodes,
+    pushDiscreteChange,
+    selectedIds,
+    strokes,
+  ]);
 
   const ungroupSelected = useCallback(() => {
     if (locked || selectedIds.length === 0) return;
@@ -2587,7 +2836,15 @@ export function WhiteboardPage({
       arrows: nextArrows,
       strokes: nextStrokes,
     });
-  }, [arrows, captureBoardSnapshot, locked, nodes, pushDiscreteChange, selectedIds, strokes]);
+  }, [
+    arrows,
+    captureBoardSnapshot,
+    locked,
+    nodes,
+    pushDiscreteChange,
+    selectedIds,
+    strokes,
+  ]);
 
   /**
    * Eraser hit-test at a world point. Removes the topmost node under the
@@ -2605,9 +2862,7 @@ export function WhiteboardPage({
       return next;
     });
     setArrows((current) => {
-      const next = current.filter(
-        (arrow) => !arrowHitTest(arrow, worldPoint),
-      );
+      const next = current.filter((arrow) => !arrowHitTest(arrow, worldPoint));
       if (next.length !== current.length) erased = true;
       return next;
     });
@@ -2661,10 +2916,14 @@ export function WhiteboardPage({
       ];
       entries.sort(
         (a, b) =>
-          a.z - b.z || kindOrder[a.kind] - kindOrder[b.kind] || a.index - b.index,
+          a.z - b.z ||
+          kindOrder[a.kind] - kindOrder[b.kind] ||
+          a.index - b.index,
       );
       // Normalize to distinct ranks so forward/backward swaps always move.
-      const rankById = new Map(entries.map((e, rank) => [`${e.kind}:${e.id}`, rank]));
+      const rankById = new Map(
+        entries.map((e, rank) => [`${e.kind}:${e.id}`, rank]),
+      );
       const zOf = (kind: Entry['kind'], id: string) =>
         rankById.get(`${kind}:${id}`) ?? 0;
       const setZ = (
@@ -2710,8 +2969,7 @@ export function WhiteboardPage({
           const idx = pool.findIndex(
             (entry) => entry.kind === e.kind && entry.id === e.id,
           );
-          const neighborIdx =
-            direction === 'forward' ? idx + 1 : idx - 1;
+          const neighborIdx = direction === 'forward' ? idx + 1 : idx - 1;
           const neighbor = pool[neighborIdx];
           if (!neighbor || isSelected(neighbor)) continue;
           const ez = rankById.get(`${e.kind}:${e.id}`) as number;
@@ -2922,6 +3180,13 @@ export function WhiteboardPage({
 
       if (locked) return;
 
+      if (activeTool === 'comment') {
+        setCommentAnchor(worldPoint);
+        setShowComments(true);
+        selectTool('select');
+        return;
+      }
+
       if (activeTool === 'eraser') {
         // Clicking an element with the eraser deletes under the cursor;
         // the swipe continues on the canvas (see handleCanvasPointerMove).
@@ -2945,10 +3210,18 @@ export function WhiteboardPage({
 
       let memberIds = [elementId];
       if (groupId) {
-        const groupNodeIds = nodes.filter((n) => n.groupId === groupId).map((n) => n.id);
-        const groupArrowIds = arrows.filter((a) => a.groupId === groupId).map((a) => a.id);
-        const groupStrokeIds = strokes.filter((s) => s.groupId === groupId).map((s) => s.id);
-        memberIds = Array.from(new Set([...groupNodeIds, ...groupArrowIds, ...groupStrokeIds]));
+        const groupNodeIds = nodes
+          .filter((n) => n.groupId === groupId)
+          .map((n) => n.id);
+        const groupArrowIds = arrows
+          .filter((a) => a.groupId === groupId)
+          .map((a) => a.id);
+        const groupStrokeIds = strokes
+          .filter((s) => s.groupId === groupId)
+          .map((s) => s.id);
+        memberIds = Array.from(
+          new Set([...groupNodeIds, ...groupArrowIds, ...groupStrokeIds]),
+        );
       }
 
       let nextSelected: string[];
@@ -2958,7 +3231,9 @@ export function WhiteboardPage({
           ? selectedIds.filter((id) => !memberIds.includes(id))
           : [...selectedIds, ...memberIds];
       } else {
-        const alreadySelected = memberIds.every((id) => selectedIds.includes(id));
+        const alreadySelected = memberIds.every((id) =>
+          selectedIds.includes(id),
+        );
         nextSelected = alreadySelected ? selectedIds : memberIds;
       }
       setSelectedIds(nextSelected);
@@ -3019,6 +3294,7 @@ export function WhiteboardPage({
       eraseAtPoint,
       locked,
       nodes,
+      selectTool,
       selectedIds,
       strokes,
     ],
@@ -3101,6 +3377,12 @@ export function WhiteboardPage({
         cameraRef.current,
         canvasViewport,
       );
+      if (activeTool === 'comment') {
+        setCommentAnchor(worldPoint);
+        setShowComments(true);
+        selectTool('select');
+        return;
+      }
       if (activeTool === 'eraser') {
         beginGesture();
         eraseAtPoint(worldPoint);
@@ -3134,7 +3416,15 @@ export function WhiteboardPage({
       }
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [activeColor, activeTool, canvasViewport, beginGesture, eraseAtPoint, locked],
+    [
+      activeColor,
+      activeTool,
+      beginGesture,
+      canvasViewport,
+      eraseAtPoint,
+      locked,
+      selectTool,
+    ],
   );
 
   const handleCanvasPointerMove = useCallback(
@@ -3826,7 +4116,14 @@ export function WhiteboardPage({
         setStrokes((current) =>
           current.map((stroke) =>
             stroke.id === `draft-${interaction.pointerId}`
-              ? { ...stroke, id: committedId, points, brushSize, thinning, z: committedZ }
+              ? {
+                  ...stroke,
+                  id: committedId,
+                  points,
+                  brushSize,
+                  thinning,
+                  z: committedZ,
+                }
               : stroke,
           ),
         );
@@ -3839,7 +4136,14 @@ export function WhiteboardPage({
           ...live,
           strokes: live.strokes.map((stroke) =>
             stroke.id === `draft-${interaction.pointerId}`
-              ? { ...stroke, id: committedId, points, brushSize, thinning, z: committedZ }
+              ? {
+                  ...stroke,
+                  id: committedId,
+                  points,
+                  brushSize,
+                  thinning,
+                  z: committedZ,
+                }
               : stroke,
           ),
         });
@@ -4194,13 +4498,22 @@ export function WhiteboardPage({
   );
 
   const exportAsJSON = useCallback(() => {
-    const data = { nodes, arrows, strokes, camera };
+    const data = {
+      kind: 'eunoia-board',
+      version: 1,
+      nodes,
+      arrows,
+      strokes,
+      comments,
+      camera,
+      code,
+    };
     downloadBlob(
       new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
       `${boardFileSlug(boardTitle)}-board.json`,
     );
     setExportMenuOpen(false);
-  }, [arrows, boardTitle, camera, nodes, strokes]);
+  }, [arrows, boardTitle, camera, code, comments, nodes, strokes]);
 
   const exportAsSVG = useCallback(async () => {
     if (exportBusy) return;
@@ -4372,6 +4685,7 @@ export function WhiteboardPage({
         nodes,
         arrows,
         strokes,
+        comments,
         camera,
         svgString,
         pngBlob,
@@ -4391,6 +4705,7 @@ export function WhiteboardPage({
     arrows,
     boardTitle,
     camera,
+    comments,
     exportBusy,
     exportTicket,
     nodes,
@@ -4639,6 +4954,10 @@ export function WhiteboardPage({
             break;
           case 'n':
             selectTool('note');
+            break;
+          case 'c':
+            selectTool('comment');
+            setShowComments(true);
             break;
           case '?':
             setShowShortcuts((prev) => !prev);
@@ -5223,10 +5542,7 @@ export function WhiteboardPage({
         setBoardError(
           'Prompt blocked by AI guardrails (suspected prompt injection). Rephrase as a diagram description.',
         );
-      } else if (
-        error instanceof ApiError &&
-        error.code === 'JEV_LOW_INTENT'
-      ) {
+      } else if (error instanceof ApiError && error.code === 'JEV_LOW_INTENT') {
         setBoardError(
           'That does not look like a diagram request. Describe nodes and connections.',
         );
@@ -5281,10 +5597,7 @@ export function WhiteboardPage({
         setBoardError(
           'Prompt blocked by AI guardrails (suspected prompt injection).',
         );
-      } else if (
-        error instanceof ApiError &&
-        error.code === 'JEV_LOW_INTENT'
-      ) {
+      } else if (error instanceof ApiError && error.code === 'JEV_LOW_INTENT') {
         setBoardError(
           'That does not look like a diagram request. Describe nodes and connections.',
         );
@@ -5577,11 +5890,12 @@ export function WhiteboardPage({
             className="share-button"
             type="button"
             title="Toggle comments"
-            aria-label="Toggle comments"
+            aria-label={`Toggle comments${mentionCount > 0 ? ` (${mentionCount} mentions)` : ''}`}
             aria-pressed={showComments}
             onClick={() => setShowComments((value) => !value)}
           >
-            Comments
+            <MessageCircle size={15} />
+            Comments{mentionCount > 0 ? ` · ${mentionCount}` : ''}
           </button>
           {peers.length > 0 ? (
             <select
@@ -6207,6 +6521,16 @@ export function WhiteboardPage({
             >
               <Hand size={18} />
             </ToolButton>
+            <ToolButton
+              label="Comment (C)"
+              active={activeTool === 'comment'}
+              onClick={() => {
+                selectTool('comment');
+                setShowComments(true);
+              }}
+            >
+              <MessageCircle size={18} />
+            </ToolButton>
             <span className="toolbar-rule" />
             <ToolButton
               label="Sticky note"
@@ -6350,6 +6674,16 @@ export function WhiteboardPage({
               onClick={() => selectTool('hand')}
             >
               <Hand size={17} />
+            </ToolButton>
+            <ToolButton
+              label="Comment (C)"
+              active={activeTool === 'comment'}
+              onClick={() => {
+                selectTool('comment');
+                setShowComments(true);
+              }}
+            >
+              <MessageCircle size={17} />
             </ToolButton>
             <ToolButton
               label="Sticky note"
@@ -6622,7 +6956,12 @@ export function WhiteboardPage({
                   height={gridSize}
                   patternUnits="userSpaceOnUse"
                 >
-                  <circle className="canvas-grid" cx={gridSize / 2} cy={gridSize / 2} r="1" />
+                  <circle
+                    className="canvas-grid"
+                    cx={gridSize / 2}
+                    cy={gridSize / 2}
+                    r="1"
+                  />
                 </pattern>
                 <pattern
                   id="lineGrid"
@@ -6780,6 +7119,72 @@ export function WhiteboardPage({
                   })()}
               </g>
               <g className="canvas-interactive" data-interactive>
+                {rootComments.map((comment, index) => {
+                  const radius = 14 / camera.zoom;
+                  return (
+                    <g
+                      key={comment.id}
+                      transform={`translate(${comment.x} ${comment.y})`}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Comment ${index + 1}: ${comment.body}`}
+                      style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        event.preventDefault();
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        focusComment(comment);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          focusComment(comment);
+                        }
+                      }}
+                    >
+                      <circle
+                        r={radius}
+                        fill="#5b54c7"
+                        stroke="#ffffff"
+                        strokeWidth={2 / camera.zoom}
+                        filter="url(#softShadow)"
+                      />
+                      <text
+                        x="0"
+                        y={4 / camera.zoom}
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize={11 / camera.zoom}
+                        fontWeight="700"
+                        pointerEvents="none"
+                      >
+                        {index + 1}
+                      </text>
+                      <title>{comment.body}</title>
+                    </g>
+                  );
+                })}
+                {commentAnchor ? (
+                  <g pointerEvents="none">
+                    <circle
+                      cx={commentAnchor.x}
+                      cy={commentAnchor.y}
+                      r={18 / camera.zoom}
+                      fill="rgba(91, 84, 199, 0.12)"
+                      stroke="#5b54c7"
+                      strokeWidth={2 / camera.zoom}
+                      strokeDasharray={`${5 / camera.zoom} ${4 / camera.zoom}`}
+                    />
+                    <circle
+                      cx={commentAnchor.x}
+                      cy={commentAnchor.y}
+                      r={4 / camera.zoom}
+                      fill="#5b54c7"
+                    />
+                  </g>
+                ) : null}
                 {selectedNodeBounds && !locked && (
                   <>
                     <rect
@@ -7018,7 +7423,10 @@ export function WhiteboardPage({
                     activeEditingNode.width * camera.zoom,
                     120,
                   ),
-                  minHeight: Math.max(activeEditingNode.height * camera.zoom, 36),
+                  minHeight: Math.max(
+                    activeEditingNode.height * camera.zoom,
+                    36,
+                  ),
                   fontSize: Math.max(13 * camera.zoom, 12),
                   fontFamily:
                     activeEditingNode.shape === 'note'
@@ -7290,16 +7698,19 @@ export function WhiteboardPage({
           }}
         >
           <CommentsPanel
-            roomId={roomId}
-            author={session?.user.name ?? session?.user.email ?? 'Anonymous'}
-            onFocus={(comment) => {
-              const viewport = canvasViewportRef.current;
-              setCamera((current) => ({
-                ...current,
-                x: comment.x - viewport.width / 2 / current.zoom,
-                y: comment.y - viewport.height / 2 / current.zoom,
-              }));
+            comments={comments}
+            authorId={commentAuthorId}
+            anchor={commentAnchor}
+            mentionCount={mentionCount}
+            onAdd={addComment}
+            onUpdate={updateComment}
+            onDelete={deleteComment}
+            onFocus={focusComment}
+            onPlacePin={() => {
+              selectTool('comment');
+              setCommentAnchor(null);
             }}
+            onCancelAnchor={() => setCommentAnchor(null)}
           />
         </div>
       ) : null}
