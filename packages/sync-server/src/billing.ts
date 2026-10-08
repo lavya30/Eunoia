@@ -333,10 +333,16 @@ export async function handleBillingWebhook(
   }
 
   // 4. Resolve the user: subscription notes first (stamped at creation),
-  // then the stored customer mapping as fallback.
+  // then the stored customer mapping, then subscription id as fallback.
   let userId = event.userId;
   if (!userId && event.customerId) {
     const mapped = await subscriptionStore.findByCustomerId(event.customerId);
+    userId = mapped?.userId;
+  }
+  if (!userId && event.subscriptionId) {
+    const mapped = await subscriptionStore.findByProviderSubId(
+      event.subscriptionId,
+    );
     userId = mapped?.userId;
   }
   if (!userId) {

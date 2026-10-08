@@ -2401,9 +2401,16 @@ export function createApiApp(
           return validationError(parsed.error);
         }
         if (parsed.data.workspaceId) {
+          if (!deps.workspaces) {
+            set.status = 503;
+            return {
+              error: 'Workspaces are not configured',
+              code: 'WORKSPACES_NOT_CONFIGURED',
+            };
+          }
           // Workspace rooms: any membership (or ownership) may list.
           const roleAccess = await requireWorkspaceRole(
-            deps.workspaces as WorkspaceStore,
+            deps.workspaces,
             users,
             parsed.data.workspaceId,
             headers as Record<string, string | undefined>,
@@ -2411,13 +2418,6 @@ export function createApiApp(
             'VIEWER',
           );
           if ('body' in roleAccess) {
-            if (!deps.workspaces) {
-              set.status = 503;
-              return {
-                error: 'Workspaces are not configured',
-                code: 'WORKSPACES_NOT_CONFIGURED',
-              };
-            }
             set.status = roleAccess.status;
             return roleAccess.body;
           }
@@ -2558,12 +2558,24 @@ export function createApiApp(
               }
             }
           }
-          if (
-            parsed.data.folderId !== undefined &&
-            parsed.data.folderId !== null
-          ) {
-            const folder = await workspaces.getFolder(parsed.data.folderId);
-            const targetWs = parsed.data.workspaceId ?? room.workspaceId;
+          const targetWs =
+            parsed.data.workspaceId !== undefined
+              ? parsed.data.workspaceId
+              : room.workspaceId;
+          // Moving rooms across workspaces clears old folder unless a new folder
+          // belonging to the target workspace is explicitly provided.
+          const folderId =
+            targetWs === null
+              ? null
+              : parsed.data.folderId !== undefined
+                ? parsed.data.folderId
+                : parsed.data.workspaceId !== undefined &&
+                    parsed.data.workspaceId !== room.workspaceId
+                  ? null
+                  : room.folderId;
+
+          if (folderId !== null && folderId !== undefined) {
+            const folder = await workspaces.getFolder(folderId);
             if (!folder || folder.workspaceId !== targetWs) {
               set.status = 400;
               return {
@@ -2573,13 +2585,8 @@ export function createApiApp(
             }
           }
           const updated = await manager.updateRoom(room.id, {
-            workspaceId: parsed.data.workspaceId,
-            // Clearing the workspace also clears the folder; moving rooms
-            // keep their folder only when it belongs to the target.
-            folderId:
-              parsed.data.workspaceId === null
-                ? null
-                : (parsed.data.folderId ?? room.folderId),
+            workspaceId: targetWs,
+            folderId,
           });
           if (!updated) {
             set.status = 404;

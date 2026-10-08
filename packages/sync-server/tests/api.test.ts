@@ -1478,4 +1478,46 @@ describePg('Prisma store safety', () => {
       await prisma.$disconnect();
     }
   });
+
+  test('PrismaBillingStore lookups by userId and providerSubId', async () => {
+    const { PrismaClient } = await import('@prisma/client');
+    const { PrismaSubscriptionStore } = await import('../src/billing-store.js');
+    const prisma = new PrismaClient({ datasources: { db: { url: pgUrl } } });
+    try {
+      const billingStore = new PrismaSubscriptionStore(prisma);
+      const testUserId = `pg-user-${Date.now()}`;
+      const subId = `pg-sub-${Date.now()}`;
+
+      await prisma.user.create({
+        data: {
+          id: testUserId,
+          email: `${testUserId}@example.com`,
+          tier: 'COMMUNITY',
+        },
+      });
+
+      const upserted = await billingStore.upsertByUserId({
+        userId: testUserId,
+        provider: 'razorpay',
+        customerId: `cus-${testUserId}`,
+        providerSubId: subId,
+        status: 'active',
+        priceKey: 'pro',
+        seats: 2,
+      });
+      expect(upserted.userId).toBe(testUserId);
+
+      const byUser = await billingStore.findByUserId(testUserId);
+      expect(byUser?.providerSubId).toBe(subId);
+
+      const bySub = await billingStore.findByProviderSubId(subId);
+      expect(bySub?.userId).toBe(testUserId);
+      expect(bySub?.customerId).toBe(`cus-${testUserId}`);
+
+      await prisma.subscription.deleteMany({ where: { userId: testUserId } });
+      await prisma.user.delete({ where: { id: testUserId } });
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
 });

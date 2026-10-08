@@ -32,6 +32,9 @@ export interface SubscriptionStore {
   upsertByUserId(input: UpsertSubscription): Promise<SubscriptionRecord>;
   findByUserId(userId: string): Promise<SubscriptionRecord | null>;
   findByCustomerId(customerId: string): Promise<SubscriptionRecord | null>;
+  findByProviderSubId(
+    providerSubId: string,
+  ): Promise<SubscriptionRecord | null>;
 }
 
 /* ── Billing Events (webhook idempotency) ────────────────────── */
@@ -46,6 +49,7 @@ export interface BillingEventStore {
 export class MemorySubscriptionStore implements SubscriptionStore {
   private readonly byUserId = new Map<string, SubscriptionRecord>();
   private readonly byCustomerId = new Map<string, string>();
+  private readonly byProviderSubId = new Map<string, string>();
 
   async upsertByUserId(input: UpsertSubscription): Promise<SubscriptionRecord> {
     const now = new Date();
@@ -66,6 +70,8 @@ export class MemorySubscriptionStore implements SubscriptionStore {
     this.byUserId.set(input.userId, record);
     if (record.customerId)
       this.byCustomerId.set(record.customerId, input.userId);
+    if (record.providerSubId)
+      this.byProviderSubId.set(record.providerSubId, input.userId);
     return record;
   }
 
@@ -77,6 +83,13 @@ export class MemorySubscriptionStore implements SubscriptionStore {
     customerId: string,
   ): Promise<SubscriptionRecord | null> {
     const userId = this.byCustomerId.get(customerId);
+    return userId ? (this.byUserId.get(userId) ?? null) : null;
+  }
+
+  async findByProviderSubId(
+    providerSubId: string,
+  ): Promise<SubscriptionRecord | null> {
+    const userId = this.byProviderSubId.get(providerSubId);
     return userId ? (this.byUserId.get(userId) ?? null) : null;
   }
 }
@@ -140,6 +153,15 @@ export class PrismaSubscriptionStore implements SubscriptionStore {
   ): Promise<SubscriptionRecord | null> {
     const row = await this.prisma.subscription.findFirst({
       where: { customerId },
+    });
+    return row ? toSubscriptionRecord(row) : null;
+  }
+
+  async findByProviderSubId(
+    providerSubId: string,
+  ): Promise<SubscriptionRecord | null> {
+    const row = await this.prisma.subscription.findFirst({
+      where: { providerSubId },
     });
     return row ? toSubscriptionRecord(row) : null;
   }

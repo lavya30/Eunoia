@@ -28,6 +28,7 @@ import {
   Download,
   Ellipsis,
   Eraser,
+  FileCode,
   Grid,
   Hand,
   Image as ImageIcon,
@@ -203,12 +204,10 @@ import {
   getFrameCamera,
   getContainedElements,
 } from '@/lib/whiteboard/frames';
-import {
-  pruneLaserPoints,
-  type LaserPoint,
-} from '@/lib/whiteboard/laser';
+import { pruneLaserPoints, type LaserPoint } from '@/lib/whiteboard/laser';
 import { LaserOverlay, type RemoteLaserPeer } from './LaserOverlay';
 import { PresenterHud } from './PresenterHud';
+import { canvasToD2 } from '@/lib/whiteboard/canvas-to-d2';
 import './board.css';
 
 type ToolId =
@@ -1316,7 +1315,9 @@ export function WhiteboardPage({
   // Laser pointer state
   const [localLaserPoints, setLocalLaserPoints] = useState<LaserPoint[]>([]);
   const remoteLasersRef = useRef<Map<number, LaserPoint[]>>(new Map());
-  const [remoteLaserPeers, setRemoteLaserPeers] = useState<RemoteLaserPeer[]>([]);
+  const [remoteLaserPeers, setRemoteLaserPeers] = useState<RemoteLaserPeer[]>(
+    [],
+  );
 
   // Ingest remote laser points from peers telemetry into ref (without triggering cascading re-renders)
   useEffect(() => {
@@ -1325,7 +1326,10 @@ export function WhiteboardPage({
       if (peer.tool === 'laser' && peer.cursor) {
         const pt = { x: peer.cursor.x, y: peer.cursor.y, time: now };
         const existing = remoteLasersRef.current.get(peer.clientId) ?? [];
-        remoteLasersRef.current.set(peer.clientId, [...existing.slice(-60), pt]);
+        remoteLasersRef.current.set(peer.clientId, [
+          ...existing.slice(-60),
+          pt,
+        ]);
       }
     }
   }, [peers]);
@@ -4554,49 +4558,46 @@ export function WhiteboardPage({
             arrows: [...liveAfterCreate.arrows, createdArrow],
           };
         } else {
-          const shape =
-            isFrameTool
-              ? 'frame'
-              : interaction.tool === 'note'
-                ? 'note'
-                : interaction.tool === 'ellipse'
-                  ? 'ellipse'
-                  : interaction.tool === 'diamond'
-                    ? 'diamond'
-                    : interaction.tool === 'line'
-                      ? 'line'
-                      : interaction.tool === 'text'
-                        ? 'text'
-                        : 'round';
+          const shape = isFrameTool
+            ? 'frame'
+            : interaction.tool === 'note'
+              ? 'note'
+              : interaction.tool === 'ellipse'
+                ? 'ellipse'
+                : interaction.tool === 'diamond'
+                  ? 'diamond'
+                  : interaction.tool === 'line'
+                    ? 'line'
+                    : interaction.tool === 'text'
+                      ? 'text'
+                      : 'round';
           const nextFrameIdx = isFrameTool
             ? presentationFrames.length + 1
             : undefined;
           const node: BoardNode = {
             id: nextId(interaction.tool),
-            label:
-              isFrameTool
-                ? `Slide ${nextFrameIdx}`
-                : interaction.tool === 'note'
-                  ? 'New thought'
-                  : interaction.tool === 'text'
-                    ? 'Text'
-                    : interaction.tool === 'diamond'
-                      ? 'Decision'
-                      : interaction.tool === 'line'
-                        ? ''
-                        : 'New shape',
-            detail:
-              isFrameTool
-                ? ''
-                : interaction.tool === 'note'
-                  ? 'Click twice to refine'
-                  : interaction.tool === 'text'
-                    ? ''
-                    : interaction.tool === 'diamond'
-                      ? 'Yes / no?'
-                      : interaction.tool === 'line'
-                        ? ''
-                        : 'Canvas object',
+            label: isFrameTool
+              ? `Slide ${nextFrameIdx}`
+              : interaction.tool === 'note'
+                ? 'New thought'
+                : interaction.tool === 'text'
+                  ? 'Text'
+                  : interaction.tool === 'diamond'
+                    ? 'Decision'
+                    : interaction.tool === 'line'
+                      ? ''
+                      : 'New shape',
+            detail: isFrameTool
+              ? ''
+              : interaction.tool === 'note'
+                ? 'Click twice to refine'
+                : interaction.tool === 'text'
+                  ? ''
+                  : interaction.tool === 'diamond'
+                    ? 'Yes / no?'
+                    : interaction.tool === 'line'
+                      ? ''
+                      : 'Canvas object',
             x: snapPoint({
               x:
                 interaction.tool === 'text' || isFrameTool
@@ -4619,12 +4620,11 @@ export function WhiteboardPage({
             }).y,
             width,
             height: isLineTool ? Math.min(height, 32) : height,
-            tone:
-              isFrameTool
-                ? 'violet'
-                : interaction.tool === 'note'
-                  ? 'note'
-                  : toneForColor(interaction.color),
+            tone: isFrameTool
+              ? 'violet'
+              : interaction.tool === 'note'
+                ? 'note'
+                : toneForColor(interaction.color),
             shape,
             aspectRatio: isFrameTool ? '16:9' : undefined,
             frameIndex: nextFrameIdx,
@@ -4832,6 +4832,30 @@ export function WhiteboardPage({
     setExportMenuOpen(false);
   }, [arrows, boardTitle, camera, code, comments, nodes, strokes]);
 
+  const exportAsD2 = useCallback(() => {
+    try {
+      const d2Code = canvasToD2(nodes, arrows, {
+        direction: 'auto',
+        includeStyles: true,
+        includeFrames: true,
+        headerComment: true,
+      });
+      if (!d2Code.trim()) {
+        setBoardError('The board has no shapes to export as D2.');
+        return;
+      }
+      downloadBlob(
+        new Blob([d2Code], { type: 'text/plain;charset=utf-8' }),
+        `${boardFileSlug(boardTitle)}.d2`,
+      );
+      setExportMenuOpen(false);
+    } catch (error) {
+      setBoardError(
+        error instanceof Error ? error.message : 'D2 export failed.',
+      );
+    }
+  }, [arrows, boardTitle, nodes]);
+
   const exportAsSVG = useCallback(async () => {
     if (exportBusy) return;
     setExportBusy('svg');
@@ -4976,7 +5000,8 @@ export function WhiteboardPage({
           ),
       });
       setExportProgress('Drawing slide deck PDF…');
-      const { buildPresentationPdf } = await import('@/lib/whiteboard/export/pdf');
+      const { buildPresentationPdf } =
+        await import('@/lib/whiteboard/export/pdf');
       const bytes = await buildPresentationPdf({
         frames: presentationFrames,
         nodes,
@@ -5770,6 +5795,67 @@ export function WhiteboardPage({
     }
     setCompileState('draft');
   }, []);
+
+  const handleGenerateFromCanvas = useCallback(
+    (onlySelection = false) => {
+      const selectedNodeIds =
+        onlySelection && selectedIds.length > 0
+          ? selectedIds.filter((id) => nodes.some((n) => n.id === id))
+          : undefined;
+
+      const generatedD2 = canvasToD2(nodes, arrows, {
+        selectedNodeIds:
+          selectedNodeIds && selectedNodeIds.length > 0
+            ? selectedNodeIds
+            : undefined,
+        direction: 'auto',
+        includeStyles: true,
+        includeFrames: true,
+      });
+
+      if (!generatedD2.trim()) {
+        setBoardError('No shapes on canvas to generate D2 code from.');
+        return;
+      }
+
+      handleCodeChange(generatedD2);
+      setShowCode(true);
+    },
+    [arrows, handleCodeChange, nodes, selectedIds],
+  );
+
+  const handleCopySelectionAsD2 = useCallback(async () => {
+    try {
+      const selectedNodeIds =
+        selectedIds.length > 0
+          ? selectedIds.filter((id) => nodes.some((n) => n.id === id))
+          : undefined;
+
+      const generatedD2 = canvasToD2(nodes, arrows, {
+        selectedNodeIds:
+          selectedNodeIds && selectedNodeIds.length > 0
+            ? selectedNodeIds
+            : undefined,
+        direction: 'auto',
+        includeStyles: true,
+        includeFrames: true,
+      });
+
+      if (!generatedD2.trim()) {
+        setBoardError('No shapes selected to generate D2 code from.');
+        return;
+      }
+
+      await navigator.clipboard.writeText(generatedD2);
+      setCopied(true);
+      if (copiedTimerRef.current !== null) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+      copiedTimerRef.current = window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setBoardError('Could not copy D2 code to clipboard.');
+    }
+  }, [arrows, nodes, selectedIds]);
 
   const compileCode = useCallback(async () => {
     const serverUrl = resolveSyncHttpUrl();
@@ -6689,6 +6775,32 @@ export function WhiteboardPage({
                 >
                   <Download size={15} /> Export as JSON
                 </button>
+                <button
+                  type="button"
+                  onClick={exportAsD2}
+                  disabled={exportBusy !== null}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 14px',
+                    border: 0,
+                    background: 'transparent',
+                    cursor: exportBusy ? 'wait' : 'pointer',
+                    fontSize: 13,
+                    color: '#35374a',
+                    opacity: exportBusy ? 0.5 : 1,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = '#f5f4fa')
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = 'transparent')
+                  }
+                >
+                  <FileCode size={15} /> Export as D2 (.d2)
+                </button>
                 <div
                   style={{
                     height: 1,
@@ -6796,7 +6908,8 @@ export function WhiteboardPage({
                       (e.currentTarget.style.background = 'transparent')
                     }
                   >
-                    <Download size={15} /> Export {presentationFrames.length} Slides PDF
+                    <Download size={15} /> Export {presentationFrames.length}{' '}
+                    Slides PDF
                     <span
                       style={{
                         marginLeft: 'auto',
@@ -6807,7 +6920,9 @@ export function WhiteboardPage({
                         background: isProTier(roomMeta?.tier)
                           ? '#ede9ff'
                           : '#f1f0f6',
-                        color: isProTier(roomMeta?.tier) ? '#5b54c7' : '#8a8ca3',
+                        color: isProTier(roomMeta?.tier)
+                          ? '#5b54c7'
+                          : '#8a8ca3',
                       }}
                     >
                       PRO
@@ -7383,6 +7498,7 @@ export function WhiteboardPage({
               onUngroupSelected={ungroupSelected}
               onDeleteSelected={deleteSelected}
               onDuplicateSelected={duplicateSelected}
+              onCopyAsD2={handleCopySelectionAsD2}
             />
           ) : (
             <button
@@ -8241,6 +8357,11 @@ export function WhiteboardPage({
             jevWarnings={jevWarnings}
             onGenerate={() => void generateWithAi()}
             onSuggestLayout={() => void suggestLayoutWithAi()}
+            onGenerateFromCanvas={handleGenerateFromCanvas}
+            canvasNodeCount={nodes.length}
+            selectedNodeCount={
+              selectedIds.filter((id) => nodes.some((n) => n.id === id)).length
+            }
           />
         )}
       </main>

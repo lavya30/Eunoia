@@ -502,4 +502,104 @@ describe('workspace HTTP API', () => {
     });
     expect(ok.status).toBe(204);
   });
+
+  test('moving room between workspaces clears old folder and enforces folder ownership', async () => {
+    const user = await register('mover@test.com');
+    const { workspace: ws1 } = await createWorkspace(user.token, 'Workspace 1');
+    const { workspace: ws2 } = await createWorkspace(user.token, 'Workspace 2');
+
+    // Create a folder in workspace 1
+    const folderRes = await fetch(
+      `${baseUrl}/api/workspaces/${ws1.id}/folders`,
+      {
+        method: 'POST',
+        headers: auth(user.token),
+        body: JSON.stringify({ name: 'Folder 1' }),
+      },
+    );
+    expect(folderRes.status).toBe(201);
+    const { folder } = (await folderRes.json()) as {
+      folder: { id: string };
+    };
+
+    // Create a room in workspace 1 and assign it to folder 1
+    const roomRes = await fetch(`${baseUrl}/api/rooms`, {
+      method: 'POST',
+      headers: auth(user.token),
+      body: JSON.stringify({ name: 'Room in WS1', workspaceId: ws1.id }),
+    });
+    expect(roomRes.status).toBe(201);
+    const room = (await roomRes.json()) as { id: string };
+
+    const moveIntoFolder = await fetch(`${baseUrl}/api/rooms/${room.id}/move`, {
+      method: 'POST',
+      headers: auth(user.token),
+      body: JSON.stringify({ workspaceId: ws1.id, folderId: folder.id }),
+    });
+    expect(moveIntoFolder.status).toBe(200);
+    const inFolder = (await moveIntoFolder.json()) as { folderId: string };
+    expect(inFolder.folderId).toBe(folder.id);
+
+    // Attempting to move room to workspace 2 while passing folder from workspace 1 fails
+    const invalidMove = await fetch(`${baseUrl}/api/rooms/${room.id}/move`, {
+      method: 'POST',
+      headers: auth(user.token),
+      body: JSON.stringify({ workspaceId: ws2.id, folderId: folder.id }),
+    });
+    expect(invalidMove.status).toBe(400);
+    const invalidErr = (await invalidMove.json()) as { code: string };
+    expect(invalidErr.code).toBe('INVALID_FOLDER');
+
+    // Moving room to workspace 2 without specifying folder clears the old folder
+    const validMove = await fetch(`${baseUrl}/api/rooms/${room.id}/move`, {
+      method: 'POST',
+      headers: auth(user.token),
+      body: JSON.stringify({ workspaceId: ws2.id }),
+    });
+    expect(validMove.status).toBe(200);
+    const moved = (await validMove.json()) as {
+      workspaceId: string;
+      folderId: string | null;
+    };
+    expect(moved.workspaceId).toBe(ws2.id);
+    expect(moved.folderId).toBeNull();
+  });
+
+  test('listing workspace rooms without configured workspaces returns 503', async () => {
+    const unconfigured = createSyncServer(
+      testConfig(),
+      new MemorySnapshotStore(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      null, // No workspaces
+    );
+    await new Promise<void>((resolve) =>
+      unconfigured.server.listen(0, resolve),
+    );
+    const port = (unconfigured.server.address() as { port: number }).port;
+    const addr = `http://127.0.0.1:${port}`;
+
+    try {
+      const reg = await fetch(`${addr}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'noworkspaces@test.com',
+          password: 'password123',
+        }),
+      });
+      const { token } = (await reg.json()) as { token: string };
+
+      const res = await fetch(`${addr}/api/rooms?workspaceId=some-ws`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(503);
+      const json = (await res.json()) as { code: string };
+      expect(json.code).toBe('WORKSPACES_NOT_CONFIGURED');
+    } finally {
+      await unconfigured.close();
+    }
+  });
 });

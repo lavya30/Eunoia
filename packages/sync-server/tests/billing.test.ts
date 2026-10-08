@@ -95,10 +95,11 @@ function subscriptionEntity(
 
 describe('Billing Unit & Integration Tests', () => {
   describe('MemoryBillingStore & MemoryBillingEventStore', () => {
-    test('creates and retrieves subscriptions by userId', async () => {
+    test('creates and retrieves subscriptions by userId and providerSubId', async () => {
       const store = new MemoryBillingStore();
       const existing = await store.findByUserId('user_1');
       expect(existing).toBeNull();
+      expect(await store.findByProviderSubId('sub_123')).toBeNull();
 
       const created = await store.upsertByUserId({
         userId: 'user_1',
@@ -117,6 +118,11 @@ describe('Billing Unit & Integration Tests', () => {
       const fetched = await store.findByUserId('user_1');
       expect(fetched).not.toBeNull();
       expect(fetched?.customerId).toBe('cus_123');
+
+      const fetchedBySub = await store.findByProviderSubId('sub_123');
+      expect(fetchedBySub).not.toBeNull();
+      expect(fetchedBySub?.userId).toBe('user_1');
+      expect(fetchedBySub?.providerSubId).toBe('sub_123');
     });
 
     test('enforces event idempotency', async () => {
@@ -280,6 +286,38 @@ describe('Billing Unit & Integration Tests', () => {
       const { body, signature } = razorpayEnvelope(
         'subscription.charged',
         subscriptionEntity({ customer_id: 'cus_mapped', notes: {} }),
+      );
+      const result = await handleBillingWebhook(body, signature, deps);
+
+      expect(result.status).toBe(200);
+      expect(result.body.action).toBe('upgraded');
+      expect((await userStore.findById(user.id))?.tier).toBe('PRO');
+    });
+
+    test('resolves users via stored providerSubId fallback', async () => {
+      const user = await userStore.createUser({
+        email: 'subfallback@example.com',
+        passwordHash: 'hash',
+      });
+      if (!user) throw new Error('test user was not created');
+      await subscriptionStore.upsertByUserId({
+        userId: user.id,
+        provider: 'razorpay',
+        customerId: 'cus_unknown',
+        providerSubId: 'sub_fallback_99',
+        status: 'pending',
+        priceKey: 'pro',
+        seats: 1,
+      });
+
+      // No notes.userId and customer_id is unmapped, but subscription id matches
+      const { body, signature } = razorpayEnvelope(
+        'subscription.charged',
+        subscriptionEntity({
+          id: 'sub_fallback_99',
+          customer_id: 'cus_unrelated',
+          notes: {},
+        }),
       );
       const result = await handleBillingWebhook(body, signature, deps);
 

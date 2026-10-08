@@ -1,6 +1,7 @@
 'use client';
 
-import { Code2, PanelRight, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import { Check, Code2, Copy, Layers, PanelRight, Sparkles } from 'lucide-react';
 import { D2Editor } from '@/components/editor';
 import type { D2Diagnostic } from '@/lib/whiteboard/d2-diagnostics';
 
@@ -20,6 +21,9 @@ type D2PanelProps = {
   jevWarnings?: string[];
   onGenerate: () => void;
   onSuggestLayout: () => void;
+  onGenerateFromCanvas?: (onlySelection?: boolean) => void;
+  canvasNodeCount?: number;
+  selectedNodeCount?: number;
 };
 
 /**
@@ -42,7 +46,22 @@ export function D2Panel({
   jevWarnings = [],
   onGenerate,
   onSuggestLayout,
+  onGenerateFromCanvas,
+  canvasNodeCount = 0,
+  selectedNodeCount = 0,
 }: D2PanelProps) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyCode = async () => {
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback or ignore
+    }
+  };
   return (
     <aside className="code-panel" aria-label="D2 code editor">
       <div className="code-panel-header">
@@ -88,6 +107,89 @@ export function D2Panel({
             line {diagnostics[0].line}
           </span>
         ) : null}
+        <button
+          type="button"
+          onClick={handleCopyCode}
+          disabled={!code.trim()}
+          title="Copy D2 source code to clipboard"
+          style={{
+            marginLeft: 'auto',
+            background: 'transparent',
+            border: 0,
+            cursor: code.trim() ? 'pointer' : 'default',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: 11,
+            color: copied ? '#10b981' : '#6b6e86',
+            padding: '2px 6px',
+            borderRadius: 4,
+          }}
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          <span>{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
+      <div
+        className="code-canvas-sync-row"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '6px 12px',
+          background: '#f8f8fc',
+          borderBottom: '1px solid #eeedf2',
+          fontSize: 12,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            color: '#656880',
+          }}
+        >
+          <Layers size={13} style={{ color: '#5b54c7' }} />
+          <span>
+            {canvasNodeCount > 0
+              ? `${canvasNodeCount} canvas shape${canvasNodeCount === 1 ? '' : 's'}${
+                  selectedNodeCount > 0
+                    ? ` (${selectedNodeCount} selected)`
+                    : ''
+                }`
+              : 'Canvas is empty'}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {selectedNodeCount > 0 ? (
+            <button
+              type="button"
+              className="compile-button"
+              style={{
+                padding: '3px 8px',
+                fontSize: 11,
+                background: '#fff',
+                color: '#5b54c7',
+                border: '1px solid #dcd9f6',
+              }}
+              onClick={() => onGenerateFromCanvas?.(true)}
+              title="Generate D2 code from selected shapes only"
+            >
+              Sync selection ({selectedNodeCount})
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="compile-button"
+            style={{ padding: '3px 8px', fontSize: 11 }}
+            disabled={canvasNodeCount === 0}
+            onClick={() => onGenerateFromCanvas?.(false)}
+            title="Convert canvas shapes, frames, and arrows into D2 code"
+          >
+            Sync from canvas
+          </button>
+        </div>
       </div>
       <form
         className="code-ai-row"

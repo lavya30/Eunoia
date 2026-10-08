@@ -268,9 +268,22 @@ export class PrismaUserStore implements UserStore {
     const email = normalizeEmail(identity.email);
     let user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) {
-      user = await this.prisma.user.create({
-        data: { email, name: identity.name ?? undefined },
-      });
+      try {
+        user = await this.prisma.user.create({
+          data: { email, name: identity.name ?? undefined },
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          'code' in error &&
+          (error as { code?: string }).code === 'P2002'
+        ) {
+          user = await this.prisma.user.findUnique({ where: { email } });
+          if (!user) throw error;
+        } else {
+          throw error;
+        }
+      }
     }
     await this.prisma.oAuthAccount.upsert({
       where: {

@@ -9,6 +9,7 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalSpaceBetween,
+  Code2,
   Ellipsis,
   Layers2,
   Minus,
@@ -49,6 +50,7 @@ type StylePanelProps = {
   onUngroupSelected?: () => void;
   onDeleteSelected: () => void;
   onDuplicateSelected: () => void;
+  onCopyAsD2?: () => void;
 };
 
 /**
@@ -86,6 +88,7 @@ export function StylePanel({
   onUngroupSelected,
   onDeleteSelected,
   onDuplicateSelected,
+  onCopyAsD2,
 }: StylePanelProps) {
   const hasSelection = selectionCount > 0;
   const subtitle = !hasSelection
@@ -582,6 +585,27 @@ export function StylePanel({
             >
               Del
             </button>
+            {onCopyAsD2 && (selectedNodeCount ?? 0) > 0 && (
+              <button
+                className="style-choice"
+                type="button"
+                aria-label="Copy selection as D2 code"
+                title="Copy selected shapes as D2 code"
+                onClick={onCopyAsD2}
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  padding: '6px 10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  color: '#5b54c7',
+                }}
+              >
+                <Code2 size={13} />
+                D2
+              </button>
+            )}
           </div>
         </div>
       </fieldset>

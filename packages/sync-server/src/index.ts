@@ -61,7 +61,7 @@ export function createSyncServer(
   userStore?: UserStore,
   healthChecks?: HealthChecks,
   billingDepsOverride?: Partial<BillingDeps>,
-  workspaceStore?: WorkspaceStore,
+  workspaceStore?: WorkspaceStore | null,
 ): SyncServer {
   if (
     config.databaseUrl !== undefined &&
@@ -136,9 +136,13 @@ export function createSyncServer(
           userStore: billingDepsOverride?.userStore ?? users,
         }
       : undefined;
-  const workspaces: WorkspaceStore =
-    workspaceStore ??
-    (prisma ? new PrismaWorkspaceStore(prisma) : new MemoryWorkspaceStore());
+  const workspaces: WorkspaceStore | undefined =
+    workspaceStore === null
+      ? undefined
+      : (workspaceStore ??
+        (prisma
+          ? new PrismaWorkspaceStore(prisma)
+          : new MemoryWorkspaceStore()));
   const aiUsage = prisma
     ? new PrismaAiUsageStore(prisma)
     : new MemoryAiUsageStore();
@@ -237,7 +241,7 @@ export function createSyncServer(
       const userId = verifyUserToken(ticketSecret, userToken);
       if (!userId) return false;
       const room = await manager.getRoomMetadata(targetRoomId);
-      if (!room?.workspaceId) return false;
+      if (!room?.workspaceId || !workspaces) return false;
       const ws = await workspaces.getWorkspace(room.workspaceId);
       if (!ws) return false;
       if (ws.ownerId === userId) return true;

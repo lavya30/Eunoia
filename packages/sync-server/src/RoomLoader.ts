@@ -305,10 +305,13 @@ export class PrismaSnapshotStore implements SnapshotStore {
     ]);
     const keep = new Set<string>();
     if (newest) keep.add(newest.id);
-    for (const row of [...recent, ...inWindow]) keep.add(row.id);
-    await this.prisma.snapshot.deleteMany({
-      where: { roomId, id: { notIn: [...keep] } },
-    });
+    for (const item of recent) keep.add(item.id);
+    for (const item of inWindow) keep.add(item.id);
+    if (keep.size > 0) {
+      await this.prisma.snapshot.deleteMany({
+        where: { roomId, id: { notIn: [...keep] } },
+      });
+    }
   }
 
   async ensureRoom(

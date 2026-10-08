@@ -20,7 +20,7 @@ export class WebSocketHandler {
       id: randomUUID(),
       socket,
       send: (data) => {
-        if (socket.readyState === socket.OPEN) socket.send(data);
+        if (socket.readyState === WebSocket.OPEN) socket.send(data);
       },
     };
     room.addClient(client);
