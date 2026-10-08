@@ -179,6 +179,16 @@ describe('buildSuggestions', () => {
     expect(buildSuggestions({ type: 'none' }, ['web'])).toEqual([]);
   });
 
+  test('icon value position offers architecture stencil ids', () => {
+    const ctx = getCompletionContext(['server: {', '  icon: '], 1, 9);
+    expect(ctx).toEqual({ type: 'icon-value' });
+    const suggestions = buildSuggestions(ctx, []);
+    const labels = suggestions.map((s) => s.label);
+    expect(labels).toContain('aws:s3');
+    expect(labels).toContain('k8s:pod');
+    expect(labels).toContain('database:postgres');
+  });
+
   test('every snippet ships a tabstop template', () => {
     for (const snippet of D2_SNIPPETS) {
       expect(snippet.insertText).toContain('${1:');

@@ -20,6 +20,10 @@ export type BoardNode = {
     | 'line'
     | 'frame';
   href?: string;
+  /** Stencil registry id (e.g. `aws:s3`). Also the D2 `icon:` value. */
+  icon?: string;
+  /** `hero` = centered icon above label; `badge` = small corner icon. */
+  iconLayout?: 'hero' | 'badge';
   /** Server-side image record id (R2 uploads). Used to refresh/delete. */
   imageId?: string;
   stroke?: string;

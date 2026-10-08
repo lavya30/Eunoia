@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
+  Boxes,
   Check,
   ChevronDown,
   Circle,
@@ -60,6 +61,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ChangeEvent as ReactChangeEvent,
@@ -165,6 +167,13 @@ import { RoomSettingsDialog } from './RoomSettingsDialog';
 import { HistoryPanel } from './HistoryPanel';
 import { SearchPalette } from './SearchPalette';
 import { ShortcutsDialog } from './ShortcutsDialog';
+import { StencilsPanel } from './StencilsPanel';
+import {
+  createStencilNode,
+  getStencil,
+  STENCIL_NODE_SIZE,
+  type StencilDefinition,
+} from '@/lib/whiteboard/stencils';
 import { contentBounds } from '@/lib/whiteboard/export/bounds';
 import {
   cloneBoardSvg,
@@ -969,6 +978,14 @@ function sanitizeNode(raw: unknown): BoardNode | null {
       typeof n.frameIndex === 'number' && Number.isFinite(n.frameIndex)
         ? Math.round(n.frameIndex)
         : undefined,
+    icon:
+      typeof n.icon === 'string' && n.icon.length > 0 && n.icon.length <= 80
+        ? n.icon
+        : undefined,
+    iconLayout:
+      n.iconLayout === 'hero' || n.iconLayout === 'badge'
+        ? n.iconLayout
+        : undefined,
   };
 }
 
@@ -1417,6 +1434,7 @@ export function WhiteboardPage({
   const [showSearch, setShowSearch] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [showStencils, setShowStencils] = useState(false);
   const [commentAnchor, setCommentAnchor] = useState<Point | null>(null);
   const [followedPeerId, setFollowedPeerId] = useState<number | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -5337,6 +5355,9 @@ export function WhiteboardPage({
             selectTool('comment');
             setShowComments(true);
             break;
+          case 'i':
+            setShowStencils((prev) => !prev);
+            break;
           case '?':
             setShowShortcuts((prev) => !prev);
             break;
@@ -5403,6 +5424,7 @@ export function WhiteboardPage({
     selectedIds,
     showSearch,
     showShortcuts,
+    showStencils,
     undo,
     ungroupSelected,
   ]);
@@ -5589,6 +5611,74 @@ export function WhiteboardPage({
       pushDiscreteChange,
       roomId,
     ],
+  );
+
+  const handleAddStencil = useCallback(
+    (stencil: StencilDefinition, point?: Point) => {
+      if (locked) return;
+      const targetPoint = point ?? {
+        x: camera.x - STENCIL_NODE_SIZE.width / 2,
+        y: camera.y - STENCIL_NODE_SIZE.height / 2,
+      };
+      const finalPoint =
+        gridMode !== 'none' ? snapPoint(targetPoint, gridSize) : targetPoint;
+      const node = createStencilNode(
+        stencil,
+        nextId('stencil'),
+        finalPoint.x,
+        finalPoint.y,
+      );
+      const before = captureBoardSnapshot();
+      const nextNodes = [...before.nodes, node];
+      setNodes(nextNodes);
+      setSelectedIds([node.id]);
+      setActiveTool('select');
+      setBoardError(null);
+      pushDiscreteChange(before, { ...before, nodes: nextNodes });
+    },
+    [
+      camera.x,
+      camera.y,
+      captureBoardSnapshot,
+      gridMode,
+      gridSize,
+      locked,
+      pushDiscreteChange,
+    ],
+  );
+
+  const handleCanvasDrop = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const raw = event.dataTransfer.getData('application/json');
+      if (!raw) return;
+      try {
+        const payload = JSON.parse(raw) as { type?: string; id?: string };
+        if (payload?.type === 'stencil' && payload.id) {
+          const stencil = getStencil(payload.id);
+          if (stencil && canvasRef.current) {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const screenPoint = {
+              x: event.clientX - rect.left,
+              y: event.clientY - rect.top,
+            };
+            const worldPoint = screenToWorld(
+              screenPoint,
+              camera,
+              canvasViewport,
+            );
+            const dropPoint = {
+              x: worldPoint.x - STENCIL_NODE_SIZE.width / 2,
+              y: worldPoint.y - STENCIL_NODE_SIZE.height / 2,
+            };
+            handleAddStencil(stencil, dropPoint);
+          }
+        }
+      } catch {
+        // Ignore non-stencil drag payloads
+      }
+    },
+    [camera, canvasViewport, handleAddStencil],
   );
 
   // Stored image URLs can be time-limited presigned links. On load failure,
@@ -7004,6 +7094,13 @@ export function WhiteboardPage({
               <LayoutTemplate size={18} />
             </ToolButton>
             <ToolButton
+              label="Architecture stencils (I)"
+              active={showStencils}
+              onClick={() => setShowStencils((prev) => !prev)}
+            >
+              <Boxes size={18} />
+            </ToolButton>
+            <ToolButton
               label="Rectangle"
               active={activeTool === 'rectangle'}
               onClick={() => selectTool('rectangle')}
@@ -7236,6 +7333,13 @@ export function WhiteboardPage({
             <ToolButton label="Add image" onClick={handleAddImage}>
               <ImageIcon size={17} />
             </ToolButton>
+            <ToolButton
+              label="Stencils (I)"
+              active={showStencils}
+              onClick={() => setShowStencils((prev) => !prev)}
+            >
+              <Boxes size={17} />
+            </ToolButton>
             <span className="floating-rule" />
             <button
               className="floating-tool floating-tool--quiet"
@@ -7330,7 +7434,20 @@ export function WhiteboardPage({
             </div>
           </div>
 
-          <div className="canvas-viewport">
+          <div
+            className="canvas-viewport"
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'copy';
+            }}
+            onDrop={handleCanvasDrop}
+          >
+            {showStencils ? (
+              <StencilsPanel
+                onSelect={(stencil) => handleAddStencil(stencil)}
+                onClose={() => setShowStencils(false)}
+              />
+            ) : null}
             {showHistory && roomId ? (
               <HistoryPanel
                 key={roomId}

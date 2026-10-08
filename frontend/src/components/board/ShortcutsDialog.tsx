@@ -129,6 +129,14 @@ const SHORTCUTS: ShortcutItem[] = [
     macKeys: ['X'],
     winKeys: ['X'],
   },
+  {
+    id: 'tool-stencils',
+    category: 'tools',
+    title: 'Architecture Stencils',
+    description: 'Open cloud and infrastructure icon library',
+    macKeys: ['I'],
+    winKeys: ['I'],
+  },
 
   // Canvas & View
   {

@@ -6,6 +6,7 @@ import type {
 } from 'react';
 import type { BoardNode } from '@/lib/whiteboard/board-types';
 import { normalizeRotation } from '@/lib/whiteboard/geometry';
+import { getStencil } from '@/lib/whiteboard/stencils';
 import { wrapSvgText } from '@/lib/whiteboard/text-wrap';
 
 type CanvasNodeProps = {
@@ -56,11 +57,18 @@ export function CanvasNode({
     ? `${centerX},${node.y} ${node.x + node.width},${centerY} ${centerX},${node.y + node.height} ${node.x},${centerY}`
     : null;
 
+  const stencil = getStencil(node.icon);
+  const isHero = !!stencil && node.iconLayout !== 'badge' && !isText;
+  const heroIconSize = Math.max(16, Math.min(40, node.height - 56));
+  const textX = isHero ? centerX : node.x + (isText ? 0 : 18);
+
   const fontSize = isText
     ? (node.fontSize ?? Math.max(14, Math.round(node.height * 0.65)))
-    : isNote
-      ? 18
-      : 19;
+    : isHero
+      ? 15
+      : isNote
+        ? 18
+        : 19;
   const paddingX = isText ? 0 : 18;
   const availableWidth = Math.max(20, node.width - paddingX * 2);
   const labelLines = wrapSvgText(node.label, availableWidth, fontSize);
@@ -68,9 +76,11 @@ export function CanvasNode({
   const lineHeight = Math.round(fontSize * 1.25);
   const startY = isText
     ? node.y + Math.round(fontSize * 0.9)
-    : isNote
-      ? node.y + 38
-      : node.y + (labelLines.length > 1 ? 30 : 43);
+    : isHero
+      ? node.y + 10 + heroIconSize + 20
+      : isNote
+        ? node.y + 38
+        : node.y + (labelLines.length > 1 ? 30 : 43);
 
   const detailStartY =
     startY +
@@ -259,11 +269,25 @@ export function CanvasNode({
           style={shapeStyle}
         />
       )}
+      {stencil && !isImage && !isLine && !isFrame && !isText && (
+        <svg
+          className="node-stencil-icon"
+          pointerEvents="none"
+          style={{ opacity: node.opacity ?? 1 }}
+          x={isHero ? centerX - heroIconSize / 2 : node.x + node.width - 32}
+          y={isHero ? node.y + 10 : node.y + 8}
+          width={isHero ? heroIconSize : 22}
+          height={isHero ? heroIconSize : 22}
+          viewBox={stencil.viewBox || '0 0 24 24'}
+          dangerouslySetInnerHTML={{ __html: stencil.body }}
+        />
+      )}
       {!isImage && !isLine && !isFrame && labelLines.length > 0 && (
         <text
           className={`node-label ${isText ? 'node-label--text' : ''}`}
-          x={node.x + (isText ? 0 : 18)}
+          x={textX}
           y={startY}
+          textAnchor={isHero ? 'middle' : undefined}
           style={{
             fontSize: `${fontSize}px`,
           }}
@@ -271,7 +295,7 @@ export function CanvasNode({
           {labelLines.map((line, idx) => (
             <tspan
               key={idx}
-              x={node.x + (isText ? 0 : 18)}
+              x={textX}
               dy={idx === 0 ? 0 : `${lineHeight}px`}
             >
               {line}
@@ -280,9 +304,18 @@ export function CanvasNode({
         </text>
       )}
       {!isText && !isImage && !isLine && !isFrame && detailLines.length > 0 && (
-        <text className="node-detail" x={node.x + 18} y={detailStartY}>
+        <text
+          className="node-detail"
+          x={isHero ? centerX : node.x + 18}
+          y={detailStartY}
+          textAnchor={isHero ? 'middle' : undefined}
+        >
           {detailLines.map((line, idx) => (
-            <tspan key={idx} x={node.x + 18} dy={idx === 0 ? 0 : '14px'}>
+            <tspan
+              key={idx}
+              x={isHero ? centerX : node.x + 18}
+              dy={idx === 0 ? 0 : '14px'}
+            >
               {line}
             </tspan>
           ))}

@@ -9,6 +9,8 @@
  * apart again.
  */
 
+import { STENCILS } from '@/lib/whiteboard/stencils';
+
 export const D2_SHAPES = [
   'rectangle',
   'square',
@@ -212,6 +214,7 @@ export type D2CompletionContext =
   | { type: 'shape-value' }
   | { type: 'direction-value' }
   | { type: 'arrowhead-value' }
+  | { type: 'icon-value' }
   | { type: 'node-ref-value'; keyPath: string }
   | { type: 'key'; parentKey: string | null };
 
@@ -285,6 +288,7 @@ export function getCompletionContext(
     const last = keyPath.split('.').pop() ?? '';
     if (keyPath === 'shape' || last === 'shape') return { type: 'shape-value' };
     if (keyPath === 'direction') return { type: 'direction-value' };
+    if (keyPath === 'icon' || last === 'icon') return { type: 'icon-value' };
     if (last === 'source-arrowhead' || last === 'target-arrowhead') {
       return { type: 'arrowhead-value' };
     }
@@ -447,6 +451,17 @@ function snippetSuggestions(): D2Suggestion[] {
   }));
 }
 
+function iconSuggestions(): D2Suggestion[] {
+  return STENCILS.map((s) => ({
+    label: s.id,
+    kind: 'value' as const,
+    insertText: s.id,
+    detail: `${s.name} (${s.category.toUpperCase()})`,
+    documentation: s.defaultDetail,
+    sortText: `0_${s.category}_${s.name}`,
+  }));
+}
+
 export function buildSuggestions(
   context: D2CompletionContext,
   definedIdentifiers: string[],
@@ -463,6 +478,8 @@ export function buildSuggestions(
       return valueSuggestions(D2_DIRECTIONS, 'D2 Direction');
     case 'arrowhead-value':
       return valueSuggestions(D2_ARROWHEADS, 'D2 Arrowhead');
+    case 'icon-value':
+      return iconSuggestions();
     case 'style-value':
       return propertySuggestions();
     case 'key':

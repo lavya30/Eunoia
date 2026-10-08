@@ -2684,3 +2684,286 @@ path.canvas-grid {
 .eunoia-board-shell--presenting .board-header:hover {
   opacity: 1;
 }
+
+.eunoia-board-shell--presenting .stencils-panel {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Architecture Stencils Library Panel */
+.stencils-panel {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  bottom: 14px;
+  z-index: 40;
+  width: 340px;
+  max-width: calc(100% - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--board-shell);
+  border: 1px solid rgba(128, 126, 160, 0.35);
+  box-shadow: 0 16px 48px rgba(12, 14, 28, 0.45);
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+  animation: stencils-enter 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes stencils-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.stencils-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.stencils-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #f5f4f0;
+}
+
+.stencils-panel-title-icon {
+  color: var(--board-orange);
+}
+
+.stencils-count-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--board-muted-dark);
+}
+
+.stencils-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--board-muted-dark);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.stencils-close-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.stencils-search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.stencils-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--board-muted);
+  pointer-events: none;
+}
+
+.stencils-search-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 30px 0 32px;
+  border-radius: 8px;
+  border: 1px solid var(--board-line);
+  background: rgba(18, 20, 38, 0.6);
+  color: #f5f4f0;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.stencils-search-input:focus {
+  border-color: var(--board-violet);
+}
+
+.stencils-search-clear {
+  position: absolute;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: #f5f4f0;
+  cursor: pointer;
+}
+
+.stencils-categories-row {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.stencils-categories-row::-webkit-scrollbar {
+  display: none;
+}
+
+.stencils-category-pill {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--board-line);
+  background: transparent;
+  color: var(--board-muted-dark);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.stencils-category-pill:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.stencils-category-pill.is-active {
+  background: var(--board-violet);
+  border-color: var(--board-violet);
+  color: #fff;
+}
+
+.stencils-grid-container {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 2px;
+  margin-top: 2px;
+}
+
+.stencils-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.stencil-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(128, 126, 160, 0.2);
+  background: rgba(27, 31, 60, 0.5);
+  color: inherit;
+  cursor: grab;
+  text-align: left;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+
+.stencil-card:hover {
+  background: rgba(42, 47, 83, 0.8);
+  border-color: rgba(128, 126, 160, 0.45);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.stencil-card:active {
+  cursor: grabbing;
+  transform: scale(0.98);
+}
+
+.stencil-icon-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.stencil-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+}
+
+.stencil-card-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f5f4f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stencil-card-detail {
+  font-size: 10px;
+  color: var(--board-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stencils-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+  padding: 36px 16px;
+  color: var(--board-muted);
+  font-size: 13px;
+}
+
+.stencils-reset-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--board-line);
+  background: transparent;
+  color: var(--board-muted-dark);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stencils-reset-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.stencils-panel-footer {
+  padding-top: 6px;
+  border-top: 1px solid rgba(128, 126, 160, 0.2);
+  font-size: 11px;
+  color: var(--board-muted);
+  text-align: center;
+}
+

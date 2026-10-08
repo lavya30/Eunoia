@@ -190,6 +190,7 @@ function adaptNode(
   const height = clamp(asFinite(record.height) ?? 90, 16, 4000);
   const zRaw = asFinite(record.z ?? record.zIndex);
   const href = asString(record.link ?? record.href).slice(0, 2000) || undefined;
+  const icon = asString(record.icon).slice(0, 500) || undefined;
   return {
     key,
     label,
@@ -207,6 +208,7 @@ function adaptNode(
     dashed: strokeDash !== undefined ? strokeDash !== 0 : undefined,
     fontSize,
     href,
+    icon,
     z: zRaw === null ? undefined : Math.round(clamp(zRaw, -100000, 100000)),
   };
 }
@@ -358,6 +360,7 @@ export function reconcileDiagram(
       dashed: adapted.dashed ?? node.dashed,
       fontSize: adapted.fontSize ?? node.fontSize,
       href: adapted.href ?? node.href,
+      icon: adapted.icon ?? node.icon,
       z: adapted.z ?? node.z,
     };
     nextNodes.push(merged);
@@ -384,6 +387,7 @@ export function reconcileDiagram(
       dashed: adapted.dashed,
       fontSize: adapted.fontSize,
       href: adapted.href,
+      icon: adapted.icon,
       z: adapted.z,
     };
     nextNodes.push(created);
