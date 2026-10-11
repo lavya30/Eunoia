@@ -85,7 +85,10 @@ export function isArrowInFrame(arrow: BoardArrow, frame: BoardNode): boolean {
   );
 }
 
-export function isStrokeInFrame(stroke: BoardStroke, frame: BoardNode): boolean {
+export function isStrokeInFrame(
+  stroke: BoardStroke,
+  frame: BoardNode,
+): boolean {
   if (!stroke.points || stroke.points.length === 0) return false;
   const fx2 = frame.x + frame.width;
   const fy2 = frame.y + frame.height;
@@ -114,7 +117,9 @@ export function getContainedElements(
   return {
     nodeIds: nodes.filter((n) => isNodeInFrame(n, frame)).map((n) => n.id),
     arrowIds: arrows.filter((a) => isArrowInFrame(a, frame)).map((a) => a.id),
-    strokeIds: strokes.filter((s) => isStrokeInFrame(s, frame)).map((s) => s.id),
+    strokeIds: strokes
+      .filter((s) => isStrokeInFrame(s, frame))
+      .map((s) => s.id),
   };
 }
 

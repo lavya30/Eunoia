@@ -1,7 +1,17 @@
 'use client';
 
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { BoardArrow, BoardStroke } from '@/lib/whiteboard/board-types';
+import type {
+  BoardArrow,
+  BoardNode,
+  BoardStroke,
+} from '@/lib/whiteboard/board-types';
+import type { Point } from '@/lib/whiteboard/geometry';
+import {
+  detectNodePortDirection,
+  generateOrthogonalWaypoints,
+  nodesToObstacles,
+} from '@/lib/whiteboard/geometry';
 import { arrowPath, inkOutlinePath, smoothPath } from '@/lib/whiteboard/paths';
 
 type ElementPointerHandler = (
@@ -13,6 +23,13 @@ type EndpointHandler = (
   event: ReactPointerEvent<SVGCircleElement>,
   arrowId: string,
   endpoint: 'start' | 'end',
+) => void;
+
+export type WaypointHandler = (
+  event: ReactPointerEvent<SVGRectElement | SVGCircleElement>,
+  arrowId: string,
+  index: number,
+  initialWaypoints: Point[],
 ) => void;
 
 /**
@@ -81,25 +98,64 @@ export function StrokeElement({
 }
 
 /**
- * Connector arrow group with endpoint handles when selected (extracted
- * from WhiteboardPage for unified z-order painting).
+ * Connector arrow group with endpoint and orthogonal waypoint bend handles
+ * when selected.
  */
 export function ArrowElement({
   arrow,
   selected,
   markerId,
   interactiveCursor,
+  nodes,
   onPointerDown,
   onEndpointPointerDown,
+  onWaypointPointerDown,
 }: {
   arrow: BoardArrow;
   selected: boolean;
   markerId: string;
   interactiveCursor: boolean;
+  nodes?: BoardNode[];
   onPointerDown: ElementPointerHandler;
   onEndpointPointerDown: EndpointHandler;
+  onWaypointPointerDown?: WaypointHandler;
 }) {
-  const routedD = arrowPath(arrow);
+  const routedD = arrowPath(arrow, nodes);
+
+  // Determine active orthogonal waypoints for bend-point handles
+  const isOrthogonal = arrow.routing === 'orthogonal';
+  let activeWaypoints: Point[] = [];
+  if (selected && isOrthogonal) {
+    if (arrow.waypoints && arrow.waypoints.length > 0) {
+      activeWaypoints = arrow.waypoints;
+    } else {
+      const obstacles = nodes
+        ? nodesToObstacles(nodes, [
+            arrow.startNodeId ?? '',
+            arrow.endNodeId ?? '',
+          ])
+        : [];
+      let startDirection = undefined;
+      let endDirection = undefined;
+      if (nodes) {
+        if (arrow.startNodeId) {
+          const sNode = nodes.find((n) => n.id === arrow.startNodeId);
+          if (sNode)
+            startDirection = detectNodePortDirection(sNode, arrow.start);
+        }
+        if (arrow.endNodeId) {
+          const eNode = nodes.find((n) => n.id === arrow.endNodeId);
+          if (eNode) endDirection = detectNodePortDirection(eNode, arrow.end);
+        }
+      }
+      activeWaypoints = generateOrthogonalWaypoints(arrow.start, arrow.end, {
+        obstacles,
+        startDirection,
+        endDirection,
+      });
+    }
+  }
+
   return (
     <g
       className={`arrow-group ${selected ? 'is-selected' : ''}`}
@@ -147,6 +203,26 @@ export function ArrowElement({
               onEndpointPointerDown(event, arrow.id, 'start');
             }}
           />
+          {activeWaypoints.map((wp, idx) => (
+            <rect
+              key={`wp-${idx}`}
+              x={wp.x - 5}
+              y={wp.y - 5}
+              width="10"
+              height="10"
+              rx="2.5"
+              fill="#ffffff"
+              stroke="#6965db"
+              strokeWidth="2.5"
+              style={{ cursor: 'grab' }}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                onWaypointPointerDown?.(event, arrow.id, idx, activeWaypoints);
+              }}
+            >
+              <title>Drag bend point</title>
+            </rect>
+          ))}
           <circle
             cx={arrow.end.x}
             cy={arrow.end.y}

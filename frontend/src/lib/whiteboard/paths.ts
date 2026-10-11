@@ -1,5 +1,11 @@
 import type { BoardArrow, BoardStroke } from './board-types';
-import type { Point } from './geometry';
+import type { Point, PortNode } from './geometry';
+import {
+  detectNodePortDirection,
+  generateOrthogonalRoute,
+  makePolylineOrthogonal,
+  nodesToObstacles,
+} from './geometry';
 
 /**
  * Path builders for canvas rendering (extracted from WhiteboardPage).
@@ -24,23 +30,113 @@ export function smoothPath(points: Point[]): string {
 }
 
 /**
+ * Converts a sequence of points with 90° bends into an SVG path.
+ * When `cornerRadius > 0`, 90-degree corners are given subtle rounded fillet
+ * arcs (like draw.io / Miro connectors) for a clean modern aesthetic.
+ */
+export function orthogonalPolylineToPath(
+  points: Point[],
+  cornerRadius = 6,
+): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  if (points.length === 2)
+    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+
+  if (cornerRadius <= 0) {
+    let d = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length; i++) {
+      d += ` L ${points[i].x} ${points[i].y}`;
+    }
+    return d;
+  }
+
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const pPrev = points[i - 1];
+    const pCurr = points[i];
+    const pNext = points[i + 1];
+
+    const vInX = pCurr.x - pPrev.x;
+    const vInY = pCurr.y - pPrev.y;
+    const lenIn = Math.hypot(vInX, vInY);
+
+    const vOutX = pNext.x - pCurr.x;
+    const vOutY = pNext.y - pCurr.y;
+    const lenOut = Math.hypot(vOutX, vOutY);
+
+    if (lenIn < 0.001 || lenOut < 0.001) {
+      d += ` L ${pCurr.x} ${pCurr.y}`;
+      continue;
+    }
+
+    const r = Math.min(cornerRadius, lenIn / 2, lenOut / 2);
+    const startX = pCurr.x - (vInX / lenIn) * r;
+    const startY = pCurr.y - (vInY / lenIn) * r;
+    const endX = pCurr.x + (vOutX / lenOut) * r;
+    const endY = pCurr.y + (vOutY / lenOut) * r;
+
+    d += ` L ${startX} ${startY} Q ${pCurr.x} ${pCurr.y}, ${endX} ${endY}`;
+  }
+  const last = points[points.length - 1];
+  d += ` L ${last.x} ${last.y}`;
+  return d;
+}
+
+/**
+ * Returns the actual points used to render an orthogonal arrow. Keeping this
+ * in one place lets hit-testing, bounds calculations, and SVG rendering agree
+ * about auto-routed bends as well as explicit waypoints.
+ */
+export function arrowPathPoints(
+  arrow: BoardArrow,
+  nodes?: Array<PortNode & { id?: string }>,
+): Point[] {
+  if (arrow.routing !== 'orthogonal') return [arrow.start, arrow.end];
+
+  if (arrow.waypoints && arrow.waypoints.length > 0) {
+    return makePolylineOrthogonal([arrow.start, ...arrow.waypoints, arrow.end]);
+  }
+
+  const obstacles = nodes
+    ? nodesToObstacles(nodes, [arrow.startNodeId ?? '', arrow.endNodeId ?? ''])
+    : [];
+  let startDirection: ReturnType<typeof detectNodePortDirection> | undefined;
+  let endDirection: ReturnType<typeof detectNodePortDirection> | undefined;
+
+  if (nodes) {
+    if (arrow.startNodeId) {
+      const startNode = nodes.find((node) => node.id === arrow.startNodeId);
+      if (startNode)
+        startDirection = detectNodePortDirection(startNode, arrow.start);
+    }
+    if (arrow.endNodeId) {
+      const endNode = nodes.find((node) => node.id === arrow.endNodeId);
+      if (endNode) endDirection = detectNodePortDirection(endNode, arrow.end);
+    }
+  }
+
+  return generateOrthogonalRoute(arrow.start, arrow.end, {
+    obstacles,
+    startDirection,
+    endDirection,
+  });
+}
+
+/**
  * Central path router for user arrows. `straight` is the legacy `M…L`
- * segment; `orthogonal` emits axis-aligned `H/V` elbows via the segment
- * midpoint; `curved` emits a cubic with control points offset
+ * segment; `orthogonal` uses Manhattan routing with obstacle avoidance and
+ * waypoints; `curved` emits a cubic with control points offset
  * perpendicular to the chord for a gentle arc.
  */
-export function arrowPath(arrow: BoardArrow): string {
+export function arrowPath(
+  arrow: BoardArrow,
+  nodes?: Array<PortNode & { id?: string }>,
+): string {
   const { start, end } = arrow;
   const routing = arrow.routing ?? 'straight';
   if (routing === 'orthogonal') {
-    const midX = (start.x + end.x) / 2;
-    const midY = (start.y + end.y) / 2;
-    // Elbow orientation follows the dominant axis so short connectors
-    // don't zig-zag: mostly-horizontal chords bend vertically and vice versa.
-    if (Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)) {
-      return `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`;
-    }
-    return `M ${start.x} ${start.y} L ${start.x} ${midY} L ${end.x} ${midY} L ${end.x} ${end.y}`;
+    return orthogonalPolylineToPath(arrowPathPoints(arrow, nodes), 6);
   }
   if (routing === 'curved') {
     const dx = end.x - start.x;

@@ -14,13 +14,7 @@ import { STENCIL_ICONS, type StencilIconDef } from './stencil-data';
  */
 
 export type StencilCategory =
-  | 'aws'
-  | 'gcp'
-  | 'azure'
-  | 'k8s'
-  | 'database'
-  | 'messaging'
-  | 'runtime';
+  'aws' | 'gcp' | 'azure' | 'k8s' | 'database' | 'messaging' | 'runtime';
 
 export type StencilDefinition = {
   /** Stable id, `<category>:<slug>` — also the D2 `icon:` value. */

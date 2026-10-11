@@ -56,6 +56,13 @@ export type BoardArrow = {
   startNodeId?: string;
   endNodeId?: string;
   routing?: ArrowRouting;
+  /**
+   * Explicit intermediate bend-points for orthogonal routing. When present
+   * the path is `start → waypoints[0] → … → waypoints[n] → end` using
+   * axis-aligned segments. Dragging a bend-point populates this array,
+   * overriding the auto-generated Manhattan route.
+   */
+  waypoints?: Point[];
   /** Global paint order across nodes/arrows/strokes. Defaults to 0. */
   z?: number;
   /** Composite group identifier. */

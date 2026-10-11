@@ -363,7 +363,7 @@ export async function buildPresentationPdf(
           x + 10,
           y + h - 18,
           w - 20,
-          Math.min(14, (node.fontSize ?? 14)),
+          Math.min(14, node.fontSize ?? 14),
           bold,
           pdfColor('#25263a', '#25263a'),
         );

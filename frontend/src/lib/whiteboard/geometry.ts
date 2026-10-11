@@ -479,3 +479,518 @@ export function distributeNodes<T extends AlignableNode>(
     }));
   }
 }
+
+// ---------------------------------------------------------------------------
+// Orthogonal Connector Manhattan Routing & Obstacle Avoidance
+// ---------------------------------------------------------------------------
+
+export type OrthogonalDirection = 'n' | 's' | 'e' | 'w';
+
+export type OrthogonalRoutingOptions = {
+  /** Obstacles to route around (bounding boxes in world coordinates). */
+  obstacles?: Aabb[];
+  /** Obstacle clearance margin in world units. Defaults to 16. */
+  padding?: number;
+  /** Direction leaving the start port/node. */
+  startDirection?: OrthogonalDirection;
+  /** Direction entering the end port/node. */
+  endDirection?: OrthogonalDirection;
+  /** Initial straight stub extending from port before bending. Defaults to 20. */
+  stubLength?: number;
+};
+
+/** Convert cardinal direction to 2D unit normal vector. */
+export function directionToVector(dir: OrthogonalDirection): Point {
+  switch (dir) {
+    case 'n':
+      return { x: 0, y: -1 };
+    case 's':
+      return { x: 0, y: 1 };
+    case 'e':
+      return { x: 1, y: 0 };
+    case 'w':
+      return { x: -1, y: 0 };
+  }
+}
+
+/**
+ * Detects which face/side ('n', 's', 'e', 'w') of a node a given anchor
+ * point is closest to, based on normal angle from node center.
+ */
+export function detectNodePortDirection(
+  node: PortNode,
+  point: Point,
+): OrthogonalDirection {
+  const cx = node.x + node.width / 2;
+  const cy = node.y + node.height / 2;
+  const hw = Math.max(1, node.width / 2);
+  const hh = Math.max(1, node.height / 2);
+  const dx = point.x - cx;
+  const dy = point.y - cy;
+  if (Math.abs(dx) / hw >= Math.abs(dy) / hh) {
+    return dx >= 0 ? 'e' : 'w';
+  }
+  return dy >= 0 ? 's' : 'n';
+}
+
+/**
+ * Converts canvas nodes into inflated bounding box obstacles for routing,
+ * excluding containers (frames) and line dividers.
+ */
+export function nodesToObstacles(
+  nodes: Array<PortNode & { id?: string }>,
+  excludeIds?: string[],
+): Aabb[] {
+  const excludeSet = new Set(excludeIds ?? []);
+  return nodes
+    .filter(
+      (n) =>
+        !excludeSet.has(n.id ?? '') &&
+        n.shape !== 'frame' &&
+        n.shape !== 'line',
+    )
+    .map((n) => rotatedNodeAabb(n.x, n.y, n.width, n.height, n.rotation));
+}
+
+/** Test whether an axis-aligned line segment penetrates an obstacle box. */
+export function segmentIntersectsObstacle(
+  p1: Point,
+  p2: Point,
+  box: Aabb,
+): boolean {
+  // If segment is horizontal
+  if (Math.abs(p1.y - p2.y) < 0.001) {
+    const y = p1.y;
+    if (y <= box.minY || y >= box.maxY) return false;
+    const minX = Math.min(p1.x, p2.x);
+    const maxX = Math.max(p1.x, p2.x);
+    return maxX > box.minX && minX < box.maxX;
+  }
+  // If segment is vertical
+  if (Math.abs(p1.x - p2.x) < 0.001) {
+    const x = p1.x;
+    if (x <= box.minX || x >= box.maxX) return false;
+    const minY = Math.min(p1.y, p2.y);
+    const maxY = Math.max(p1.y, p2.y);
+    return maxY > box.minY && minY < box.maxY;
+  }
+  // Diagonal segment (for arbitrary fallback lines): AABB line-clipping
+  const minX = Math.min(p1.x, p2.x);
+  const maxX = Math.max(p1.x, p2.x);
+  const minY = Math.min(p1.y, p2.y);
+  const maxY = Math.max(p1.y, p2.y);
+  return (
+    maxX > box.minX && minX < box.maxX && maxY > box.minY && minY < box.maxY
+  );
+}
+
+/** Check if a candidate polyline collides with any obstacle. */
+export function polylineIntersectsObstacles(
+  points: Point[],
+  obstacles: Aabb[],
+): boolean {
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    for (const obs of obstacles) {
+      if (segmentIntersectsObstacle(p1, p2, obs)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Removes duplicate points and intermediate points lying on the same
+ * horizontal or vertical line, leaving only the essential 90° bend points.
+ */
+export function simplifyCollinear(points: Point[]): Point[] {
+  if (points.length <= 2) return points.slice();
+
+  // Step 1: Remove consecutive near-identical points
+  const deduped: Point[] = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const prev = deduped[deduped.length - 1];
+    const curr = points[i];
+    if (Math.hypot(curr.x - prev.x, curr.y - prev.y) > 0.5) {
+      deduped.push(curr);
+    }
+  }
+  if (deduped.length <= 2) return deduped;
+
+  // Step 2: Remove redundant collinear points
+  const simplified: Point[] = [deduped[0]];
+  for (let i = 1; i < deduped.length - 1; i++) {
+    const pPrev = simplified[simplified.length - 1];
+    const pCurr = deduped[i];
+    const pNext = deduped[i + 1];
+
+    const isCollinearH =
+      Math.abs(pPrev.y - pCurr.y) < 0.5 && Math.abs(pCurr.y - pNext.y) < 0.5;
+    const isCollinearV =
+      Math.abs(pPrev.x - pCurr.x) < 0.5 && Math.abs(pCurr.x - pNext.x) < 0.5;
+
+    if (!isCollinearH && !isCollinearV) {
+      simplified.push(pCurr);
+    }
+  }
+  simplified.push(deduped[deduped.length - 1]);
+  return simplified;
+}
+
+/**
+ * Ensures any arbitrary sequence of points is connected exclusively by
+ * axis-aligned (horizontal and vertical) segments with 90° bends.
+ */
+export function makePolylineOrthogonal(points: Point[]): Point[] {
+  if (points.length <= 1) return points.slice();
+  const orthogonal: Point[] = [points[0]];
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+
+    const dx = Math.abs(p2.x - p1.x);
+    const dy = Math.abs(p2.y - p1.y);
+
+    if (dx < 0.5 || dy < 0.5) {
+      orthogonal.push(p2);
+    } else {
+      // Connect with an intermediate orthogonal elbow
+      if (dx >= dy) {
+        orthogonal.push({ x: p2.x, y: p1.y });
+      } else {
+        orthogonal.push({ x: p1.x, y: p2.y });
+      }
+      orthogonal.push(p2);
+    }
+  }
+  return simplifyCollinear(orthogonal);
+}
+
+/**
+ * Manhattan Router with Obstacle Avoidance.
+ *
+ * Employs a Hanan grid routing space with A* search and turn-penalty
+ * optimization to calculate clean, professional orthogonal connector paths
+ * with 90-degree bends around shapes.
+ *
+ * @returns Array of points [start, ...waypoints, end] representing the full route.
+ */
+export function generateOrthogonalRoute(
+  start: Point,
+  end: Point,
+  options?: OrthogonalRoutingOptions,
+): Point[] {
+  // If points coincide or already align on an axis with no obstacles
+  if (Math.abs(start.x - end.x) < 0.5 && Math.abs(start.y - end.y) < 0.5) {
+    return [start, end];
+  }
+
+  const padding = options?.padding ?? 16;
+  const stubLength = options?.stubLength ?? 20;
+
+  // Stubs extend perpendicular to node ports before turning
+  let sStub = start;
+  if (options?.startDirection) {
+    const sv = directionToVector(options.startDirection);
+    sStub = {
+      x: start.x + sv.x * stubLength,
+      y: start.y + sv.y * stubLength,
+    };
+  }
+
+  let eStub = end;
+  if (options?.endDirection) {
+    const ev = directionToVector(options.endDirection);
+    eStub = {
+      x: end.x + ev.x * stubLength,
+      y: end.y + ev.y * stubLength,
+    };
+  }
+
+  const rawObstacles = options?.obstacles ?? [];
+  // Inflate obstacles by the safety padding margin
+  const inflatedObstacles: Aabb[] = [];
+  const searchBounds: Aabb = {
+    minX: Math.min(start.x, end.x, sStub.x, eStub.x) - 160,
+    minY: Math.min(start.y, end.y, sStub.y, eStub.y) - 160,
+    maxX: Math.max(start.x, end.x, sStub.x, eStub.x) + 160,
+    maxY: Math.max(start.y, end.y, sStub.y, eStub.y) + 160,
+  };
+
+  for (const obs of rawObstacles) {
+    if (aabbIntersects(searchBounds, obs)) {
+      inflatedObstacles.push({
+        minX: obs.minX - padding,
+        minY: obs.minY - padding,
+        maxX: obs.maxX + padding,
+        maxY: obs.maxY + padding,
+      });
+    }
+  }
+
+  // Quick check: if simple direct routes have 0 obstacle collisions, use them!
+  const midX = (sStub.x + eStub.x) / 2;
+  const midY = (sStub.y + eStub.y) / 2;
+
+  // Prefer orientation matching stub directions:
+  // e/w stubs prefer horizontal-first; n/s stubs prefer vertical-first.
+  const preferHorizontalFirst =
+    options?.startDirection === 'e' ||
+    options?.startDirection === 'w' ||
+    (!options?.startDirection &&
+      Math.abs(end.x - start.x) >= Math.abs(end.y - start.y));
+
+  const candidateA: Point[] = simplifyCollinear([
+    start,
+    sStub,
+    { x: midX, y: sStub.y },
+    { x: midX, y: eStub.y },
+    eStub,
+    end,
+  ]);
+
+  const candidateB: Point[] = simplifyCollinear([
+    start,
+    sStub,
+    { x: sStub.x, y: midY },
+    { x: eStub.x, y: midY },
+    eStub,
+    end,
+  ]);
+
+  const candidateC: Point[] = simplifyCollinear([
+    start,
+    sStub,
+    { x: eStub.x, y: sStub.y },
+    eStub,
+    end,
+  ]);
+
+  const candidateD: Point[] = simplifyCollinear([
+    start,
+    sStub,
+    { x: sStub.x, y: eStub.y },
+    eStub,
+    end,
+  ]);
+
+  const candidates = preferHorizontalFirst
+    ? [candidateA, candidateC, candidateB, candidateD]
+    : [candidateB, candidateD, candidateA, candidateC];
+
+  for (const cand of candidates) {
+    if (!polylineIntersectsObstacles(cand, inflatedObstacles)) {
+      return cand;
+    }
+  }
+
+  // If no simple candidate is obstacle-free, run A* on the Hanan grid
+  const xs: number[] = [start.x, end.x, sStub.x, eStub.x, midX];
+  const ys: number[] = [start.y, end.y, sStub.y, eStub.y, midY];
+
+  for (const obs of inflatedObstacles) {
+    xs.push(obs.minX, obs.maxX, (obs.minX + obs.maxX) / 2);
+    ys.push(obs.minY, obs.maxY, (obs.minY + obs.maxY) / 2);
+  }
+
+  // Deduplicate coordinates within a 2px tolerance
+  const dedupeCoords = (coords: number[]): number[] => {
+    const sorted = [...coords].sort((a, b) => a - b);
+    const result: number[] = [];
+    for (const c of sorted) {
+      if (result.length === 0 || Math.abs(c - result[result.length - 1]) > 2) {
+        result.push(c);
+      }
+    }
+    return result;
+  };
+
+  const gridX = dedupeCoords(xs);
+  const gridY = dedupeCoords(ys);
+  const W = gridX.length;
+  const H = gridY.length;
+
+  if (W === 0 || H === 0) {
+    return candidateA;
+  }
+
+  // Find nearest grid indices for sStub and eStub
+  const findClosestGridIndex = (pt: Point): { ix: number; iy: number } => {
+    let bestIx = 0;
+    let bestDistX = Infinity;
+    for (let i = 0; i < W; i++) {
+      const d = Math.abs(gridX[i] - pt.x);
+      if (d < bestDistX) {
+        bestDistX = d;
+        bestIx = i;
+      }
+    }
+    let bestIy = 0;
+    let bestDistY = Infinity;
+    for (let j = 0; j < H; j++) {
+      const d = Math.abs(gridY[j] - pt.y);
+      if (d < bestDistY) {
+        bestDistY = d;
+        bestIy = j;
+      }
+    }
+    return { ix: bestIx, iy: bestIy };
+  };
+
+  const startIdx = findClosestGridIndex(sStub);
+  const goalIdx = findClosestGridIndex(eStub);
+
+  const startKey = startIdx.iy * W + startIdx.ix;
+  const goalKey = goalIdx.iy * W + goalIdx.ix;
+
+  type AStarNode = {
+    key: number;
+    ix: number;
+    iy: number;
+    dir: 'h' | 'v' | 'none';
+    g: number;
+    f: number;
+  };
+
+  const BEND_PENALTY = 35;
+  const gScores = new Map<number, number>();
+  const parents = new Map<
+    number,
+    { key: number; ix: number; iy: number; dir: 'h' | 'v' }
+  >();
+
+  gScores.set(startKey, 0);
+
+  // Min-priority queue
+  const openSet: AStarNode[] = [
+    {
+      key: startKey,
+      ix: startIdx.ix,
+      iy: startIdx.iy,
+      dir: 'none',
+      g: 0,
+      f:
+        Math.abs(gridX[goalIdx.ix] - gridX[startIdx.ix]) +
+        Math.abs(gridY[goalIdx.iy] - gridY[startIdx.iy]),
+    },
+  ];
+
+  let iterations = 0;
+  const MAX_ITERATIONS = 600;
+  let found = false;
+
+  while (openSet.length > 0 && iterations++ < MAX_ITERATIONS) {
+    // Pop min f
+    let minIdx = 0;
+    for (let i = 1; i < openSet.length; i++) {
+      if (openSet[i].f < openSet[minIdx].f) {
+        minIdx = i;
+      }
+    }
+    const current = openSet.splice(minIdx, 1)[0];
+
+    if (current.key === goalKey) {
+      found = true;
+      break;
+    }
+
+    if (current.g > (gScores.get(current.key) ?? Infinity)) {
+      continue;
+    }
+
+    // Neighbors: left, right, up, down
+    const neighbors = [
+      { ix: current.ix + 1, iy: current.iy, dir: 'h' as const },
+      { ix: current.ix - 1, iy: current.iy, dir: 'h' as const },
+      { ix: current.ix, iy: current.iy + 1, dir: 'v' as const },
+      { ix: current.ix, iy: current.iy - 1, dir: 'v' as const },
+    ];
+
+    const currentPt: Point = {
+      x: gridX[current.ix],
+      y: gridY[current.iy],
+    };
+
+    for (const nb of neighbors) {
+      if (nb.ix < 0 || nb.ix >= W || nb.iy < 0 || nb.iy >= H) continue;
+
+      const neighborPt: Point = {
+        x: gridX[nb.ix],
+        y: gridY[nb.iy],
+      };
+
+      // Check collision with inflated obstacles
+      let collides = false;
+      for (const obs of inflatedObstacles) {
+        if (segmentIntersectsObstacle(currentPt, neighborPt, obs)) {
+          collides = true;
+          break;
+        }
+      }
+      if (collides) continue;
+
+      const stepDist =
+        Math.abs(neighborPt.x - currentPt.x) +
+        Math.abs(neighborPt.y - currentPt.y);
+      const isTurn = current.dir !== 'none' && current.dir !== nb.dir;
+      const turnCost = isTurn ? BEND_PENALTY : 0;
+      const tentativeG = current.g + stepDist + turnCost;
+
+      const neighborKey = nb.iy * W + nb.ix;
+      if (tentativeG < (gScores.get(neighborKey) ?? Infinity)) {
+        gScores.set(neighborKey, tentativeG);
+        parents.set(neighborKey, {
+          key: current.key,
+          ix: current.ix,
+          iy: current.iy,
+          dir: nb.dir,
+        });
+
+        const h =
+          Math.abs(gridX[goalIdx.ix] - neighborPt.x) +
+          Math.abs(gridY[goalIdx.iy] - neighborPt.y);
+        openSet.push({
+          key: neighborKey,
+          ix: nb.ix,
+          iy: nb.iy,
+          dir: nb.dir,
+          g: tentativeG,
+          f: tentativeG + h,
+        });
+      }
+    }
+  }
+
+  if (found) {
+    const path: Point[] = [{ x: gridX[goalIdx.ix], y: gridY[goalIdx.iy] }];
+    let currKey = goalKey;
+    while (currKey !== startKey) {
+      const parent = parents.get(currKey);
+      if (!parent) break;
+      path.push({ x: gridX[parent.ix], y: gridY[parent.iy] });
+      currKey = parent.key;
+    }
+    path.reverse();
+
+    const fullRoute: Point[] = [start, sStub, ...path, eStub, end];
+    return simplifyCollinear(fullRoute);
+  }
+
+  // Fallback to candidate A if Hanan grid is blocked
+  return candidateA;
+}
+
+/**
+ * Calculates intermediate 90-degree bend waypoints between start and end.
+ * Returns only the internal waypoints (excluding start and end).
+ */
+export function generateOrthogonalWaypoints(
+  start: Point,
+  end: Point,
+  options?: OrthogonalRoutingOptions,
+): Point[] {
+  const route = generateOrthogonalRoute(start, end, options);
+  if (route.length <= 2) return [];
+  return route.slice(1, -1);
+}

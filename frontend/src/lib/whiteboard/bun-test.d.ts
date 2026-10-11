@@ -4,11 +4,13 @@
 declare module 'bun:test' {
   export function describe(name: string, fn: () => void): void;
   export function test(name: string, fn: () => void): void;
+  export function it(name: string, fn: () => void): void;
   export function expect(actual: unknown): {
     toBe(expected: unknown): void;
     toEqual(expected: unknown): void;
     toBeNull(): void;
     toBeGreaterThan(expected: number): void;
+    toBeGreaterThanOrEqual(expected: number): void;
     toContain(expected: unknown): void;
     toMatchObject(expected: unknown): void;
     not: {

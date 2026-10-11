@@ -15,6 +15,7 @@ pnpm-lock.yaml
 # Auto-generated
 *.min.js
 *.min.css
+.impeccable
 .vercel
 .turbo
 # Environment

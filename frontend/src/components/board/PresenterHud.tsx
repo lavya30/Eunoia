@@ -97,8 +97,10 @@ export function PresenterHud({
           height: 32,
           borderRadius: 8,
           border: 'none',
-          background: currentSlideIndex <= 1 ? 'transparent' : 'rgba(255, 255, 255, 0.1)',
-          color: currentSlideIndex <= 1 ? 'rgba(255, 255, 255, 0.3)' : '#ffffff',
+          background:
+            currentSlideIndex <= 1 ? 'transparent' : 'rgba(255, 255, 255, 0.1)',
+          color:
+            currentSlideIndex <= 1 ? 'rgba(255, 255, 255, 0.3)' : '#ffffff',
           cursor: currentSlideIndex <= 1 ? 'default' : 'pointer',
         }}
       >
@@ -159,8 +161,14 @@ export function PresenterHud({
           height: 32,
           borderRadius: 8,
           border: 'none',
-          background: currentSlideIndex >= totalSlides ? 'transparent' : 'rgba(255, 255, 255, 0.1)',
-          color: currentSlideIndex >= totalSlides ? 'rgba(255, 255, 255, 0.3)' : '#ffffff',
+          background:
+            currentSlideIndex >= totalSlides
+              ? 'transparent'
+              : 'rgba(255, 255, 255, 0.1)',
+          color:
+            currentSlideIndex >= totalSlides
+              ? 'rgba(255, 255, 255, 0.3)'
+              : '#ffffff',
           cursor: currentSlideIndex >= totalSlides ? 'default' : 'pointer',
         }}
       >

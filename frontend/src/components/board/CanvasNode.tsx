@@ -44,9 +44,19 @@ export function CanvasNode({
   const isFrame = node.shape === 'frame';
   const shapeStyle = {
     fill: isFrame ? (node.fill ?? 'rgba(247, 246, 252, 0.4)') : node.fill,
-    stroke: isFrame ? (node.stroke ?? (selected ? '#6965db' : '#9b97ac')) : node.stroke,
-    strokeWidth: isFrame ? (node.strokeWidth ?? (selected ? 2.5 : 1.5)) : node.strokeWidth,
-    strokeDasharray: isFrame ? (selected ? undefined : '7 5') : node.dashed ? '7 5' : undefined,
+    stroke: isFrame
+      ? (node.stroke ?? (selected ? '#6965db' : '#9b97ac'))
+      : node.stroke,
+    strokeWidth: isFrame
+      ? (node.strokeWidth ?? (selected ? 2.5 : 1.5))
+      : node.strokeWidth,
+    strokeDasharray: isFrame
+      ? selected
+        ? undefined
+        : '7 5'
+      : node.dashed
+        ? '7 5'
+        : undefined,
     opacity: node.opacity ?? 1,
   };
 
@@ -293,11 +303,7 @@ export function CanvasNode({
           }}
         >
           {labelLines.map((line, idx) => (
-            <tspan
-              key={idx}
-              x={textX}
-              dy={idx === 0 ? 0 : `${lineHeight}px`}
-            >
+            <tspan key={idx} x={textX} dy={idx === 0 ? 0 : `${lineHeight}px`}>
               {line}
             </tspan>
           ))}

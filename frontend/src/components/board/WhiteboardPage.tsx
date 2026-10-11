@@ -4,6 +4,7 @@ import { D2Panel } from './D2Panel';
 import { StylePanel } from './StylePanel';
 import { CanvasNode } from './CanvasNode';
 import { ArrowElement, StrokeElement } from './CanvasElements';
+import { arrowPath, arrowPathPoints } from '@/lib/whiteboard/paths';
 import {
   Connector,
   PresenceAvatar,
@@ -233,7 +234,12 @@ type Interaction =
       pointerId: number;
       startWorld: Point;
       originNodes: Array<{ id: string; x: number; y: number }>;
-      originArrows: Array<{ id: string; start: Point; end: Point }>;
+      originArrows: Array<{
+        id: string;
+        start: Point;
+        end: Point;
+        waypoints?: Point[];
+      }>;
       originStrokes: Array<{ id: string; points: InkPoint[] }>;
     }
   | {
@@ -241,6 +247,13 @@ type Interaction =
       pointerId: number;
       arrowId: string;
       endpoint: 'start' | 'end';
+    }
+  | {
+      kind: 'arrowWaypoint';
+      pointerId: number;
+      arrowId: string;
+      waypointIndex: number;
+      originWaypoints: Point[];
     }
   | {
       kind: 'marquee';
@@ -262,7 +275,12 @@ type Interaction =
       center: Point;
       startAngle: number;
       originNodes: Array<{ id: string; rotation: number }>;
-      originArrows: Array<{ id: string; start: Point; end: Point }>;
+      originArrows: Array<{
+        id: string;
+        start: Point;
+        end: Point;
+        waypoints?: Point[];
+      }>;
       originStrokes: Array<{ id: string; points: InkPoint[] }>;
     }
   | {
@@ -545,7 +563,7 @@ function simplifyInkPoints(points: InkPoint[], tolerance = 1.5): InkPoint[] {
   return points.filter((_, i) => keep[i]);
 }
 
-function arrowBounds(arrow: BoardArrow): Aabb {
+function arrowBounds(arrow: BoardArrow, nodes?: BoardNode[]): Aabb {
   if (arrow.routing === 'curved') {
     // Cubic control points can bow outside the start/end box; expand by
     // the same capped bow used in arrowPath (18% of chord, max 60).
@@ -561,11 +579,22 @@ function arrowBounds(arrow: BoardArrow): Aabb {
       maxY: Math.max(arrow.start.y, arrow.end.y) + pad,
     };
   }
+  const points = arrowPathPoints(arrow, nodes);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y);
+    maxY = Math.max(maxY, point.y);
+  }
   return {
-    minX: Math.min(arrow.start.x, arrow.end.x) - 8,
-    minY: Math.min(arrow.start.y, arrow.end.y) - 8,
-    maxX: Math.max(arrow.start.x, arrow.end.x) + 8,
-    maxY: Math.max(arrow.start.y, arrow.end.y) + 8,
+    minX: minX - 8,
+    minY: minY - 8,
+    maxX: maxX + 8,
+    maxY: maxY + 8,
   };
 }
 
@@ -594,7 +623,7 @@ function elementsInBounds(
   }
 
   for (const arrow of arrows) {
-    if (aabbIntersects(bounds, arrowBounds(arrow))) {
+    if (aabbIntersects(bounds, arrowBounds(arrow, nodes))) {
       selected.push(arrow.id);
     }
   }
@@ -643,7 +672,55 @@ function strokeHitTest(stroke: BoardStroke, point: Point): boolean {
   return false;
 }
 
-function arrowHitTest(arrow: BoardArrow, point: Point): boolean {
+function arrowHitTest(
+  arrow: BoardArrow,
+  point: Point,
+  nodes: BoardNode[] = [],
+): boolean {
+  if (arrow.routing === 'orthogonal') {
+    const points = arrowPathPoints(arrow, nodes);
+    for (let i = 0; i < points.length - 1; i++) {
+      if (distToSegment(point, points[i], points[i + 1]) <= ERASER_RADIUS)
+        return true;
+    }
+    return false;
+  }
+  if (arrow.routing === 'curved') {
+    const dx = arrow.end.x - arrow.start.x;
+    const dy = arrow.end.y - arrow.start.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const bow = Math.min(60, length * 0.18);
+    const nx = -dy / length;
+    const ny = dx / length;
+    const control1 = {
+      x: arrow.start.x + dx * 0.3 + nx * bow,
+      y: arrow.start.y + dy * 0.3 + ny * bow,
+    };
+    const control2 = {
+      x: arrow.start.x + dx * 0.7 + nx * bow,
+      y: arrow.start.y + dy * 0.7 + ny * bow,
+    };
+    let previous = arrow.start;
+    for (let index = 1; index <= 24; index += 1) {
+      const t = index / 24;
+      const inverse = 1 - t;
+      const current = {
+        x:
+          inverse ** 3 * arrow.start.x +
+          3 * inverse ** 2 * t * control1.x +
+          3 * inverse * t ** 2 * control2.x +
+          t ** 3 * arrow.end.x,
+        y:
+          inverse ** 3 * arrow.start.y +
+          3 * inverse ** 2 * t * control1.y +
+          3 * inverse * t ** 2 * control2.y +
+          t ** 3 * arrow.end.y,
+      };
+      if (distToSegment(point, previous, current) <= ERASER_RADIUS) return true;
+      previous = current;
+    }
+    return false;
+  }
   return distToSegment(point, arrow.start, arrow.end) <= ERASER_RADIUS;
 }
 
@@ -1007,6 +1084,7 @@ const ARROW_ROUTINGS: ReadonlySet<string> = new Set([
   'orthogonal',
   'curved',
 ]);
+const MAX_ARROW_WAYPOINTS = 128;
 
 function sanitizeArrow(raw: unknown): BoardArrow | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -1021,12 +1099,24 @@ function sanitizeArrow(raw: unknown): BoardArrow | null {
     start,
     end,
     color: typeof a.color === 'string' ? a.color.slice(0, 32) : '#25263a',
-    startNodeId: typeof a.startNodeId === 'string' ? a.startNodeId : undefined,
-    endNodeId: typeof a.endNodeId === 'string' ? a.endNodeId : undefined,
+    startNodeId:
+      typeof a.startNodeId === 'string' && a.startNodeId.length <= 120
+        ? a.startNodeId
+        : undefined,
+    endNodeId:
+      typeof a.endNodeId === 'string' && a.endNodeId.length <= 120
+        ? a.endNodeId
+        : undefined,
     routing:
       typeof a.routing === 'string' && ARROW_ROUTINGS.has(a.routing)
         ? (a.routing as ArrowRouting)
         : undefined,
+    waypoints: Array.isArray(a.waypoints)
+      ? a.waypoints
+          .slice(0, MAX_ARROW_WAYPOINTS)
+          .map((p) => sanitizePoint(p))
+          .filter((p): p is Point => p !== null)
+      : undefined,
     z:
       a.z === undefined
         ? undefined
@@ -2149,13 +2239,13 @@ export function WhiteboardPage({
     const index = new SpatialIndex<BoardArrow>();
     index.rebuild(
       arrows.map((arrow) => ({
-        ...arrowBounds(arrow),
+        ...arrowBounds(arrow, nodes),
         id: arrow.id,
         value: arrow,
       })),
     );
     return index;
-  }, [arrows]);
+  }, [arrows, nodes]);
 
   const strokeIndex = useMemo(() => {
     const index = new SpatialIndex<BoardStroke>();
@@ -2319,7 +2409,7 @@ export function WhiteboardPage({
         if (arrow) {
           outlines.push({
             key: `${peer.clientId}:${id}`,
-            bounds: arrowBounds(arrow),
+            bounds: arrowBounds(arrow, nodes),
             color: peer.user.color,
             name: peer.user.name,
           });
@@ -2337,7 +2427,7 @@ export function WhiteboardPage({
       }
     }
     return outlines;
-  }, [peers, nodeById, arrowById, strokeById]);
+  }, [peers, nodeById, arrowById, nodes, strokeById]);
 
   const connectors = useMemo(
     () =>
@@ -2413,7 +2503,9 @@ export function WhiteboardPage({
         return;
       const before = captureBoardSnapshot();
       const nextArrows = before.arrows.map((arrow) =>
-        selectedIds.includes(arrow.id) ? { ...arrow, routing } : arrow,
+        selectedIds.includes(arrow.id)
+          ? { ...arrow, routing, waypoints: undefined }
+          : arrow,
       );
       setArrows(nextArrows);
       pushDiscreteChange(before, { ...before, arrows: nextArrows });
@@ -2739,6 +2831,10 @@ export function WhiteboardPage({
       id: nextId('arrow'),
       start: { x: a.start.x + offset, y: a.start.y + offset },
       end: { x: a.end.x + offset, y: a.end.y + offset },
+      waypoints: a.waypoints?.map((w) => ({
+        x: w.x + offset,
+        y: w.y + offset,
+      })),
     }));
 
     const newStrokes = cStrokes.map((s) => ({
@@ -2866,47 +2962,43 @@ export function WhiteboardPage({
       setNodes(nextNodes);
 
       const nodeMap = new Map(nextNodes.map((n) => [n.id, n]));
-      let nextArrows = arrows;
-      setArrows((curr) => {
-        const updated = curr.map((arrow) => {
-          if (!arrow.startNodeId && !arrow.endNodeId) return arrow;
-          const sNode = arrow.startNodeId
-            ? nodeMap.get(arrow.startNodeId)
-            : undefined;
-          const eNode = arrow.endNodeId
-            ? nodeMap.get(arrow.endNodeId)
-            : undefined;
-          let nextStart = arrow.start;
-          let nextEnd = arrow.end;
-          if (sNode) {
-            nextStart = getRoutedAnchor(
-              sNode,
-              eNode
-                ? {
-                    x: eNode.x + eNode.width / 2,
-                    y: eNode.y + eNode.height / 2,
-                  }
-                : arrow.end,
-              arrow.routing,
-            );
-          }
-          if (eNode) {
-            nextEnd = getRoutedAnchor(
-              eNode,
-              sNode
-                ? {
-                    x: sNode.x + sNode.width / 2,
-                    y: sNode.y + sNode.height / 2,
-                  }
-                : arrow.start,
-              arrow.routing,
-            );
-          }
-          return { ...arrow, start: nextStart, end: nextEnd };
-        });
-        nextArrows = updated;
-        return updated;
+      const nextArrows = arrows.map((arrow) => {
+        if (!arrow.startNodeId && !arrow.endNodeId) return arrow;
+        const sNode = arrow.startNodeId
+          ? nodeMap.get(arrow.startNodeId)
+          : undefined;
+        const eNode = arrow.endNodeId
+          ? nodeMap.get(arrow.endNodeId)
+          : undefined;
+        let nextStart = arrow.start;
+        let nextEnd = arrow.end;
+        if (sNode) {
+          nextStart = getRoutedAnchor(
+            sNode,
+            eNode
+              ? {
+                  x: eNode.x + eNode.width / 2,
+                  y: eNode.y + eNode.height / 2,
+                }
+              : arrow.end,
+            arrow.routing,
+          );
+        }
+        if (eNode) {
+          nextEnd = getRoutedAnchor(
+            eNode,
+            sNode
+              ? {
+                  x: sNode.x + sNode.width / 2,
+                  y: sNode.y + sNode.height / 2,
+                }
+              : arrow.start,
+            arrow.routing,
+          );
+        }
+        return { ...arrow, start: nextStart, end: nextEnd };
       });
+      setArrows(nextArrows);
       pushDiscreteChange(before, {
         ...before,
         nodes: nextNodes,
@@ -2933,47 +3025,43 @@ export function WhiteboardPage({
       setNodes(nextNodes);
 
       const nodeMap = new Map(nextNodes.map((n) => [n.id, n]));
-      let nextArrows = arrows;
-      setArrows((curr) => {
-        const updated = curr.map((arrow) => {
-          if (!arrow.startNodeId && !arrow.endNodeId) return arrow;
-          const sNode = arrow.startNodeId
-            ? nodeMap.get(arrow.startNodeId)
-            : undefined;
-          const eNode = arrow.endNodeId
-            ? nodeMap.get(arrow.endNodeId)
-            : undefined;
-          let nextStart = arrow.start;
-          let nextEnd = arrow.end;
-          if (sNode) {
-            nextStart = getRoutedAnchor(
-              sNode,
-              eNode
-                ? {
-                    x: eNode.x + eNode.width / 2,
-                    y: eNode.y + eNode.height / 2,
-                  }
-                : arrow.end,
-              arrow.routing,
-            );
-          }
-          if (eNode) {
-            nextEnd = getRoutedAnchor(
-              eNode,
-              sNode
-                ? {
-                    x: sNode.x + sNode.width / 2,
-                    y: sNode.y + sNode.height / 2,
-                  }
-                : arrow.start,
-              arrow.routing,
-            );
-          }
-          return { ...arrow, start: nextStart, end: nextEnd };
-        });
-        nextArrows = updated;
-        return updated;
+      const nextArrows = arrows.map((arrow) => {
+        if (!arrow.startNodeId && !arrow.endNodeId) return arrow;
+        const sNode = arrow.startNodeId
+          ? nodeMap.get(arrow.startNodeId)
+          : undefined;
+        const eNode = arrow.endNodeId
+          ? nodeMap.get(arrow.endNodeId)
+          : undefined;
+        let nextStart = arrow.start;
+        let nextEnd = arrow.end;
+        if (sNode) {
+          nextStart = getRoutedAnchor(
+            sNode,
+            eNode
+              ? {
+                  x: eNode.x + eNode.width / 2,
+                  y: eNode.y + eNode.height / 2,
+                }
+              : arrow.end,
+            arrow.routing,
+          );
+        }
+        if (eNode) {
+          nextEnd = getRoutedAnchor(
+            eNode,
+            sNode
+              ? {
+                  x: sNode.x + sNode.width / 2,
+                  y: sNode.y + sNode.height / 2,
+                }
+              : arrow.start,
+            arrow.routing,
+          );
+        }
+        return { ...arrow, start: nextStart, end: nextEnd };
       });
+      setArrows(nextArrows);
       pushDiscreteChange(before, {
         ...before,
         nodes: nextNodes,
@@ -3086,7 +3174,9 @@ export function WhiteboardPage({
       return next;
     });
     setArrows((current) => {
-      const next = current.filter((arrow) => !arrowHitTest(arrow, worldPoint));
+      const next = current.filter(
+        (arrow) => !arrowHitTest(arrow, worldPoint, nodesRef.current),
+      );
       if (next.length !== current.length) erased = true;
       return next;
     });
@@ -3332,6 +3422,7 @@ export function WhiteboardPage({
             id: arrow.id,
             start: { ...arrow.start },
             end: { ...arrow.end },
+            waypoints: arrow.waypoints?.map((w) => ({ ...w })),
           })),
         originStrokes: strokesRef.current
           .filter((stroke) => selectedIds.includes(stroke.id))
@@ -3360,6 +3451,29 @@ export function WhiteboardPage({
         pointerId: event.pointerId,
         arrowId,
         endpoint,
+      };
+      canvasRef.current.setPointerCapture(event.pointerId);
+    },
+    [locked],
+  );
+
+  const handleArrowWaypointPointerDown = useCallback(
+    (
+      event: ReactPointerEvent<SVGRectElement | SVGCircleElement>,
+      arrowId: string,
+      index: number,
+      initialWaypoints: Point[],
+    ) => {
+      if (locked || !canvasRef.current || isAuxClick(event)) return;
+      event.stopPropagation();
+      event.preventDefault();
+      gestureBaseRef.current = null;
+      interactionRef.current = {
+        kind: 'arrowWaypoint',
+        pointerId: event.pointerId,
+        arrowId,
+        waypointIndex: index,
+        originWaypoints: initialWaypoints.map((p) => ({ ...p })),
       };
       canvasRef.current.setPointerCapture(event.pointerId);
     },
@@ -3504,6 +3618,7 @@ export function WhiteboardPage({
               id: item.id,
               start: { ...item.start },
               end: { ...item.end },
+              waypoints: item.waypoints?.map((w) => ({ ...w })),
             })),
           originStrokes: strokes
             .filter((item) => allDragStrokeIds.has(item.id))
@@ -3794,6 +3909,31 @@ export function WhiteboardPage({
         return;
       }
 
+      if (interaction.kind === 'arrowWaypoint') {
+        beginGesture();
+        const currentArrow = arrowsRef.current.find(
+          (a) => a.id === interaction.arrowId,
+        );
+        if (!currentArrow) return;
+
+        const snapped = snapPoint(worldPoint, 8);
+        const nextWaypoints = interaction.originWaypoints.map((p, idx) => {
+          if (idx !== interaction.waypointIndex) return { ...p };
+          return { x: snapped.x, y: snapped.y };
+        });
+
+        setArrows((current) =>
+          current.map((arrow) => {
+            if (arrow.id !== interaction.arrowId) return arrow;
+            return {
+              ...arrow,
+              waypoints: nextWaypoints,
+            };
+          }),
+        );
+        return;
+      }
+
       if (interaction.kind === 'drag') {
         beginGesture();
         const delta = {
@@ -3918,6 +4058,10 @@ export function WhiteboardPage({
                   x: origin.end.x + effectiveDeltaX,
                   y: origin.end.y + effectiveDeltaY,
                 },
+                waypoints: origin.waypoints?.map((w) => ({
+                  x: w.x + effectiveDeltaX,
+                  y: w.y + effectiveDeltaY,
+                })),
               };
             }
 
@@ -4073,6 +4217,9 @@ export function WhiteboardPage({
                 ...arrow,
                 start: rotatePoint(base.start, center, totalRad),
                 end: rotatePoint(base.end, center, totalRad),
+                waypoints: base.waypoints?.map((w) =>
+                  rotatePoint(w, center, totalRad),
+                ),
               };
             }
             // Bound ends re-anchor against the rotated node; free ends
@@ -7793,8 +7940,10 @@ export function WhiteboardPage({
                         arrowMarkerIds.get(element.arrow.color) ?? 'arrowhead'
                       }
                       interactiveCursor={activeTool === 'select'}
+                      nodes={nodes}
                       onPointerDown={handleElementPointerDown}
                       onEndpointPointerDown={handleArrowEndpointPointerDown}
+                      onWaypointPointerDown={handleArrowWaypointPointerDown}
                     />
                   ) : (
                     <CanvasNode
@@ -8108,12 +8257,17 @@ export function WhiteboardPage({
                       );
                     }
                     if (createPreview.tool === 'arrow') {
+                      const previewArrow: BoardArrow = {
+                        id: 'preview',
+                        start: createPreview.start,
+                        end: createPreview.end,
+                        color: createPreview.color,
+                        routing: arrowRouting,
+                      };
                       return (
-                        <line
-                          x1={createPreview.start.x}
-                          y1={createPreview.start.y}
-                          x2={createPreview.end.x}
-                          y2={createPreview.end.y}
+                        <path
+                          d={arrowPath(previewArrow, nodes)}
+                          fill="none"
                           stroke={createPreview.color}
                           strokeWidth="2.5"
                           strokeDasharray="6 4"
