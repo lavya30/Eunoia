@@ -9,7 +9,11 @@ import { MemoryAiUsageStore, PrismaAiUsageStore } from './ai.js';
 import type { ApiDeps } from './api/app.js';
 import { BodyTooLargeError, handleApiRequest } from './api/routes.js';
 import { MemoryAuditStore, PrismaAuditStore, recordAudit } from './audit.js';
-import { type BillingDeps, RazorpayBillingProvider } from './billing.js';
+import {
+  type BillingDeps,
+  isBillingConfigured,
+  RazorpayBillingProvider,
+} from './billing.js';
 import {
   MemoryBillingEventStore,
   MemoryBillingStore,
@@ -116,12 +120,23 @@ export function createSyncServer(
   // unconfigured in dev means the billing endpoints answer 503, and
   // self-hosted Community Edition keeps DB-managed tiers).
   const audit = prisma ? new PrismaAuditStore(prisma) : new MemoryAuditStore();
-  const billing: BillingDeps | undefined =
-    (billingDepsOverride?.provider ?? config.razorpayKeyId)
+  const billing: BillingDeps | undefined = billingDepsOverride?.provider
+    ? {
+        provider: billingDepsOverride.provider,
+        recordAudit: (input) => recordAudit(audit, input),
+        subscriptionStore:
+          billingDepsOverride?.subscriptionStore ??
+          (prisma ? new PrismaBillingStore(prisma) : new MemoryBillingStore()),
+        billingEventStore:
+          billingDepsOverride?.billingEventStore ??
+          (prisma
+            ? new PrismaBillingEventStore(prisma)
+            : new MemoryBillingEventStore()),
+        userStore: billingDepsOverride?.userStore ?? users,
+      }
+    : isBillingConfigured(config)
       ? {
-          provider:
-            billingDepsOverride?.provider ??
-            new RazorpayBillingProvider(config),
+          provider: new RazorpayBillingProvider(config),
           recordAudit: (input) => recordAudit(audit, input),
           subscriptionStore:
             billingDepsOverride?.subscriptionStore ??

@@ -39,6 +39,15 @@ export type BillingEvent = {
   periodEnd?: Date;
 };
 
+/** Returns true if all mandatory Razorpay billing keys are provided. */
+export function isBillingConfigured(config: Config): boolean {
+  return Boolean(
+    config.razorpayKeyId &&
+      config.razorpayWebhookSecret &&
+      config.razorpayPlanPro,
+  );
+}
+
 /* ── Provider interface ──────────────────────────────────────── */
 
 export interface BillingProvider {
