@@ -9,7 +9,8 @@ import {
   createCheckoutSession,
   PlanInfo,
 } from '@/lib/whiteboard/billing-api';
-import { Check, Sparkles, ArrowRight, ShieldCheck, Zap } from 'lucide-react';
+import { Check, ArrowRight } from 'lucide-react';
+import './pricing.css';
 
 export function PricingPage() {
   const router = useRouter();
@@ -69,14 +70,14 @@ export function PricingPage() {
     : '$12';
 
   return (
-    <div className="min-h-screen bg-[#0d0c1d] text-white flex flex-col font-sans selection:bg-[#6965DB]/30">
+    <div className="eunoia-pricing min-h-screen flex flex-col font-sans">
       {/* Header / Nav */}
       <header className="border-b border-white/10 px-6 py-4 flex items-center justify-between max-w-7xl mx-auto w-full">
         <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-8 h-8 rounded-lg bg-[#6965DB] flex items-center justify-center font-bold text-white shadow-lg shadow-[#6965DB]/30 group-hover:scale-105 transition-transform">
+          <div className="w-8 h-8 rounded-md bg-[#2458a6] flex items-center justify-center font-medium text-white">
             E
           </div>
-          <span className="font-bold text-lg tracking-tight text-white/90">
+          <span className="font-medium text-lg tracking-tight">
             Eunoia
           </span>
         </Link>
@@ -84,21 +85,21 @@ export function PricingPage() {
           {mounted && session ? (
             <Link
               href="/billing"
-              className="text-white/70 hover:text-white transition-colors"
+              className="pricing-nav-link"
             >
               Manage Subscription
             </Link>
           ) : (
             <Link
               href="/login?next=/pricing"
-              className="text-white/70 hover:text-white transition-colors"
+              className="pricing-nav-link"
             >
               Sign In
             </Link>
           )}
           <Link
             href="/board"
-            className="bg-[#6965DB] hover:bg-[#5854c7] text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+            className="pricing-nav-cta"
           >
             Open Workspace
           </Link>
@@ -107,11 +108,11 @@ export function PricingPage() {
 
       {/* Hero Section */}
       <main className="flex-1 max-w-7xl mx-auto px-6 py-16 w-full flex flex-col items-center">
-        <div className="text-center max-w-3xl mb-16 space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#6965DB]/15 text-[#9491f2] border border-[#6965DB]/30 text-xs font-semibold uppercase tracking-wider">
-            <Sparkles className="w-3.5 h-3.5" /> Simple, Transparent Pricing
+        <div className="pricing-intro text-center max-w-3xl mb-16 space-y-4">
+          <div className="pricing-eyebrow">
+            Plans and pricing
           </div>
-          <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
+          <h1 className="text-4xl sm:text-5xl font-medium tracking-tight leading-tight">
             Choose the right canvas for your team
           </h1>
           <p className="text-lg text-white/60">
@@ -127,7 +128,7 @@ export function PricingPage() {
         )}
 
         {/* Pricing Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-6xl">
+        <div className="pricing-grid grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-6xl">
           {/* Community Tier */}
           <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-8 flex flex-col justify-between hover:border-white/20 transition-all">
             <div>
@@ -177,20 +178,17 @@ export function PricingPage() {
 
           {/* Pro Tier (Featured) */}
           <div className="rounded-2xl bg-gradient-to-b from-[#6965DB]/20 via-white/[0.05] to-white/[0.02] border-2 border-[#6965DB] p-8 flex flex-col justify-between relative shadow-2xl shadow-[#6965DB]/20 scale-105">
-            <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-[#6965DB] text-white text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full shadow-lg">
-              Most Popular
-            </div>
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                  Pro <Zap className="w-4 h-4 text-[#9491f2]" />
+                <h3 className="text-xl font-medium flex items-center gap-2">
+                  Pro
                 </h3>
                 <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-[#6965DB]/30 text-[#c2c0f9]">
                   Per-seat
                 </span>
               </div>
               <p className="text-sm text-white/60 mb-6 min-h-[40px]">
-                Unlock advanced ELK & TALA layout engines, high node limits, and
+                Use advanced ELK & TALA layout engines, higher node limits, and
                 team collaboration.
               </p>
               <div className="mb-6">
@@ -322,18 +320,6 @@ export function PricingPage() {
         </div>
 
         {/* Feature comparison guarantee */}
-        <div className="mt-20 flex flex-wrap items-center justify-center gap-8 text-white/60 text-sm border-t border-white/10 pt-10 w-full max-w-4xl">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-[#6965DB]" /> Secure Razorpay
-            Checkout
-          </div>
-          <div className="flex items-center gap-2">
-            <Zap className="w-5 h-5 text-[#6965DB]" /> Instant Pro Activation
-          </div>
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-[#6965DB]" /> Cancel Anytime
-          </div>
-        </div>
       </main>
     </div>
   );
