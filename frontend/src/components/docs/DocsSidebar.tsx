@@ -110,7 +110,7 @@ export function DocsSidebar({
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
         {filteredSections.map((sec) => (
           <div key={sec.category}>
-            <div className="px-2 mb-1.5 text-[11px] font-semibold text-gray-900 uppercase tracking-wider">
+            <div className="px-2 mb-1.5 text-xs font-medium text-gray-500">
               {sec.category}
             </div>
 

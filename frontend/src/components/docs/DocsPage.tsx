@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { DocsSidebar } from './DocsSidebar';
 import { CodeBlock } from './CodeBlock';
 import { EngineCompare } from './EngineCompare';
+import './docs.css';
 import {
   D2_SNIPPETS,
   DOCKER_COMPOSE_SNIPPET,
@@ -113,7 +114,7 @@ export function DocsPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 flex flex-col font-sans antialiased">
+    <div className="eunoia-docs min-h-screen bg-white text-gray-900 flex flex-col font-sans antialiased">
       {/* Next.js Docs Header */}
       <header className="sticky top-0 z-40 w-full border-b border-gray-200/80 bg-white/80 backdrop-blur-md px-4 sm:px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -131,8 +132,8 @@ export function DocsPage() {
           </button>
 
           <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-6 h-6 rounded bg-black flex items-center justify-center font-bold text-white text-xs">
-              ▲
+            <div className="w-6 h-6 rounded bg-black flex items-center justify-center font-medium text-white text-xs">
+              E
             </div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-base tracking-tight text-black">
@@ -261,7 +262,7 @@ export function DocsPage() {
 
           {/* Article Header */}
           <div className="mb-10 pb-6 border-b border-gray-100">
-            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-black mb-3">
+            <h1 className="text-3xl sm:text-4xl font-medium tracking-tight text-black mb-3">
               Eunoia Documentation
             </h1>
             <p className="text-base sm:text-lg text-gray-600 leading-relaxed font-normal">

@@ -10,7 +10,6 @@ import {
 } from '@/components/ui/terminal';
 import { MagicCard } from '@/components/ui/magic-card';
 import { NumberTicker } from '@/components/ui/number-ticker';
-import { AvatarCircles } from '@/components/ui/avatar-circles';
 import { AnimatedList } from '@/components/ui/animated-list';
 import { Safari } from '@/components/ui/safari';
 import { AnimatedBeam } from '@/components/ui/animated-beam';
@@ -22,10 +21,6 @@ import { WordRotate } from '@/components/ui/word-rotate';
 import { ScrollProgress } from '@/components/ui/scroll-progress';
 import { CoolMode } from '@/components/ui/cool-mode';
 import { SpinningText } from '@/components/ui/spinning-text';
-import {
-  ScrollVelocityContainer,
-  ScrollVelocityRow,
-} from '@/components/ui/scroll-based-velocity';
 import { useRef, useState, type ReactNode } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -187,44 +182,6 @@ const assets = {
   logoIcon: '/images/logo_icon.svg',
   playground: '/images/editor_playground.png',
 };
-
-const avatars = [
-  {
-    imageUrl: 'https://avatars.githubusercontent.com/u/16860528?v=4',
-    profileUrl: 'https://github.com',
-  },
-  {
-    imageUrl: 'https://avatars.githubusercontent.com/u/20110627?v=4',
-    profileUrl: 'https://github.com',
-  },
-  {
-    imageUrl: 'https://avatars.githubusercontent.com/u/106103625?v=4',
-    profileUrl: 'https://github.com',
-  },
-  {
-    imageUrl: 'https://avatars.githubusercontent.com/u/59228569?v=4',
-    profileUrl: 'https://github.com',
-  },
-  {
-    imageUrl: 'https://avatars.githubusercontent.com/u/59442788?v=4',
-    profileUrl: 'https://github.com',
-  },
-];
-
-const companies = [
-  'NETFLIX',
-  'Meta',
-  'Intel',
-  'CAPCO',
-  'Wix',
-  'Swappie',
-  'reddit',
-  'Vercel',
-  'Linear',
-  'Memfault',
-  'BLUEBEAM',
-  'ROKT',
-];
 
 /* Stable CoolMode options (module-level so the effect doesn't re-bind). */
 const pencilBurst = { particle: '✏️' };
@@ -635,7 +592,7 @@ export function LandingPage() {
 
       {/* Main Content */}
       <main id="top">
-        {/* Hero Section — CSS dot grid + TextAnimate + ShinyText + Safari + Tickers + Avatars */}
+        {/* Hero section */}
         <DoodleSection className="eunoia-hero !min-h-0 !pb-16">
           <div className="eunoia-dot-grid" aria-hidden="true" />
           <div className="eunoia-hero__copy flex flex-col items-center">
@@ -662,7 +619,7 @@ export function LandingPage() {
               once
               className="eunoia-hero-title"
             >
-              Architecture Whiteboard made simple
+              Map system architecture together, in one shared whiteboard
             </TextAnimate>
             <BlurFade delay={0.25} inView>
               <p className="!mt-6 flex flex-wrap items-baseline justify-center gap-x-2">
@@ -671,7 +628,7 @@ export function LandingPage() {
                   duration={2200}
                   className="font-hand text-[24px] text-[#6965DB]"
                 />
-                <span>Simply with Eunoia.</span>
+                <span>Sketch, diagram, and decide with Eunoia.</span>
               </p>
             </BlurFade>
             <BlurFade delay={0.35} inView>
@@ -694,14 +651,6 @@ export function LandingPage() {
                 >
                   <Github size={16} /> Star on GitHub
                 </a>
-              </div>
-            </BlurFade>
-            <BlurFade delay={0.45} inView>
-              <div className="mt-7 flex flex-col items-center gap-2">
-                <AvatarCircles avatarUrls={avatars} numPeople={2400} />
-                <p className="!m-0 text-[13px] font-semibold text-[#4c4a69]">
-                  Loved by 2,400+ engineers mapping systems in the open
-                </p>
               </div>
             </BlurFade>
           </div>
@@ -783,25 +732,6 @@ export function LandingPage() {
               ))}
             </div>
           </BlurFade>
-        </section>
-
-        {/* Company Strip — scroll-reactive velocity marquee */}
-        <section className="eunoia-company-strip !pb-14">
-          <BlurFade inView>
-            <p>Made for teams who map what matters</p>
-          </BlurFade>
-          <ScrollVelocityContainer>
-            <ScrollVelocityRow baseVelocity={2.5}>
-              {companies.map((c) => (
-                <span
-                  key={c}
-                  className="mx-5 whitespace-nowrap font-sans text-[22px] font-extrabold tracking-tight text-[#b9b9bf] grayscale transition hover:text-[#6965DB] hover:grayscale-0"
-                >
-                  {c}
-                </span>
-              ))}
-            </ScrollVelocityRow>
-          </ScrollVelocityContainer>
         </section>
 
         {/* Intro Section */}
