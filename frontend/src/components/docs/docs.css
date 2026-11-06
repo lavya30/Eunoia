@@ -1,11 +1,11 @@
 .eunoia-docs {
-  --docs-paper: #f7f7f4;
-  --docs-surface: #fff;
-  --docs-line: #dedfdc;
-  --docs-ink: #18212a;
-  --docs-secondary: #4d5862;
-  --docs-muted: #68737d;
-  --docs-blue: #2458a6;
+  --docs-paper: var(--eunoia-paper);
+  --docs-surface: var(--eunoia-surface);
+  --docs-line: var(--eunoia-border);
+  --docs-ink: var(--eunoia-ink);
+  --docs-secondary: var(--eunoia-secondary);
+  --docs-muted: var(--eunoia-muted);
+  --docs-blue: var(--eunoia-blue);
   background: var(--docs-paper);
   color: var(--docs-ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;

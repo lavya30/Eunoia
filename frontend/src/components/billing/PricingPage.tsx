@@ -151,19 +151,19 @@ export function PricingPage() {
               </div>
               <ul className="space-y-3 text-sm text-white/80 border-t border-white/10 pt-6">
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Infinite Whiteboard Canvas
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" /> D2
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" /> D2
                   DAGRE Layout Engine
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" /> Up
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" /> Up
                   to 30 nodes per diagram
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Standard PNG exports
                 </li>
               </ul>
@@ -177,13 +177,13 @@ export function PricingPage() {
           </div>
 
           {/* Pro Tier (Featured) */}
-          <div className="rounded-2xl bg-gradient-to-b from-[#6965DB]/20 via-white/[0.05] to-white/[0.02] border-2 border-[#6965DB] p-8 flex flex-col justify-between relative shadow-2xl shadow-[#6965DB]/20 scale-105">
+          <div className="rounded-2xl bg-gradient-to-b from-[#2458a6]/20 via-white/[0.05] to-white/[0.02] border-2 border-[#2458a6] p-8 flex flex-col justify-between relative shadow-2xl shadow-[#2458a6]/20 scale-105">
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xl font-medium flex items-center gap-2">
                   Pro
                 </h3>
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-[#6965DB]/30 text-[#c2c0f9]">
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-[#2458a6]/30 text-[#344b66]">
                   Per-seat
                 </span>
               </div>
@@ -229,23 +229,23 @@ export function PricingPage() {
 
               <ul className="space-y-3 text-sm text-white/90 border-t border-white/10 pt-6">
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Everything in Community
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#9491f2] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Advanced ELK & TALA Layout Engines
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#9491f2] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Unlimited D2 diagram node count
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#9491f2] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Team Rooms & Managed History
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#9491f2] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   High-res vector & image exports
                 </li>
               </ul>
@@ -254,7 +254,7 @@ export function PricingPage() {
               type="button"
               onClick={handleUpgrade}
               disabled={loading}
-              className="mt-8 w-full py-3.5 px-4 rounded-xl bg-[#6965DB] hover:bg-[#5854c7] text-white font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#6965DB]/30 disabled:opacity-50"
+              className="mt-8 w-full py-3.5 px-4 rounded-xl bg-[#2458a6] hover:bg-[#1d477f] text-white font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#2458a6]/30 disabled:opacity-50"
             >
               {loading ? (
                 <span>Redirecting...</span>
@@ -289,23 +289,23 @@ export function PricingPage() {
               </div>
               <ul className="space-y-3 text-sm text-white/80 border-t border-white/10 pt-6">
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Everything in Pro
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   DB-Managed Tier Overrides
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" /> SSO
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" /> SSO
                   / SAML Authentication
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Dedicated Cloud Infrastructure
                 </li>
                 <li className="flex items-center gap-3">
-                  <Check className="w-4 h-4 text-[#6965DB] flex-shrink-0" />{' '}
+                  <Check className="w-4 h-4 text-[#2458a6] flex-shrink-0" />{' '}
                   Priority 24/7 SLA Support
                 </li>
               </ul>

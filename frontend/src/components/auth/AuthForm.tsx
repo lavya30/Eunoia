@@ -76,7 +76,7 @@ function LogoMark() {
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true"
     >
-      <rect width="32" height="32" rx="8" fill="#6965DB" />
+      <rect width="32" height="32" rx="8" fill="#2458a6" />
       <path
         d="M9 16H23M16 9V23M11 11L21 21M21 11L11 21"
         stroke="#FFFFFF"
@@ -379,13 +379,13 @@ export function AuthForm({
         <BlurFade delay={0.08} className="auth-card-wrap">
           <MagicCard
             className="auth-card"
-            gradientColor="#6965DB"
+            gradientColor="#2458a6"
             gradientOpacity={0.14}
           >
             <BorderBeam
               size={90}
               duration={8}
-              colorFrom="#6965DB"
+              colorFrom="#2458a6"
               colorTo="#ffb005"
               borderWidth={1.5}
             />
@@ -407,7 +407,7 @@ export function AuthForm({
                 </p>
                 <ShimmerButton
                   type="button"
-                  background="rgba(105,101,219,1)"
+                  background="rgba(36,88,166,1)"
                   className="auth-submit"
                   onClick={continueToBoard}
                 >
@@ -587,7 +587,7 @@ export function AuthForm({
                   <div className="auth-submit-wrap">
                     <ShimmerButton
                       type="submit"
-                      background="rgba(105,101,219,1)"
+                      background="rgba(36,88,166,1)"
                       className="auth-submit"
                       disabled={pending}
                     >
@@ -619,7 +619,7 @@ export function AuthForm({
                 </div>
                 {mode === 'login' ? (
                   <p style={{ marginTop: 10, fontSize: 13 }}>
-                    <Link href="/forgot" style={{ color: '#5b54c7' }}>
+                    <Link href="/forgot" style={{ color: '#2458a6' }}>
                       Forgot your password?
                     </Link>
                   </p>

@@ -14,7 +14,7 @@ const FolderIcon = ({ open = false }: { open?: boolean }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
-    className="shrink-0 text-[#6965DB]"
+    className="shrink-0 text-[#2458a6]"
   >
     {open ? (
       <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
@@ -34,7 +34,7 @@ const FileIcon = () => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
-    className="shrink-0 text-[#8c8b9f]"
+    className="shrink-0 text-[#68737d]"
   >
     <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
     <path d="M14 2v4a2 2 0 0 0 2 2h4" />
@@ -52,7 +52,7 @@ const Chevron = ({ open = false }: { open?: boolean }) => (
     strokeLinecap="round"
     strokeLinejoin="round"
     className={cn(
-      'shrink-0 text-[#8c8b9f] transition-transform duration-200',
+      'shrink-0 text-[#68737d] transition-transform duration-200',
       open && 'rotate-90',
     )}
   >
@@ -101,13 +101,13 @@ export function Folder({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] font-bold text-[#242257] transition-colors hover:bg-[#f6f6fb]"
+        className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] font-bold text-[#1d252d] transition-colors hover:bg-[#f0efe9]"
       >
         <Chevron open={open} />
         <FolderIcon open={open} />
         <span className="truncate">{name}</span>
         {badge && (
-          <span className="ml-auto rounded-full bg-[#e9e8ff] px-1.5 py-px font-mono text-[10px] font-bold text-[#6965DB]">
+          <span className="ml-auto rounded-full bg-[#e8eef6] px-1.5 py-px font-mono text-[10px] font-bold text-[#2458a6]">
             {badge}
           </span>
         )}
@@ -144,15 +144,15 @@ export function File({
       className={cn(
         'flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] transition-colors',
         selected
-          ? 'bg-[#e9e8ff] font-bold text-[#17174a]'
-          : 'font-medium text-[#525172] hover:bg-[#f6f6fb]',
+          ? 'bg-[#e8eef6] font-bold text-[#1d252d]'
+          : 'font-medium text-[#535e68] hover:bg-[#f0efe9]',
       )}
     >
       <span className="w-3 shrink-0" aria-hidden="true" />
       <FileIcon />
       <span className="truncate">{name}</span>
       {meta && (
-        <span className="ml-auto font-mono text-[10px] text-[#8c8b9f]">
+        <span className="ml-auto font-mono text-[10px] text-[#68737d]">
           {meta}
         </span>
       )}

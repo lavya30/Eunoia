@@ -125,11 +125,11 @@ export function BillingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0d0c1d] text-white flex flex-col font-sans selection:bg-[#6965DB]/30">
+    <div className="min-h-screen bg-[#20272e] text-white flex flex-col font-sans selection:bg-[#83a9dc]/30">
       {/* Header */}
       <header className="border-b border-white/10 px-6 py-4 flex items-center justify-between max-w-5xl mx-auto w-full">
         <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-8 h-8 rounded-lg bg-[#6965DB] flex items-center justify-center font-bold text-white shadow-lg shadow-[#6965DB]/30 group-hover:scale-105 transition-transform">
+          <div className="w-8 h-8 rounded-lg bg-[#2458a6] flex items-center justify-center font-bold text-white shadow-lg shadow-[#2458a6]/30 group-hover:scale-105 transition-transform">
             E
           </div>
           <span className="font-bold text-lg tracking-tight text-white/90">
@@ -145,7 +145,7 @@ export function BillingPage() {
           </Link>
           <Link
             href="/board"
-            className="bg-[#6965DB] hover:bg-[#5854c7] text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+            className="bg-[#2458a6] hover:bg-[#1d477f] text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
           >
             Open Workspace
           </Link>
@@ -180,7 +180,7 @@ export function BillingPage() {
             {authFailed ? (
               <Link
                 href="/login?next=/billing"
-                className="py-1.5 px-4 rounded-lg bg-[#6965DB] hover:bg-[#5854c7] text-white font-medium text-xs transition-colors"
+                className="py-1.5 px-4 rounded-lg bg-[#2458a6] hover:bg-[#1d477f] text-white font-medium text-xs transition-colors"
               >
                 Sign in
               </Link>
@@ -194,7 +194,7 @@ export function BillingPage() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
               <div>
                 <h1 className="text-2xl font-extrabold text-white flex items-center gap-3">
-                  <CreditCard className="w-6 h-6 text-[#6965DB]" /> Subscription
+                  <CreditCard className="w-6 h-6 text-[#2458a6]" /> Subscription
                   & Billing
                 </h1>
                 <p className="text-sm text-white/60 mt-1">
@@ -206,7 +206,7 @@ export function BillingPage() {
                 <span
                   className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider ${
                     userTier === 'PRO'
-                      ? 'bg-[#6965DB] text-white shadow-md shadow-[#6965DB]/30'
+                      ? 'bg-[#2458a6] text-white shadow-md shadow-[#2458a6]/30'
                       : userTier === 'ENTERPRISE'
                         ? 'bg-amber-500 text-black font-extrabold'
                         : 'bg-white/10 text-white/80'
@@ -290,7 +290,7 @@ export function BillingPage() {
                   ) : (
                     <Link
                       href="/pricing"
-                      className="py-2.5 px-5 rounded-xl bg-[#6965DB] hover:bg-[#5854c7] text-white font-medium text-sm transition-colors flex items-center gap-2 shadow-sm"
+                      className="py-2.5 px-5 rounded-xl bg-[#2458a6] hover:bg-[#1d477f] text-white font-medium text-sm transition-colors flex items-center gap-2 shadow-sm"
                     >
                       <span>Upgrade to Pro Plan</span>
                     </Link>

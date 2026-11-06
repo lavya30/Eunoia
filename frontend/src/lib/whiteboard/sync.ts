@@ -471,13 +471,20 @@ export function createBoardSync(options: SyncSessionOptions): SyncSession {
     removed: number[];
   }) => {
     const now = Date.now();
+    let remoteChanged = false;
     for (const clientId of [...changes.added, ...changes.updated]) {
+      if (clientId === awareness.clientID) continue;
       peerSeenAt.set(clientId, now);
+      remoteChanged = true;
     }
     for (const clientId of changes.removed) {
+      if (clientId === awareness.clientID) continue;
       peerSeenAt.delete(clientId);
+      remoteChanged = true;
     }
-    emitPeers();
+    // Local cursor and tool updates are frequent. They should be broadcast to
+    // other clients, but must not re-render this client through onPeers.
+    if (remoteChanged) emitPeers();
   };
 
   const handleAwarenessUpdate = (changes: {

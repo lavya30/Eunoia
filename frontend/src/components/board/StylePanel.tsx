@@ -599,7 +599,7 @@ export function StylePanel({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 4,
-                  color: '#5b54c7',
+                  color: '#2458a6',
                 }}
               >
                 <Code2 size={13} />

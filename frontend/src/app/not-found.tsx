@@ -26,7 +26,7 @@ export default function NotFound() {
             style={{
               padding: '10px 18px',
               borderRadius: 10,
-              background: '#5b54c7',
+              background: '#2458a6',
               color: '#fff',
               fontWeight: 700,
               fontSize: 14,

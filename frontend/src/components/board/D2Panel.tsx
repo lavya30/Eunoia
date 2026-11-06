@@ -150,7 +150,7 @@ export function D2Panel({
             color: '#656880',
           }}
         >
-          <Layers size={13} style={{ color: '#5b54c7' }} />
+          <Layers size={13} style={{ color: '#2458a6' }} />
           <span>
             {canvasNodeCount > 0
               ? `${canvasNodeCount} canvas shape${canvasNodeCount === 1 ? '' : 's'}${
@@ -170,8 +170,8 @@ export function D2Panel({
                 padding: '3px 8px',
                 fontSize: 11,
                 background: '#fff',
-                color: '#5b54c7',
-                border: '1px solid #dcd9f6',
+                color: '#2458a6',
+                border: '1px solid #b9c9df',
               }}
               onClick={() => onGenerateFromCanvas?.(true)}
               title="Generate D2 code from selected shapes only"

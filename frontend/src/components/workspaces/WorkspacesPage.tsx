@@ -328,7 +328,7 @@ function TeamsTab({
                   <div key={room.id} style={styles.row}>
                     <Link
                       href={`/board?room=${encodeURIComponent(room.id)}`}
-                      style={{ fontWeight: 600, color: '#5b54c7' }}
+                      style={{ fontWeight: 600, color: '#2458a6' }}
                     >
                       {room.name}
                     </Link>
@@ -790,7 +790,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#25263a',
   },
   wrap: { width: '100%', maxWidth: 960 },
-  backLink: { fontSize: 13, color: '#5b54c7', fontWeight: 600 },
+  backLink: { fontSize: 13, color: '#2458a6', fontWeight: 600 },
   h1: { fontSize: 28, margin: '0 0 4px' },
   h2: { fontSize: 18, margin: '0 0 8px' },
   h3: {
@@ -827,8 +827,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#35374a',
   },
   tabActive: {
-    border: '2px solid #5b54c7',
-    background: '#ede9ff',
+    border: '2px solid #2458a6',
+    background: '#e8eef6',
   },
   input: {
     flex: 1,
@@ -844,7 +844,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     borderRadius: 8,
     border: 0,
-    background: '#5b54c7',
+    background: '#2458a6',
     color: '#fff',
     padding: '8px 14px',
     cursor: 'pointer',
@@ -872,7 +872,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: '#35374a',
   },
-  listButtonActive: { border: '2px solid #5b54c7', background: '#ede9ff' },
+  listButtonActive: { border: '2px solid #2458a6', background: '#e8eef6' },
   row: {
     display: 'flex',
     alignItems: 'center',
@@ -891,7 +891,7 @@ const styles: Record<string, React.CSSProperties> = {
   linkButton: {
     border: 0,
     background: 'transparent',
-    color: '#5b54c7',
+    color: '#2458a6',
     cursor: 'pointer',
     fontSize: 13,
     fontWeight: 600,
@@ -904,7 +904,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
   },
-  inlineLink: { color: '#5b54c7', fontWeight: 600 },
+  inlineLink: { color: '#2458a6', fontWeight: 600 },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
   th: {
     textAlign: 'left',

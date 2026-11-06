@@ -7,12 +7,12 @@
 }
 
 :root {
-  --ink: #17174a;
-  --purple: #6965db;
+  --ink: #1d252d;
+  --purple: #2458a6;
   --mint: #c7f3d1;
   --paper: #fcfcf7;
   --line: #e7e6ef;
-  --soft: #f6f6fb;
+  --soft: #f0efe9;
 }
 
 .eunoia-landing {
@@ -80,7 +80,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #202052;
+  color: #1d252d;
   font-size: 15px;
   font-weight: 600;
   text-decoration: none;
@@ -119,7 +119,7 @@
 .eunoia-sign-in {
   padding: 12px 27px;
   border: 1px solid #d7d6e1;
-  color: #262356;
+  color: #1d252d;
   text-decoration: none;
   border-radius: 28px;
   font-size: 15px;
@@ -147,7 +147,7 @@
   font-weight: 800;
   letter-spacing: 0.15px;
   white-space: nowrap;
-  box-shadow: 0 3px 6px rgba(74, 67, 166, 0.2);
+  box-shadow: 0 3px 6px rgba(29, 71, 127, 0.2);
   transition:
     transform 0.18s cubic-bezier(0.23, 1, 0.32, 1),
     background 0.18s ease;
@@ -230,7 +230,7 @@
 .eunoia-testimonials h2,
 .eunoia-more-plans h2 {
   margin: 0;
-  color: #15154c;
+  color: #1d252d;
   font-weight: 700;
   letter-spacing: -0.9px;
 }
@@ -244,7 +244,7 @@
 .eunoia-hero-title {
   max-width: 880px;
   margin: 0 auto;
-  color: #15154c;
+  color: #1d252d;
   font-weight: 700;
   letter-spacing: -0.9px;
   font-size: clamp(46px, 4.35vw, 67px);
@@ -256,13 +256,13 @@
   margin: 0;
   font-size: 17px;
   font-weight: 500;
-  color: #202052;
+  color: #1d252d;
   text-align: center;
 }
 
 .eunoia-section-title {
   margin: 0;
-  color: #15154c;
+  color: #1d252d;
   font-weight: 700;
   letter-spacing: -0.9px;
   font-size: clamp(41px, 4vw, 60px);
@@ -302,7 +302,7 @@
 .eunoia-hero p {
   margin: 59px 0 25px;
   font-size: 20px;
-  color: #202052;
+  color: #1d252d;
 }
 
 .eunoia-github-pill {
@@ -344,7 +344,7 @@
   pointer-events: none;
   background-image: radial-gradient(
     circle,
-    rgba(105, 101, 219, 0.28) 1.2px,
+    rgba(36, 88, 166, 0.28) 1.2px,
     transparent 1.3px
   );
   background-size: 22px 22px;
@@ -364,7 +364,7 @@
 
 .eunoia-company-strip p {
   margin: 0 0 36px;
-  color: #211f50;
+  color: #1d252d;
   font-size: 18px;
   font-weight: 500;
 }
@@ -428,7 +428,7 @@
 
 .eunoia-intro h4 {
   margin: 24px 0 25px;
-  color: #202052;
+  color: #1d252d;
   font-family: 'Excalifont', 'Virgil', 'Caveat', cursive;
   font-size: 26px;
   line-height: 1;
@@ -450,7 +450,7 @@
   margin: 0;
   font-size: 17px;
   font-weight: 500;
-  color: #202052;
+  color: #1d252d;
 }
 
 .eunoia-intro-buttons {
@@ -539,7 +539,7 @@
   display: inline-block;
   margin: 19px 0 15px;
   padding: 5px 12px;
-  color: #292359;
+  color: #1d252d;
   background: #e0ffdf;
   border-radius: 4px 6px 5px 4px;
   font-family: 'Excalifont', 'Virgil', 'Caveat', cursive;
@@ -555,7 +555,7 @@
 .eunoia-feature-step h4 {
   max-width: 900px;
   margin: 17px 0 0;
-  color: #29275d;
+  color: #1d252d;
   font-size: 21px;
   line-height: 1.42;
   font-weight: 500;
@@ -611,7 +611,7 @@
   border-radius: 4px;
   background: #f2f1f5;
   font-size: 11px;
-  color: #8c8b9f;
+  color: #68737d;
   font-family: monospace;
 }
 
@@ -661,14 +661,14 @@
 
 .eunoia-feature-card h5 {
   margin: 0;
-  color: #242257;
+  color: #1d252d;
   font-size: 16px;
   font-weight: 700;
 }
 
 .eunoia-feature-card p {
   margin: 8px 0 0;
-  color: #525172;
+  color: #535e68;
   font-size: 15px;
   line-height: 1.4;
 }
@@ -738,7 +738,7 @@
 .eunoia-whiteboard-callout p {
   margin: 16px 0 28px;
   font-size: 18px;
-  color: #211f50;
+  color: #1d252d;
 }
 
 .eunoia-whiteboard-callout__buttons {
@@ -770,7 +770,7 @@
 
 .eunoia-testimonials__heading p {
   margin: 17px 0 42px;
-  color: #4c4a69;
+  color: #535e68;
   font-size: 18px;
 }
 
@@ -791,20 +791,20 @@
 .eunoia-testimonials__grid h3 {
   margin: 0;
   font-size: 16px;
-  color: #252356;
+  color: #1d252d;
 }
 
 .eunoia-testimonials__grid small {
   display: block;
   margin-top: 4px;
-  color: #77758a;
+  color: #68737d;
   font-size: 12px;
   font-weight: 500;
 }
 
 .eunoia-testimonials__grid p {
   margin: 21px 0 0;
-  color: #454361;
+  color: #535e68;
   font-size: 15px;
   line-height: 1.5;
 }
@@ -832,8 +832,8 @@
 }
 
 .eunoia-more-plans__cards article:nth-child(2) {
-  background: #e9e8ff;
-  border-color: #cbc8fa;
+  background: #e8eef6;
+  border-color: #b9c9df;
 }
 
 .eunoia-more-plans__cards article > span {
@@ -853,7 +853,7 @@
 .eunoia-more-plans__cards p {
   min-height: 66px;
   margin: 0 0 26px;
-  color: #4e4b67;
+  color: #535e68;
   line-height: 1.5;
   font-size: 15px;
 }
@@ -1094,11 +1094,11 @@
 
 /* Eunoia's drafting table: quiet paper, graphite type, one construction blue. */
 .eunoia-landing {
-  --ink: #17212b;
-  --purple: #2458a6;
-  --paper: #f7f6f1;
-  --line: #d9d9d3;
-  --soft: #eeeee9;
+  --ink: var(--eunoia-ink);
+  --purple: var(--eunoia-blue);
+  --paper: var(--eunoia-paper);
+  --line: var(--eunoia-border);
+  --soft: var(--eunoia-paper-raised);
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;

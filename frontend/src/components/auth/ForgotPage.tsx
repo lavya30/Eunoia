@@ -101,7 +101,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 20,
     background: '#fff',
   },
-  back: { color: '#5b54c7', fontSize: 13, fontWeight: 600 },
+  back: { color: '#2458a6', fontSize: 13, fontWeight: 600 },
   h1: { fontSize: 22, margin: '8px 0 12px' },
   muted: { fontSize: 14, lineHeight: 1.5 },
   token: { fontSize: 13, marginTop: 12 },
@@ -114,7 +114,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   primary: {
     marginTop: 12,
-    background: '#5b54c7',
+    background: '#2458a6',
     color: '#fff',
     border: 0,
     borderRadius: 8,

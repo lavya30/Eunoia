@@ -17,7 +17,7 @@
   --board-blue: #4a86c6;
   --board-yellow: #f7d66f;
   --board-mint: #bfe9d5;
-  --board-violet: #766cdc;
+  --board-violet: #2458a6;
 }
 
 .eunoia-board-shell {
@@ -651,7 +651,7 @@ path.canvas-grid {
 
 .stroke-group:hover path,
 .arrow-group:hover path {
-  filter: drop-shadow(0 0 3px rgba(105, 101, 219, 0.45));
+  filter: drop-shadow(0 0 3px rgba(36, 88, 166, 0.45));
 }
 
 .node-label--text {
@@ -704,7 +704,7 @@ path.canvas-grid {
 
 .canvas-node--violet .node-body,
 .canvas-node--violet .node-cap {
-  fill: #ede9ff;
+  fill: #e8eef6;
   stroke: #756bce;
 }
 .canvas-node--orange .node-body,
@@ -1404,11 +1404,11 @@ path.canvas-grid {
 .share-button {
   background: var(--board-violet);
   color: #ffffff;
-  box-shadow: 0 3px 8px rgba(105, 101, 219, 0.18);
+  box-shadow: 0 3px 8px rgba(36, 88, 166, 0.18);
 }
 
 .share-button:hover {
-  background: #5f5acb;
+  background: #1d477f;
 }
 
 .board-workspace {
@@ -1492,13 +1492,13 @@ path.canvas-grid {
 .floating-tool:hover,
 .board-floating-toolbar .board-tool:hover {
   border-color: #dfddec;
-  background: #f7f6fb;
+  background: #f0efe9;
   color: var(--board-ink);
 }
 
 .board-floating-toolbar .board-tool.is-active {
-  border-color: #d8d6fa;
-  background: #eeedff;
+  border-color: #b9c9df;
+  background: #e8eef6;
   color: var(--board-violet);
 }
 
@@ -1554,7 +1554,7 @@ path.canvas-grid {
 .style-panel-title small {
   overflow: hidden;
   max-width: 135px;
-  color: #8c8d9c;
+  color: #68737d;
   font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1839,8 +1839,8 @@ path.canvas-grid {
 }
 
 .canvas-view-controls button.is-active {
-  color: #6965db;
-  background: #eeedff;
+  color: #2458a6;
+  background: #e8eef6;
 }
 
 .zoom-divider {
@@ -1876,7 +1876,7 @@ path.canvas-grid {
 }
 
 .code-icon {
-  background: #eeedff;
+  background: #e8eef6;
   color: var(--board-violet);
 }
 
@@ -1913,7 +1913,7 @@ path.canvas-grid {
 
 .compile-button {
   border-color: #d8d6f4;
-  background: #eeedff;
+  background: #e8eef6;
   color: #5c58b6;
 }
 

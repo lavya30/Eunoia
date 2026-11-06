@@ -148,7 +148,7 @@ export function SettingsPage() {
         <div style={{ marginBottom: 8 }}>
           <Link
             href="/"
-            style={{ fontSize: 13, color: '#5b54c7', fontWeight: 600 }}
+            style={{ fontSize: 13, color: '#2458a6', fontWeight: 600 }}
           >
             ← Eunoia
           </Link>
@@ -195,7 +195,7 @@ export function SettingsPage() {
                   style={{
                     padding: '8px 14px',
                     borderRadius: 10,
-                    background: '#5b54c7',
+                    background: '#2458a6',
                     color: '#fff',
                     fontWeight: 600,
                     fontSize: 13,
@@ -249,7 +249,7 @@ export function SettingsPage() {
                 style={{
                   padding: '8px 14px',
                   borderRadius: 10,
-                  background: '#5b54c7',
+                  background: '#2458a6',
                   color: '#fff',
                   fontWeight: 600,
                   fontSize: 13,
@@ -350,22 +350,22 @@ export function SettingsPage() {
         </section>
 
         <div style={{ marginTop: 24, fontSize: 13, display: 'flex', gap: 16 }}>
-          <Link href="/dashboard" style={{ color: '#5b54c7', fontWeight: 600 }}>
+          <Link href="/dashboard" style={{ color: '#2458a6', fontWeight: 600 }}>
             Boards →
           </Link>
-          <Link href="/board" style={{ color: '#5b54c7', fontWeight: 600 }}>
+          <Link href="/board" style={{ color: '#2458a6', fontWeight: 600 }}>
             Open a board →
           </Link>
           <Link
             href="/workspaces"
-            style={{ color: '#5b54c7', fontWeight: 600 }}
+            style={{ color: '#2458a6', fontWeight: 600 }}
           >
             Workspaces →
           </Link>
-          <Link href="/status" style={{ color: '#5b54c7', fontWeight: 600 }}>
+          <Link href="/status" style={{ color: '#2458a6', fontWeight: 600 }}>
             System status →
           </Link>
-          <Link href="/changelog" style={{ color: '#5b54c7', fontWeight: 600 }}>
+          <Link href="/changelog" style={{ color: '#2458a6', fontWeight: 600 }}>
             Changelog →
           </Link>
         </div>
@@ -451,7 +451,7 @@ function ProfileNameForm({
           style={{
             padding: '8px 14px',
             borderRadius: 8,
-            background: '#5b54c7',
+            background: '#2458a6',
             color: '#fff',
             border: 0,
             fontWeight: 600,

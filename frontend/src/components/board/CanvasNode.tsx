@@ -45,7 +45,7 @@ export function CanvasNode({
   const shapeStyle = {
     fill: isFrame ? (node.fill ?? 'rgba(247, 246, 252, 0.4)') : node.fill,
     stroke: isFrame
-      ? (node.stroke ?? (selected ? '#6965db' : '#9b97ac'))
+      ? (node.stroke ?? (selected ? '#2458a6' : '#9b97ac'))
       : node.stroke,
     strokeWidth: isFrame
       ? (node.strokeWidth ?? (selected ? 2.5 : 1.5))
@@ -233,7 +233,7 @@ export function CanvasNode({
               )}
               height="28"
               rx="6"
-              fill={selected ? '#6965db' : '#f0eef8'}
+              fill={selected ? '#2458a6' : '#f0eef8'}
               stroke={selected ? '#5753c9' : '#d2d0e0'}
               strokeWidth="1.2"
             />

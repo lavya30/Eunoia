@@ -36,7 +36,7 @@ export default function ChangelogRoute() {
       <div style={{ maxWidth: 720, width: '100%' }}>
         <Link
           href="/"
-          style={{ color: '#5b54c7', fontWeight: 600, fontSize: 14 }}
+          style={{ color: '#2458a6', fontWeight: 600, fontSize: 14 }}
         >
           ← Eunoia
         </Link>

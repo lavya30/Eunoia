@@ -166,7 +166,7 @@ export function Minimap({
         width: MINIMAP_WIDTH,
         height: MINIMAP_HEIGHT,
         backgroundColor: 'rgba(28, 29, 41, 0.92)',
-        border: '1px solid rgba(105, 101, 219, 0.35)',
+        border: '1px solid rgba(36, 88, 166, 0.35)',
         borderRadius: 8,
         overflow: 'hidden',
         boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
@@ -246,7 +246,7 @@ export function Minimap({
           width={vpW}
           height={vpH}
           rx={2}
-          fill="rgba(105, 101, 219, 0.22)"
+          fill="rgba(36, 88, 166, 0.22)"
           stroke="#8b86ee"
           strokeWidth={1.5}
         />

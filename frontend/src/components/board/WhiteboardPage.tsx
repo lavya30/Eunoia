@@ -267,6 +267,7 @@ type Interaction =
       handle: string;
       targetId: string;
       originBounds: Aabb;
+      originFontSize?: number;
     }
   | {
       kind: 'rotate';
@@ -476,7 +477,7 @@ function toneForColor(color: string): BoardNode['tone'] {
   if (color === '#ef8c52') return 'orange';
   if (color === '#4a86c6') return 'blue';
   if (color === '#f7d66f') return 'yellow';
-  if (color === '#766cdc') return 'violet';
+  if (color === '#2458a6') return 'violet';
   return 'mint';
 }
 
@@ -3358,12 +3359,16 @@ export function WhiteboardPage({
       event.stopPropagation();
       event.preventDefault();
       gestureBaseRef.current = null;
+      const targetNode = nodesRef.current.find(
+        (node) => node.id === selectedIds[0],
+      );
       interactionRef.current = {
         kind: 'resize',
         pointerId: event.pointerId,
         handle,
         targetId: selectedIds[0],
         originBounds: selectedNodeBounds,
+        originFontSize: targetNode?.fontSize,
       };
       canvasRef.current.setPointerCapture(event.pointerId);
     },
@@ -4297,8 +4302,9 @@ export function WhiteboardPage({
         const nextWidth = nextBounds.maxX - nextBounds.minX;
         const nextHeight = nextBounds.maxY - nextBounds.minY;
 
-        setNodes((current) =>
-          current.map((node) => {
+        setNodes((current) => {
+          let changed = false;
+          const next = current.map((node) => {
             if (node.id !== targetId) return node;
             if (node.shape === 'text') {
               const originHeight =
@@ -4306,11 +4312,22 @@ export function WhiteboardPage({
               const scaleRatio =
                 originHeight > 0 ? nextHeight / originHeight : 1;
               const originFontSize =
-                node.fontSize ?? Math.max(14, Math.round(originHeight * 0.65));
+                interaction.originFontSize ??
+                Math.max(14, Math.round(originHeight * 0.65));
               const newFontSize = Math.max(
                 12,
                 Math.round(originFontSize * scaleRatio),
               );
+              if (
+                node.x === nextBounds.minX &&
+                node.y === nextBounds.minY &&
+                node.width === nextWidth &&
+                node.height === nextHeight &&
+                node.fontSize === newFontSize
+              ) {
+                return node;
+              }
+              changed = true;
               return {
                 ...node,
                 x: nextBounds.minX,
@@ -4320,6 +4337,15 @@ export function WhiteboardPage({
                 fontSize: newFontSize,
               };
             }
+            if (
+              node.x === nextBounds.minX &&
+              node.y === nextBounds.minY &&
+              node.width === nextWidth &&
+              node.height === nextHeight
+            ) {
+              return node;
+            }
+            changed = true;
             return {
               ...node,
               x: nextBounds.minX,
@@ -4327,11 +4353,13 @@ export function WhiteboardPage({
               width: nextWidth,
               height: nextHeight,
             };
-          }),
-        );
+          });
+          return changed ? next : current;
+        });
 
-        setArrows((current) =>
-          current.map((arrow) => {
+        setArrows((current) => {
+          let changed = false;
+          const next = current.map((arrow) => {
             if (
               arrow.startNodeId !== targetId &&
               arrow.endNodeId !== targetId
@@ -4371,9 +4399,19 @@ export function WhiteboardPage({
                 arrow.routing,
               );
             }
+            if (
+              arrow.start.x === newStart.x &&
+              arrow.start.y === newStart.y &&
+              arrow.end.x === newEnd.x &&
+              arrow.end.y === newEnd.y
+            ) {
+              return arrow;
+            }
+            changed = true;
             return { ...arrow, start: newStart, end: newEnd };
-          }),
-        );
+          });
+          return changed ? next : current;
+        });
         return;
       }
 
@@ -6688,31 +6726,31 @@ export function WhiteboardPage({
                   >
                     <a
                       href="/dashboard"
-                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                      style={{ color: '#2458a6', fontWeight: 600 }}
                     >
                       Boards
                     </a>
                     <a
                       href="/pricing"
-                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                      style={{ color: '#2458a6', fontWeight: 600 }}
                     >
                       Plans
                     </a>
                     <a
                       href="/billing"
-                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                      style={{ color: '#2458a6', fontWeight: 600 }}
                     >
                       Billing
                     </a>
                     <a
                       href="/status"
-                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                      style={{ color: '#2458a6', fontWeight: 600 }}
                     >
                       Status
                     </a>
                     <a
                       href="/settings"
-                      style={{ color: '#5b54c7', fontWeight: 600 }}
+                      style={{ color: '#2458a6', fontWeight: 600 }}
                     >
                       Settings
                     </a>
@@ -7011,9 +7049,9 @@ export function WhiteboardPage({
                       padding: '2px 6px',
                       borderRadius: 999,
                       background: isProTier(roomMeta?.tier)
-                        ? '#ede9ff'
+                        ? '#e8eef6'
                         : '#f1f0f6',
-                      color: isProTier(roomMeta?.tier) ? '#5b54c7' : '#8a8ca3',
+                      color: isProTier(roomMeta?.tier) ? '#2458a6' : '#8a8ca3',
                     }}
                   >
                     PRO
@@ -7065,10 +7103,10 @@ export function WhiteboardPage({
                         padding: '2px 6px',
                         borderRadius: 999,
                         background: isProTier(roomMeta?.tier)
-                          ? '#ede9ff'
+                          ? '#e8eef6'
                           : '#f1f0f6',
                         color: isProTier(roomMeta?.tier)
-                          ? '#5b54c7'
+                          ? '#2458a6'
                           : '#8a8ca3',
                       }}
                     >
@@ -7119,9 +7157,9 @@ export function WhiteboardPage({
                       padding: '2px 6px',
                       borderRadius: 999,
                       background: isProTier(roomMeta?.tier)
-                        ? '#ede9ff'
+                        ? '#e8eef6'
                         : '#f1f0f6',
-                      color: isProTier(roomMeta?.tier) ? '#5b54c7' : '#8a8ca3',
+                      color: isProTier(roomMeta?.tier) ? '#2458a6' : '#8a8ca3',
                     }}
                   >
                     PRO
@@ -7170,9 +7208,9 @@ export function WhiteboardPage({
                       padding: '2px 6px',
                       borderRadius: 999,
                       background: isProTier(roomMeta?.tier)
-                        ? '#ede9ff'
+                        ? '#e8eef6'
                         : '#f1f0f6',
-                      color: isProTier(roomMeta?.tier) ? '#5b54c7' : '#8a8ca3',
+                      color: isProTier(roomMeta?.tier) ? '#2458a6' : '#8a8ca3',
                     }}
                   >
                     PRO
@@ -7747,7 +7785,7 @@ export function WhiteboardPage({
                       border: 0,
                       borderRadius: 999,
                       padding: '4px 12px',
-                      background: '#5b54c7',
+                      background: '#2458a6',
                       color: '#fff',
                       fontSize: 12,
                       fontWeight: 700,
@@ -7974,7 +8012,7 @@ export function WhiteboardPage({
                             cy={port.y}
                             r="4.5"
                             fill="#ffffff"
-                            stroke="#6965db"
+                            stroke="#2458a6"
                             strokeWidth="2"
                             opacity="0.9"
                           />
@@ -7984,7 +8022,7 @@ export function WhiteboardPage({
                           cy={activePortSnap.y}
                           r="8"
                           fill="none"
-                          stroke="#6965db"
+                          stroke="#2458a6"
                           strokeWidth="2.5"
                         />
                       </g>
@@ -8019,7 +8057,7 @@ export function WhiteboardPage({
                     >
                       <circle
                         r={radius}
-                        fill="#5b54c7"
+                        fill="#2458a6"
                         stroke="#ffffff"
                         strokeWidth={2 / camera.zoom}
                         filter="url(#softShadow)"
@@ -8046,7 +8084,7 @@ export function WhiteboardPage({
                       cy={commentAnchor.y}
                       r={18 / camera.zoom}
                       fill="rgba(91, 84, 199, 0.12)"
-                      stroke="#5b54c7"
+                      stroke="#2458a6"
                       strokeWidth={2 / camera.zoom}
                       strokeDasharray={`${5 / camera.zoom} ${4 / camera.zoom}`}
                     />
@@ -8054,7 +8092,7 @@ export function WhiteboardPage({
                       cx={commentAnchor.x}
                       cy={commentAnchor.y}
                       r={4 / camera.zoom}
-                      fill="#5b54c7"
+                      fill="#2458a6"
                     />
                   </g>
                 ) : null}
@@ -8351,14 +8389,14 @@ export function WhiteboardPage({
                   fontWeight: 600,
                   textAlign:
                     activeEditingNode.shape === 'text' ? 'left' : 'center',
-                  border: '2px solid #6965db',
+                  border: '2px solid #2458a6',
                   borderRadius: 6,
                   outline: 'none',
                   background: 'rgba(255,255,255,0.98)',
                   color: '#25263a',
                   padding: '4px 8px',
                   zIndex: 100,
-                  boxShadow: '0 4px 16px rgba(105,101,219,0.22)',
+                  boxShadow: '0 4px 16px rgba(36,88,166,0.22)',
                   resize: 'both',
                 }}
               />

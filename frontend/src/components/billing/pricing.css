@@ -1,12 +1,12 @@
 .eunoia-pricing {
-  --price-paper: #f7f6f2;
-  --price-surface: #fff;
-  --price-raised: #f1f0eb;
-  --price-line: #deded8;
-  --price-ink: #1d252d;
-  --price-secondary: #535e68;
-  --price-muted: #68737d;
-  --price-blue: #2458a6;
+  --price-paper: var(--eunoia-paper);
+  --price-surface: var(--eunoia-surface);
+  --price-raised: var(--eunoia-paper-raised);
+  --price-line: var(--eunoia-border);
+  --price-ink: var(--eunoia-ink);
+  --price-secondary: var(--eunoia-secondary);
+  --price-muted: var(--eunoia-muted);
+  --price-blue: var(--eunoia-blue);
   background: var(--price-paper);
   color: var(--price-ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;

@@ -1,5 +1,4 @@
 'use client';
-import { ShimmerButton } from '@/components/ui/shimmer-button';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { TextAnimate } from '@/components/ui/text-animate';
 import { AnimatedShinyText } from '@/components/ui/animated-shiny-text';
@@ -19,11 +18,10 @@ import { OrbitingCircles } from '@/components/ui/orbiting-circles';
 import { Tree, Folder, File } from '@/components/ui/file-tree';
 import { WordRotate } from '@/components/ui/word-rotate';
 import { ScrollProgress } from '@/components/ui/scroll-progress';
-import { CoolMode } from '@/components/ui/cool-mode';
 import { SpinningText } from '@/components/ui/spinning-text';
 import { useRef, useState, type ReactNode } from 'react';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { DiaTextReveal } from '@/components/ui/dia-text-reveal';
 import './landing.css';
 
@@ -183,9 +181,6 @@ const assets = {
   playground: '/images/editor_playground.png',
 };
 
-/* Stable CoolMode options (module-level so the effect doesn't re-bind). */
-const pencilBurst = { particle: '✏️' };
-
 function Button({
   children,
   kind = 'primary',
@@ -223,11 +218,11 @@ function CollabBeamDemo() {
         ref={userARef}
         className="relative z-10 flex flex-col items-center gap-2"
       >
-        <div className="grid size-14 place-items-center rounded-full border-2 border-[#6965DB] bg-[#e9e8ff] text-lg font-extrabold text-[#17174a]">
+        <div className="grid size-14 place-items-center rounded-full border-2 border-[#2458a6] bg-[#e8eef6] text-lg font-extrabold text-[#1d252d]">
           AK
         </div>
-        <span className="text-xs font-bold text-[#29275d]">Anya · editing</span>
-        <span className="flex items-center gap-1 rounded-full bg-[#d8ffdf] px-2 py-0.5 text-[11px] font-bold text-[#17174a]">
+        <span className="text-xs font-bold text-[#1d252d]">Anya · editing</span>
+        <span className="flex items-center gap-1 rounded-full bg-[#d8ffdf] px-2 py-0.5 text-[11px] font-bold text-[#1d252d]">
           <span className="size-1.5 rounded-full bg-green-500" /> live
         </span>
       </div>
@@ -236,7 +231,7 @@ function CollabBeamDemo() {
         ref={roomRef}
         className="relative z-10 flex flex-col items-center gap-2"
       >
-        <div className="grid size-20 place-items-center rounded-2xl bg-[#6965DB] text-white shadow-[0_8px_24px_rgba(105,101,219,0.45)]">
+        <div className="grid size-20 place-items-center rounded-2xl bg-[#2458a6] text-white shadow-[0_8px_24px_rgba(36,88,166,0.45)]">
           <svg width="34" height="34" viewBox="0 0 32 32" fill="none">
             <path
               d="M9 16H23M16 9V23M11 11L21 21M21 11L11 21"
@@ -246,8 +241,8 @@ function CollabBeamDemo() {
             />
           </svg>
         </div>
-        <span className="text-xs font-bold text-[#29275d]">incident-room</span>
-        <span className="font-mono text-[11px] text-[#8c8b9f]">
+        <span className="text-xs font-bold text-[#1d252d]">incident-room</span>
+        <span className="font-mono text-[11px] text-[#68737d]">
           &lt;50ms sync · Yjs
         </span>
       </div>
@@ -256,13 +251,13 @@ function CollabBeamDemo() {
         ref={userBRef}
         className="relative z-10 flex flex-col items-center gap-2"
       >
-        <div className="grid size-14 place-items-center rounded-full border-2 border-[#ffb005] bg-[#fff4c9] text-lg font-extrabold text-[#17174a]">
+        <div className="grid size-14 place-items-center rounded-full border-2 border-[#ffb005] bg-[#fff4c9] text-lg font-extrabold text-[#1d252d]">
           JO
         </div>
-        <span className="text-xs font-bold text-[#29275d]">
+        <span className="text-xs font-bold text-[#1d252d]">
           Jonas · reviewing
         </span>
-        <span className="flex items-center gap-1 rounded-full bg-[#fff4c9] px-2 py-0.5 text-[11px] font-bold text-[#17174a]">
+        <span className="flex items-center gap-1 rounded-full bg-[#fff4c9] px-2 py-0.5 text-[11px] font-bold text-[#1d252d]">
           <span className="size-1.5 rounded-full bg-amber-500" /> cursor
         </span>
       </div>
@@ -273,7 +268,7 @@ function CollabBeamDemo() {
         toRef={roomRef}
         curvature={-60}
 
-        gradientStartColor="#6965DB"
+        gradientStartColor="#2458a6"
         gradientStopColor="#22c55e"
         pathColor="#e2e1ea"
       />
@@ -295,7 +290,7 @@ function CollabBeamDemo() {
 /* ─── Magic UI: live room activity feed ─── */
 function ActivityFeed() {
   const items = [
-    { name: 'Anya moved api-gateway → edge', time: '2s', color: '#6965DB' },
+    { name: 'Anya moved api-gateway → edge', time: '2s', color: '#2458a6' },
     { name: 'Jonas compiled D2 · 42 nodes', time: '18s', color: '#22c55e' },
     { name: 'Priya added incident note', time: '41s', color: '#ffb005' },
     { name: 'Snapshot saved · 12.4 KB', time: '1m', color: '#0ea5e9' },
@@ -314,10 +309,10 @@ function ActivityFeed() {
             <Zap size={14} />
           </span>
           <div className="min-w-0 flex-1 text-left">
-            <p className="truncate text-sm font-bold text-[#242257]">
+            <p className="truncate text-sm font-bold text-[#1d252d]">
               {n.name}
             </p>
-            <p className="font-mono text-[11px] text-[#8c8b9f]">
+            <p className="font-mono text-[11px] text-[#68737d]">
               {n.time} ago · synced
             </p>
           </div>
@@ -402,7 +397,7 @@ function RoomFileTree() {
 /* ─── Magic UI: open-plumbing orbit (the stack, orbiting the product) ─── */
 function TechOrbit() {
   const chip =
-    'border border-[#e2e1ea] bg-white px-3 py-1.5 text-[12px] font-extrabold whitespace-nowrap text-[#242257] shadow-sm';
+    'border border-[#e2e1ea] bg-white px-3 py-1.5 text-[12px] font-extrabold whitespace-nowrap text-[#1d252d] shadow-sm';
   return (
     <div
       className="relative mx-auto flex h-[420px] w-full max-w-2xl items-center justify-center sm:h-[480px]"
@@ -410,7 +405,7 @@ function TechOrbit() {
       aria-label="Eunoia at the center, orbited by D2, Yjs, Monaco, PostgreSQL, Redis, and Next.js"
     >
       {/* center: the product */}
-      <div className="absolute top-1/2 left-1/2 z-10 grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-2xl bg-[#6965DB] shadow-[0_8px_24px_rgba(105,101,219,0.45)]">
+      <div className="absolute top-1/2 left-1/2 z-10 grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-2xl bg-[#2458a6] shadow-[0_8px_24px_rgba(36,88,166,0.45)]">
         <svg
           width="34"
           height="34"
@@ -515,12 +510,10 @@ function DoodleSection({
 
 export function LandingPage() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const router = useRouter();
-  const openBoard = () => router.push('/dashboard');
 
   return (
     <div className="eunoia-landing">
-      <ScrollProgress className="h-[3px] bg-linear-to-r from-[#6965DB] via-[#9E7AFF] to-[#ffb005]" />
+      <ScrollProgress className="h-[3px] bg-linear-to-r from-[#2458a6] via-[#9E7AFF] to-[#ffb005]" />
       {/* Header Navigation */}
       <header className="eunoia-header">
         <a className="eunoia-logo" href="#top">
@@ -531,7 +524,7 @@ export function LandingPage() {
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
           >
-            <rect width="32" height="32" rx="8" fill="#6965DB" />
+            <rect width="32" height="32" rx="8" fill="#2458a6" />
             <path
               d="M9 16H23M16 9V23M11 11L21 21M21 11L11 21"
               stroke="#FFFFFF"
@@ -573,9 +566,9 @@ export function LandingPage() {
           <a className="eunoia-sign-in" href="/login">
             Sign in
           </a>
-          <ShimmerButton type="button" onClick={openBoard}>
+          <Link className="eunoia-button" href="/dashboard">
             Open workspace
-          </ShimmerButton>
+          </Link>
           <button className="eunoia-language" type="button">
             <Globe2 size={16} /> EN <ChevronDown size={15} />
           </button>
@@ -599,13 +592,13 @@ export function LandingPage() {
             <BlurFade inView>
               <a
                 href="/docs"
-                className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#6965DB]/25 bg-white/80 px-4 py-1.5 text-[13px] font-bold text-[#292359] shadow-sm backdrop-blur transition hover:border-[#6965DB]/50"
+                className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#2458a6]/25 bg-white/80 px-4 py-1.5 text-[13px] font-bold text-[#1d252d] shadow-sm backdrop-blur transition hover:border-[#2458a6]/50"
               >
                 <span className="relative flex size-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
                   <span className="relative inline-flex size-2 rounded-full bg-green-500" />
                 </span>
-                <AnimatedShinyText className="text-[13px] font-bold text-[#292359]">
+                <AnimatedShinyText className="text-[13px] font-bold text-[#1d252d]">
                   Open core · D2 native · sub-50ms sync
                 </AnimatedShinyText>
                 <ArrowRight size={14} />
@@ -626,23 +619,16 @@ export function LandingPage() {
                 <WordRotate
                   words={['Sketch,', 'Diagram,', 'Decide.']}
                   duration={2200}
-                  className="font-hand text-[24px] text-[#6965DB]"
+                  className="font-hand text-[24px] text-[#2458a6]"
                 />
                 <span>Sketch, diagram, and decide with Eunoia.</span>
               </p>
             </BlurFade>
             <BlurFade delay={0.35} inView>
               <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-                <CoolMode options={pencilBurst}>
-                  <ShimmerButton
-                    type="button"
-                    className="px-8 py-3.5 text-[15px]"
-                    background="rgba(105,101,219,1)"
-                    onClick={openBoard}
-                  >
-                    Open a room <ArrowRight size={16} />
-                  </ShimmerButton>
-                </CoolMode>
+                <Link className="eunoia-button" href="/board">
+                  Open a room <ArrowRight size={16} />
+                </Link>
                 <a
                   href="https://github.com/lavya30/Eunoia"
                   target="_blank"
@@ -668,19 +654,19 @@ export function LandingPage() {
               <BorderBeam
                 size={120}
                 duration={7}
-                colorFrom="#6965DB"
+                colorFrom="#2458a6"
                 colorTo="#ffb005"
                 borderWidth={2}
               />
             </div>
             <div
               aria-hidden="true"
-              className="absolute -top-10 -right-4 hidden size-28 rotate-[-8deg] place-items-center rounded-full border-2 border-dashed border-[#6965DB]/40 bg-[#fff4c9] shadow-md md:grid"
+              className="absolute -top-10 -right-4 hidden size-28 rotate-[-8deg] place-items-center rounded-full border-2 border-dashed border-[#2458a6]/40 bg-[#fff4c9] shadow-md md:grid"
             >
               <SpinningText
                 duration={14}
                 radius={4.2}
-                className="font-hand text-[13px] font-bold text-[#17174a]"
+                className="font-hand text-[13px] font-bold text-[#1d252d]"
               >
                 open core · d2 native ·
               </SpinningText>
@@ -714,18 +700,18 @@ export function LandingPage() {
                 <MagicCard
                   key={s.label}
                   className="rounded-2xl p-4 text-center"
-                  gradientColor="#6965DB"
+                  gradientColor="#2458a6"
                   gradientOpacity={0.12}
                 >
-                  <p className="text-3xl font-extrabold tracking-tight text-[#15154c]">
+                  <p className="text-3xl font-extrabold tracking-tight text-[#1d252d]">
                     {s.prefix}
                     <NumberTicker
                       value={s.value}
-                      className="text-3xl font-extrabold text-[#15154c]"
+                      className="text-3xl font-extrabold text-[#1d252d]"
                     />
                     {s.suffix}
                   </p>
-                  <p className="mt-1 text-[13px] font-semibold text-[#4c4a69]">
+                  <p className="mt-1 text-[13px] font-semibold text-[#535e68]">
                     {s.label}
                   </p>
                 </MagicCard>
@@ -822,10 +808,10 @@ export function LandingPage() {
                     className="h-full rounded-[7px] p-[25px_23px]"
                     gradientOpacity={0.1}
                   >
-                    <h5 className="m-0 text-[16px] font-bold text-[#242257]">
+                    <h5 className="m-0 text-[16px] font-bold text-[#1d252d]">
                       {card.title}
                     </h5>
-                    <p className="mt-2 text-[15px] leading-[1.4] text-[#525172]">
+                    <p className="mt-2 text-[15px] leading-[1.4] text-[#535e68]">
                       {card.text}
                     </p>
                   </MagicCard>
@@ -851,10 +837,10 @@ export function LandingPage() {
                   className="h-full rounded-xl p-6"
                   gradientOpacity={0.1}
                 >
-                  <h5 className="m-0 text-[16px] font-bold text-[#242257]">
+                  <h5 className="m-0 text-[16px] font-bold text-[#1d252d]">
                     🔗 Room links
                   </h5>
-                  <p className="mt-2 text-[15px] text-[#525172]">
+                  <p className="mt-2 text-[15px] text-[#535e68]">
                     Invite collaborators to the live canvas. Presence, cursors,
                     and undo stay per-user.
                   </p>
@@ -939,10 +925,10 @@ export function LandingPage() {
                     className="h-full rounded-[7px] p-[25px_23px]"
                     gradientOpacity={0.1}
                   >
-                    <h5 className="m-0 text-[16px] font-bold text-[#242257]">
+                    <h5 className="m-0 text-[16px] font-bold text-[#1d252d]">
                       {card.title}
                     </h5>
-                    <p className="mt-2 text-[15px] text-[#525172]">
+                    <p className="mt-2 text-[15px] text-[#535e68]">
                       {card.text}
                     </p>
                   </MagicCard>
@@ -974,10 +960,10 @@ export function LandingPage() {
                     className="h-full rounded-[7px] p-[25px_23px]"
                     gradientOpacity={0.1}
                   >
-                    <h5 className="m-0 text-[16px] font-bold text-[#242257]">
+                    <h5 className="m-0 text-[16px] font-bold text-[#1d252d]">
                       {card.title}
                     </h5>
-                    <p className="mt-2 text-[15px] text-[#525172]">
+                    <p className="mt-2 text-[15px] text-[#535e68]">
                       {card.text}
                     </p>
                   </MagicCard>
@@ -1001,11 +987,11 @@ export function LandingPage() {
             >
               Boring tech, kept in orbit
             </TextAnimate>
-            <p className="mx-auto mt-4 max-w-xl text-[17px] font-medium text-[#4c4a69]">
+            <p className="mx-auto mt-4 max-w-xl text-[17px] font-medium text-[#535e68]">
               No black boxes.{' '}
               <Highlighter
                 action="underline"
-                color="#6965DB"
+                color="#2458a6"
                 strokeWidth={2.5}
                 isView
               >
@@ -1046,14 +1032,9 @@ export function LandingPage() {
               </h2>
               <p>Something complex on your mind? Start mapping it.</p>
               <div className="eunoia-whiteboard-callout__buttons">
-                <ShimmerButton
-                  type="button"
-                  background="rgba(105,101,219,1)"
-                  className="px-8 py-3"
-                  onClick={openBoard}
-                >
+                <Link className="eunoia-button" href="/board">
                   Open a room <ArrowRight size={16} />
-                </ShimmerButton>
+                </Link>
                 <Button kind="secondary" href="/board">
                   Try the D2 workspace
                 </Button>
@@ -1107,13 +1088,13 @@ export function LandingPage() {
                   className="h-full rounded-[8px] p-[25px]"
                   gradientOpacity={0.12}
                 >
-                  <h3 className="m-0 text-[16px] text-[#252356]">
+                  <h3 className="m-0 text-[16px] text-[#1d252d]">
                     {t.title}{' '}
-                    <small className="mt-1 block text-[12px] font-medium text-[#77758a]">
+                    <small className="mt-1 block text-[12px] font-medium text-[#68737d]">
                       {t.small}
                     </small>
                   </h3>
-                  <p className="mt-[21px] text-[15px] leading-[1.5] text-[#454361]">
+                  <p className="mt-[21px] text-[15px] leading-[1.5] text-[#535e68]">
                     {t.text}
                   </p>
                 </MagicCard>
@@ -1141,7 +1122,7 @@ export function LandingPage() {
                 className="h-full rounded-[13px] p-[39px]"
                 gradientOpacity={0.08}
               >
-                <span className="font-hand text-[21px] text-[#6965DB]">
+                <span className="font-hand text-[21px] text-[#2458a6]">
                   Community
                 </span>
                 <h3>Draw and map systems in the open</h3>
@@ -1154,11 +1135,11 @@ export function LandingPage() {
             </BlurFade>
             <BlurFade delay={0.15} inView>
               <MagicCard
-                className="h-full rounded-[13px] !border-[#cbc8fa] p-[39px]"
-                gradientColor="#6965DB"
+                className="h-full rounded-[13px] !border-[#b9c9df] p-[39px]"
+                gradientColor="#2458a6"
                 gradientOpacity={0.18}
               >
-                <span className="font-hand text-[21px] text-[#6965DB]">
+                <span className="font-hand text-[21px] text-[#2458a6]">
                   Workspace
                 </span>
                 <h3>Give every team conversation a home</h3>
@@ -1183,7 +1164,7 @@ export function LandingPage() {
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
           >
-            <rect width="32" height="32" rx="6" fill="#6965DB" />
+            <rect width="32" height="32" rx="6" fill="#2458a6" />
             <path
               d="M9 16H23M16 9V23M11 11L21 21M21 11L11 21"
               stroke="#FFFFFF"

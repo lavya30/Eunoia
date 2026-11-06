@@ -233,7 +233,7 @@ export function StatusPage() {
         <div style={{ marginBottom: 8 }}>
           <Link
             href="/"
-            style={{ fontSize: 13, color: '#5b54c7', fontWeight: 600 }}
+            style={{ fontSize: 13, color: '#2458a6', fontWeight: 600 }}
           >
             ← Eunoia
           </Link>
@@ -348,7 +348,7 @@ export function StatusPage() {
         ) : null}
 
         <div style={{ marginTop: 24, fontSize: 13 }}>
-          <Link href="/board" style={{ color: '#5b54c7', fontWeight: 600 }}>
+          <Link href="/board" style={{ color: '#2458a6', fontWeight: 600 }}>
             Open a board →
           </Link>
         </div>

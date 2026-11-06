@@ -127,7 +127,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   kicker: {
     fontSize: 12,
-    color: '#5b54c7',
+    color: '#2458a6',
     fontWeight: 700,
     margin: '0 0 4px',
   },
@@ -143,7 +143,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
   primary: {
-    background: '#5b54c7',
+    background: '#2458a6',
     color: '#fff',
     border: 0,
     borderRadius: 8,

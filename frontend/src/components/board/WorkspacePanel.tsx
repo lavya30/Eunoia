@@ -150,7 +150,7 @@ export function WorkspacePanel({
           Team rooms, folders, and member roles share one billing seat pool.{' '}
           <Link
             href="/workspaces"
-            style={{ color: '#5b54c7', fontWeight: 600 }}
+            style={{ color: '#2458a6', fontWeight: 600 }}
           >
             Open full page →
           </Link>
@@ -209,10 +209,10 @@ export function WorkspacePanel({
                   borderRadius: 999,
                   border:
                     entry.workspace.id === selectedId
-                      ? '2px solid #5b54c7'
+                      ? '2px solid #2458a6'
                       : '1px solid #e3e2ea',
                   background:
-                    entry.workspace.id === selectedId ? '#ede9ff' : '#fff',
+                    entry.workspace.id === selectedId ? '#e8eef6' : '#fff',
                   fontSize: 13,
                   fontWeight: 600,
                   cursor: 'pointer',
@@ -505,7 +505,7 @@ export function WorkspacePanel({
                   style={{
                     border: 0,
                     background: 'transparent',
-                    color: '#5b54c7',
+                    color: '#2458a6',
                     cursor: 'pointer',
                     fontSize: 13,
                     fontWeight: 600,

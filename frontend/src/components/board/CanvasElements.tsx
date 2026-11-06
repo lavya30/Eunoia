@@ -87,7 +87,7 @@ export function StrokeElement({
         <path
           d={isOutline ? inkD : smoothPath(stroke.points)}
           fill="none"
-          stroke="#6965db"
+          stroke="#2458a6"
           strokeWidth={isOutline ? 2 : 6}
           strokeDasharray="4 4"
           opacity="0.7"
@@ -185,7 +185,7 @@ export function ArrowElement({
           <path
             d={routedD}
             fill="none"
-            stroke="#6965db"
+            stroke="#2458a6"
             strokeWidth="5"
             strokeDasharray="4 4"
             opacity="0.6"
@@ -195,7 +195,7 @@ export function ArrowElement({
             cy={arrow.start.y}
             r="6"
             fill="#ffffff"
-            stroke="#6965db"
+            stroke="#2458a6"
             strokeWidth="2.5"
             style={{ cursor: 'move' }}
             onPointerDown={(event) => {
@@ -212,7 +212,7 @@ export function ArrowElement({
               height="10"
               rx="2.5"
               fill="#ffffff"
-              stroke="#6965db"
+              stroke="#2458a6"
               strokeWidth="2.5"
               style={{ cursor: 'grab' }}
               onPointerDown={(event) => {
@@ -228,7 +228,7 @@ export function ArrowElement({
             cy={arrow.end.y}
             r="6"
             fill="#ffffff"
-            stroke="#6965db"
+            stroke="#2458a6"
             strokeWidth="2.5"
             style={{ cursor: 'move' }}
             onPointerDown={(event) => {
