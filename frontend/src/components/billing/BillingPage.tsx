@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, loadSession } from '@/lib/whiteboard/auth';
+import { formatBillingAmount } from '@/lib/whiteboard/billing-format';
 import {
   fetchInvoices,
   fetchSubscription,
@@ -334,7 +335,10 @@ export function BillingPage() {
                           </span>
                           {invoice.pricePerSeat !== null ? (
                             <span>
-                              {invoice.currency} {invoice.pricePerSeat}/seat
+                              {formatBillingAmount(
+                                invoice.pricePerSeat,
+                                invoice.currency,
+                              )}/seat
                             </span>
                           ) : null}
                         </li>

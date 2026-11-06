@@ -41,7 +41,7 @@ Users work in browser-based whiteboarding sessions accessed via room links. Engi
 
 ## Brand Commitments
 
-Product name: Eunoia. Open-core business model with Community Edition (open source) and Pro/Enterprise tiers ($12/user/month and $30/user/month). Landing page uses a sketch-theme aesthetic (hand-drawn typography, paper texture background, warm accent palette with orange, blue ink, and yellow highlighter highlights).
+Product name: Eunoia. Open-core business model with Community Edition (open source), Pro at ₹500 per seat per month, and custom Enterprise plans. Landing page uses a sketch-theme aesthetic (hand-drawn typography, paper texture background, warm accent palette with orange, blue ink, and yellow highlighter highlights).
 
 ## Evidence on Hand
 

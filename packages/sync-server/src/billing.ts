@@ -43,6 +43,7 @@ export type BillingEvent = {
 export function isBillingConfigured(config: Config): boolean {
   return Boolean(
     config.razorpayKeyId &&
+      config.razorpayKeySecret &&
       config.razorpayWebhookSecret &&
       config.razorpayPlanPro,
   );
@@ -101,6 +102,10 @@ export class RazorpayBillingProvider implements BillingProvider {
   private readonly client: RazorpayClient;
 
   constructor(config: Config, client?: RazorpayClient) {
+    if (!config.razorpayKeyId)
+      throw new Error('RAZORPAY_KEY_ID is required');
+    if (!config.razorpayKeySecret)
+      throw new Error('RAZORPAY_KEY_SECRET is required');
     if (!config.razorpayWebhookSecret)
       throw new Error('RAZORPAY_WEBHOOK_SECRET is required');
     if (!config.razorpayPlanPro)
@@ -110,8 +115,8 @@ export class RazorpayBillingProvider implements BillingProvider {
     this.client =
       client ??
       (new Razorpay({
-        key_id: config.razorpayKeyId ?? '',
-        key_secret: config.razorpayKeySecret ?? '',
+        key_id: config.razorpayKeyId,
+        key_secret: config.razorpayKeySecret,
       }) as unknown as RazorpayClient);
   }
 
@@ -123,8 +128,9 @@ export class RazorpayBillingProvider implements BillingProvider {
       {
         key: 'pro',
         name: 'Pro',
-        pricePerSeat: 1200,
-        currency: 'usd',
+        // Razorpay and the UI use the smallest currency unit (paise).
+        pricePerSeat: 50_000,
+        currency: 'inr',
       },
     ];
   }

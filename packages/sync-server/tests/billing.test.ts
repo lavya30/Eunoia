@@ -148,7 +148,8 @@ describe('Billing Unit & Integration Tests', () => {
       const plans = provider.plans();
       expect(plans).toHaveLength(1);
       expect(plans[0].key).toBe('pro');
-      expect(plans[0].pricePerSeat).toBe(1200);
+      expect(plans[0].pricePerSeat).toBe(50_000);
+      expect(plans[0].currency).toBe('inr');
     });
 
     test('creates checkout sessions via subscription links', async () => {

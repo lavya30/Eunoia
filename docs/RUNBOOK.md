@@ -26,29 +26,33 @@ checks: { database, redis, compiler, imageStorage } }`. Each check is
 | `imageStorage: degraded` in `/readyz`          | R2 configured but bucket unreachable (creds, network)                                                                              | `imageStorage.detail` in `/readyz`                               | Fix creds/network; sync + persistence keep working (degraded, never down)                             |
 | Compile 403 `TIER_UPGRADE_REQUIRED`            | Expected tier gating, not an outage                                                                                                | `eunoia_compile_requests_total{outcome="TIER_UPGRADE_REQUIRED"}` | No action; room/user tier works as designed                                                           |
 | WS closes 4100                                 | Snapshot restore dropped peers (expected)                                                                                          | Server logs                                                      | Clients resync automatically                                                                          |
-| Billing endpoints 503 `BILLING_NOT_CONFIGURED` | `RAZORPAY_KEY_ID` unset                                                                                                            | Server boot logs                                                 | Set `RAZORPAY_KEY_ID/SECRET/WEBHOOK_SECRET/PLAN_PRO`; tiers stay DB-managed until then                |
+| Billing endpoints 503 `BILLING_NOT_CONFIGURED` | One or more Razorpay credentials, webhook secret, or plan ID is unset                                                              | Server boot logs                                                 | Set `RAZORPAY_KEY_ID/KEY_SECRET/WEBHOOK_SECRET/PLAN_PRO`; tiers stay DB-managed until then            |
 | Webhook 401 `INVALID_SIGNATURE` spike          | Rotated webhook secret or clock/replay issue                                                                                       | Compare dashboard endpoint secret vs `RAZORPAY_WEBHOOK_SECRET`   | Update env, restart; replays are idempotent so redelivery is safe                                     |
 | Tier stuck after cancel                        | `halted` status (failed renewals) is skipped by design; downgrade lands on `cancelled/completed/expired`                           | Subscription row status                                          | No action until Razorpay ends the subscription; cancel is at cycle end                                |
-| RBI recurring notes                            | First mandate charge needs customer 2FA (hosted link handles it); UPI Autopay caps at ₹15,000/cycle — card mandates suit $12 plans | Razorpay dashboard                                               | Nothing to build; pre-debit notifications + eFIRC are Razorpay-side                                   |
+| Razorpay recurring setup                      | Available mandate methods depend on the account and plan                                                                          | Razorpay dashboard                                               | Check enabled payment methods and subscription settings in Test Mode before launch                   |
 | Rising 5xx in `eunoia_http_requests_total`     | App regression                                                                                                                     | `docker compose logs sync-server` (pino JSON access lines)       | Roll back to last good image                                                                          |
 
 ## Billing go-live checklist (test mode first, then live)
 
-1. Razorpay dashboard (test mode): create the Pro plan ($12/user/mo, card
-   mandates per the RBI note above) → record the plan id as
+1. Test Mode uses the ₹500/seat/month Pro plan; its plan ID is stored as
    `RAZORPAY_PLAN_PRO`. Register
-   `https://<staging-host>/api/billing/webhook`, copy the webhook secret.
-   Keys live in host env / deploy secrets — never in git.
-2. Set `RAZORPAY_KEY_ID/SECRET/WEBHOOK_SECRET/PLAN_PRO` on staging;
+   `https://<staging-host>/api/billing/webhook` as a Test Mode webhook, set
+   its secret to the value in `RAZORPAY_WEBHOOK_SECRET`, and subscribe to
+   `subscription.authenticated`, `subscription.activated`,
+   `subscription.charged`, `subscription.cancelled`, and
+   `subscription.completed`. Keys live in host
+   env / deploy secrets — never in git.
+2. Set `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
+   `RAZORPAY_WEBHOOK_SECRET`, and `RAZORPAY_PLAN_PRO` on staging;
    confirm `/api/billing/*` stops returning `BILLING_NOT_CONFIGURED` and
-   `GET /api/billing/prices` matches `PricingPage.tsx` ($12/$30).
+   `GET /api/billing/prices` matches `PricingPage.tsx` (₹500/seat/month).
 3. Run the drill (human, staging, never CI):
    `bun scripts/verify-billing.ts --confirm-staging --sync-url=https://<staging-host>`
    — register → test payment on the hosted link → webhook tier flip →
    redelivery idempotency → cancel at cycle end.
-4. Cutover: swap test→live keys, re-register the live webhook, repeat the
-   drill once against production. Keep the test plan IDs here for future
-   staging drills.
+4. Cutover: create a matching Live Mode plan, swap test→live keys and plan
+   ID, configure the Live Mode webhook, and repeat the drill once against
+   production. Keep Test Mode plan IDs in the local environment for staging.
 
 ## Environment knobs
 

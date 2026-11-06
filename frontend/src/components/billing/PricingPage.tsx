@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { loadSession } from '@/lib/whiteboard/auth';
+import { formatBillingAmount } from '@/lib/whiteboard/billing-format';
 import {
   fetchPrices,
   createCheckoutSession,
@@ -35,7 +36,7 @@ export function PricingPage() {
       .catch(() => {
         // Fallback default prices if server is reachable without explicit pricing API
         setPrices([
-          { key: 'pro', name: 'Pro', pricePerSeat: 1200, currency: 'usd' },
+          { key: 'pro', name: 'Pro', pricePerSeat: 50_000, currency: 'inr' },
         ]);
       });
   }, []);
@@ -66,8 +67,8 @@ export function PricingPage() {
 
   const proPrice = prices.find((p) => p.key === 'pro');
   const priceDisplay = proPrice
-    ? `$${(proPrice.pricePerSeat / 100).toFixed(0)}`
-    : '$12';
+    ? formatBillingAmount(proPrice.pricePerSeat, proPrice.currency)
+    : formatBillingAmount(50_000, 'INR');
 
   return (
     <div className="eunoia-pricing min-h-screen flex flex-col font-sans">
